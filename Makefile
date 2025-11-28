@@ -7,8 +7,6 @@ PROJECTNAME := $(shell basename "$$(pwd)")
 PROJECTPATH := $(shell pwd)
 FLAGS ?=
 
-EDITOR ?= code
-
 help:
 	@echo "Usage: make [options] [arguments]\n"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -19,7 +17,7 @@ clean: ## Clean up build artifacts
 	@rm -rf ./web/dist || true
 
 start: ## Start the application
-	go mod tidy && go build -o lazyaws && ./lazyaws
+	go mod tidy && go build -o bin/lazyaws && ./bin/lazyaws
 
 config: ## Open the config file
-	@sudo ${EDITOR:-vi} $(HOME)/.lazyaws/config.json
+	@$(EDITOR) $(HOME)/.lazyaws/config.json
