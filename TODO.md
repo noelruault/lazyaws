@@ -10,6 +10,7 @@
 - [x] Create main navigation structure
 - [x] Implement basic error handling and logging
 - [x] Set up configuration file support
+- [x] Extract service state into dedicated UI packages (ec2/s3/eks) with shared helpers
 
 ## Phase 1: EC2 Management
 

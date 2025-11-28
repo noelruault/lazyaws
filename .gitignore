@@ -1,3 +1,49 @@
+# =============================================================================
+# Project-Specific Ignores
+# =============================================================================
+
+*csv
+dev.Dockerfile
+tmp/
+
+# =============================================================================
+# AI
+# =============================================================================
+
+.github/*
+!.github/workflows/
+**/TODO.md
+RUN.md
+AGENTS.md
+
+# =============================================================================
+# Thumbnails and temporary files
+# =============================================================================
+
+._*
+_*
+__*
+
+# =============================================================================
+# Build and Distribution Directories
+# =============================================================================
+
+bin/
+main
+
+# =============================================================================
+# Editors and IDEs
+# =============================================================================
+
+__debug_bin
+.zed/
+.vscode/
+.idea/
+
+# =============================================================================
+# Golang-Specific Ignores
+# =============================================================================
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -8,29 +54,34 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool
+# Code coverage profiles and other test artifacts
 *.out
-
-# Go workspace file
+coverage.*
+*.coverprofile
+profile.cov
+*.prof
+profiles/
+.gocache/
+.gomodcache/
 go.work
+go.work.sum
 
-# Binary output
-lazyaws
+# Dependency directories (uncomment to include)
+vendor/
 
-# IDE and editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# =============================================================================
+# Operating System-Specific Ignores
+# =============================================================================
+
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
-# Environment and credentials
-.env
-.env.local
-*.pem
-*.key
-
-# Build artifacts
-dist/
-build/
+# Files that might appear in the root of a volume (macOS)
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns

@@ -33,6 +33,10 @@ A terminal UI for managing AWS resources, inspired by lazygit, k9s, and lazydock
 - **Commands** - `:q` quit, `:r` refresh, `:help` show help, `:ec2/:s3/:eks` switch services
 - **Multi-region/account** - `:region` and `:account` to switch contexts
 
+### Code structure (for contributors)
+- Service-specific state now lives in `internal/ui/ec2`, `internal/ui/s3`, and `internal/ui/eks` with shared helpers in `internal/ui/shared`.
+- `main.go` coordinates navigation/history, wiring service state to loaders, renders, and key handling.
+
 ## Installation
 
 ```bash
