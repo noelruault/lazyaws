@@ -312,7 +312,7 @@ func AllCommands() []string {
 		"sa", "selectall",
 		"da", "deselectall",
 		"ec2", "s3", "eks",
-		"account", "acc",
+		"account", // primary; "acc" remains accepted as an alias
 		"region",
 	}
 }

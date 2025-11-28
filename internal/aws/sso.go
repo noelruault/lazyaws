@@ -110,8 +110,7 @@ func (a *SSOAuthenticator) Authenticate(ctx context.Context) error {
 	for time.Now().Before(expiresAt) {
 		time.Sleep(interval)
 
-	
-tokenResp, err := oidcClient.CreateToken(ctx, &ssooidc.CreateTokenInput{
+		tokenResp, err := oidcClient.CreateToken(ctx, &ssooidc.CreateTokenInput{
 			ClientId:     &a.session.ClientID,
 			ClientSecret: &a.session.ClientSecret,
 			GrantType:    strPtr("urn:ietf:params:oauth:grant-type:device_code"),
@@ -232,7 +231,7 @@ func (a *SSOAuthenticator) GetCredentials(ctx context.Context, accountID, roleNa
 		SecretAccessKey: *creds.SecretAccessKey,
 		SessionToken:    *creds.SessionToken,
 		Expiration:      expiresAt,
-	},
+	}, nil
 }
 
 // registerClient registers the application as an SSO OIDC client

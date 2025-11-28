@@ -180,6 +180,21 @@ func ValidateSSOStartURL(url string) error {
 	return nil
 }
 
+// ValidateSSORegion performs basic validation on the SSO region
+func ValidateSSORegion(region string) error {
+	if region == "" {
+		return fmt.Errorf("SSO region cannot be empty")
+	}
+	// Very light validation to catch obvious mistakes
+	if !strings.Contains(region, "-") {
+		return fmt.Errorf("SSO region must look like us-east-1 or eu-west-1")
+	}
+	if len(region) < 6 {
+		return fmt.Errorf("SSO region is too short")
+	}
+	return nil
+}
+
 // ValidateProfileName performs basic validation on profile name
 func ValidateProfileName(name string) error {
 	if name == "" {
