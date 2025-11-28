@@ -4134,13 +4134,15 @@ func (m model) renderServiceSelection() string {
 		case "EC2":
 			desc = "Instances, details, SSM"
 		case "S3":
-			desc = "Buckets, objects, presigned URLs"
+			desc = "Buckets, objects, policies"
 		case "EKS":
 			desc = "Clusters, node groups, addons"
 		case "ECS":
 			desc = "Clusters, services, tasks"
 		case "ECR":
 			desc = "Repositories, images"
+		case "Secrets":
+			desc = "Secrets Manager"
 		default:
 			desc = ""
 		}

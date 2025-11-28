@@ -21,3 +21,7 @@ start: ## Start the application
 
 config: ## Open the config file
 	@$(EDITOR) $(HOME)/.lazyaws/config.json
+
+install: ## Install lazyaws binary to /usr/local/bin
+	go build -o bin/lazyaws && \
+	sudo mv bin/lazyaws /usr/local/bin/lazyaws
