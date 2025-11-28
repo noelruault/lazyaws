@@ -1,4 +1,4 @@
-module github.com/fuziontech/lazyaws
+module github.com/noelruault/lazyaws
 
 go 1.25.0
 

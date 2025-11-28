@@ -3,7 +3,7 @@ package ec2
 import (
 	"context"
 
-	"github.com/fuziontech/lazyaws/internal/aws"
+	"github.com/noelruault/lazyaws/internal/aws"
 )
 
 // State contains EC2-specific UI and data state.

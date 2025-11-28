@@ -3,7 +3,7 @@ package s3
 import (
 	"context"
 
-	"github.com/fuziontech/lazyaws/internal/aws"
+	"github.com/noelruault/lazyaws/internal/aws"
 )
 
 // State contains S3-specific UI and data state.

@@ -3,7 +3,7 @@ package ec2
 import (
 	"fmt"
 
-	"github.com/fuziontech/lazyaws/internal/ui/shared"
+	"github.com/noelruault/lazyaws/internal/ui/shared"
 )
 
 // RenderList renders the EC2 list view (placeholder; to be wired).

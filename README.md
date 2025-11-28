@@ -36,7 +36,7 @@ A terminal UI for managing AWS resources, inspired by lazygit, k9s, and lazydock
 ## Installation
 
 ```bash
-git clone https://github.com/fuziontech/lazyaws.git
+git clone https://github.com/noelruault/lazyaws.git
 cd lazyaws
 go build -o lazyaws
 sudo mv lazyaws /usr/local/bin/

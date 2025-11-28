@@ -3,7 +3,7 @@ package s3
 import (
 	"fmt"
 
-	"github.com/fuziontech/lazyaws/internal/ui/shared"
+	"github.com/noelruault/lazyaws/internal/ui/shared"
 )
 
 // RenderBuckets renders the bucket list (placeholder; to be wired).

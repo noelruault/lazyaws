@@ -3,7 +3,7 @@ package eks
 import (
 	"context"
 
-	"github.com/fuziontech/lazyaws/internal/aws"
+	"github.com/noelruault/lazyaws/internal/aws"
 )
 
 // State contains EKS-specific UI and data state.

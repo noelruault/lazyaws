@@ -3,7 +3,7 @@ package eks
 import (
 	"fmt"
 
-	"github.com/fuziontech/lazyaws/internal/ui/shared"
+	"github.com/noelruault/lazyaws/internal/ui/shared"
 )
 
 // RenderClusters renders the EKS cluster list (placeholder; to be wired).
