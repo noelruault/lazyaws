@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
@@ -27,6 +28,7 @@ type Client struct {
 	EKS            *eks.Client
 	ECS            *ecs.Client
 	ECR            *ecr.Client
+	Secrets        *secretsmanager.Client
 	SSM            *ssm.Client
 	CloudWatch     *cloudwatch.Client
 	CloudWatchLogs *cloudwatchlogs.Client
@@ -49,6 +51,7 @@ func NewClient(ctx context.Context, appConfig *config.Config) (*Client, error) {
 		EKS:            eks.NewFromConfig(cfg),
 		ECS:            ecs.NewFromConfig(cfg),
 		ECR:            ecr.NewFromConfig(cfg),
+		Secrets:        secretsmanager.NewFromConfig(cfg),
 		SSM:            ssm.NewFromConfig(cfg),
 		CloudWatch:     cloudwatch.NewFromConfig(cfg),
 		CloudWatchLogs: cloudwatchlogs.NewFromConfig(cfg),
@@ -77,6 +80,7 @@ func NewClientWithProfile(ctx context.Context, profile string) (*Client, error) 
 		EKS:            eks.NewFromConfig(cfg),
 		ECS:            ecs.NewFromConfig(cfg),
 		ECR:            ecr.NewFromConfig(cfg),
+		Secrets:        secretsmanager.NewFromConfig(cfg),
 		SSM:            ssm.NewFromConfig(cfg),
 		CloudWatch:     cloudwatch.NewFromConfig(cfg),
 		CloudWatchLogs: cloudwatchlogs.NewFromConfig(cfg),
@@ -110,6 +114,7 @@ func NewClientWithSSOCredentials(ctx context.Context, creds *SSOCredentials, reg
 		EKS:            eks.NewFromConfig(cfg),
 		ECS:            ecs.NewFromConfig(cfg),
 		ECR:            ecr.NewFromConfig(cfg),
+		Secrets:        secretsmanager.NewFromConfig(cfg),
 		SSM:            ssm.NewFromConfig(cfg),
 		CloudWatch:     cloudwatch.NewFromConfig(cfg),
 		CloudWatchLogs: cloudwatchlogs.NewFromConfig(cfg),

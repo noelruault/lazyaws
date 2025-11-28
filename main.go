@@ -47,6 +47,8 @@ const (
 	ecrScreen
 	ecrImagesScreen
 	ecrImageDetailsScreen
+	secretsScreen
+	secretsDetailsScreen
 	helpScreen
 	serviceScreen
 )
@@ -69,6 +71,10 @@ type model struct {
 	eks                      uiEKS.State
 	ecs                      uiECS.State
 	ecr                      uiECR.State
+	secrets                  []aws.SecretSummary
+	secretsFiltered          []aws.SecretSummary
+	selectedSecretIndex      int
+	currentSecretDetails     *aws.SecretDetails
 	deleteConfirmInput       textinput.Model // For typing confirmation
 	loading                  bool
 	err                      error
@@ -285,6 +291,16 @@ type ecrScanLoadedMsg struct {
 	err    error
 }
 
+type secretsLoadedMsg struct {
+	secrets []aws.SecretSummary
+	err     error
+}
+
+type secretDetailsLoadedMsg struct {
+	details *aws.SecretDetails
+	err     error
+}
+
 type ssoConfigSavedMsg struct {
 	config *aws.SSOConfig
 	err    error
@@ -383,9 +399,13 @@ func initialModel(cfg *config.Config) model {
 			SelectedBucketIndex: 0,
 			SelectedObjectIndex: 0,
 		},
-		eks: uiEKS.State{},
-		ecs: uiECS.State{},
-		ecr: uiECR.State{},
+		eks:                  uiEKS.State{},
+		ecs:                  uiECS.State{},
+		ecr:                  uiECR.State{},
+		secrets:              []aws.SecretSummary{},
+		secretsFiltered:      nil,
+		selectedSecretIndex:  0,
+		currentSecretDetails: nil,
 	}
 }
 
@@ -564,6 +584,20 @@ func (m model) loadECRScan(repoName, digest string) tea.Msg {
 	defer cancel()
 	scan, err := m.awsClient.GetECRImageScan(ctx, repoName, digest)
 	return ecrScanLoadedMsg{repo: repoName, digest: digest, scan: scan, err: err}
+}
+
+func (m model) loadSecrets() tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	secrets, err := m.awsClient.ListSecrets(ctx)
+	return secretsLoadedMsg{secrets: secrets, err: err}
+}
+
+func (m model) loadSecretDetails(name string) tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	details, err := m.awsClient.GetSecretDetails(ctx, name)
+	return secretDetailsLoadedMsg{details: details, err: err}
 }
 
 func (m model) loadEKSClusterDetails(clusterName string) tea.Cmd {
@@ -1340,6 +1374,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case secretsLoadedMsg:
+		m.loading = false
+		m.err = msg.err
+		if msg.err == nil {
+			m.secrets = msg.secrets
+			m.secretsFiltered = nil
+			m.selectedSecretIndex = 0
+			m.currentSecretDetails = nil
+			m.statusMessage = fmt.Sprintf("Loaded %d secrets", len(msg.secrets))
+		}
+		return m, nil
+
+	case secretDetailsLoadedMsg:
+		m.loading = false
+		m.err = msg.err
+		if msg.err == nil {
+			m.currentSecretDetails = msg.details
+			m.navigateToScreen(secretsDetailsScreen)
+			m.viewportOffset = 0
+			m.statusMessage = fmt.Sprintf("Loaded details for %s", msg.details.Name)
+		}
+		return m, nil
+
 	case eksClusterDetailsLoadedMsg:
 		m.loading = false
 		m.err = msg.err
@@ -1667,6 +1724,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.currentScreen == ecrImageDetailsScreen {
 				m.currentScreen = ecrImagesScreen
 				return m, nil
+			} else if m.currentScreen == secretsDetailsScreen {
+				m.currentScreen = secretsScreen
+				m.currentSecretDetails = nil
+				return m, nil
 			} else if m.currentScreen == ecsScreen || m.currentScreen == ec2Screen || m.currentScreen == s3Screen || m.currentScreen == eksScreen || m.currentScreen == ecrScreen {
 				// Return to service selector from any main service screen
 				m.goToServiceSelection()
@@ -1759,6 +1820,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(m.ecr.Repositories) == 0 && m.awsClient != nil {
 						m.loading = true
 						return m, m.loadECRRepositories
+					}
+					return m, nil
+				case "Secrets":
+					m.navigateToScreen(secretsScreen)
+					m.viewportOffset = 0
+					m.statusMessage = "Switched to Secrets Manager"
+					if len(m.secrets) == 0 && m.awsClient != nil {
+						m.loading = true
+						return m, m.loadSecrets
 					}
 					return m, nil
 				default:
@@ -1899,6 +1969,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loading = true
 					return m, func() tea.Msg { return m.loadECRScan(m.ecr.CurrentRepo, selected.Digest) }
 				}
+			} else if m.currentScreen == secretsScreen {
+				list := m.secrets
+				if len(m.secretsFiltered) > 0 {
+					list = m.secretsFiltered
+				}
+				if len(list) > 0 && m.selectedSecretIndex < len(list) {
+					sec := list[m.selectedSecretIndex]
+					m.loading = true
+					m.viewportOffset = 0
+					return m, func() tea.Msg { return m.loadSecretDetails(sec.Name) }
+				}
 			} else if m.currentScreen == accountScreen {
 				// Switch to selected AWS account
 				accounts := m.ssoAccounts
@@ -2010,6 +2091,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.loading = true
 						return m, func() tea.Msg { return m.loadECRScan(m.ecr.CurrentRepo, img.Digest) }
 					}
+				}
+			} else if m.currentScreen == secretsScreen {
+				m.loading = true
+				return m, m.loadSecrets
+			} else if m.currentScreen == secretsDetailsScreen {
+				if m.currentSecretDetails != nil {
+					m.loading = true
+					name := m.currentSecretDetails.Name
+					return m, func() tea.Msg { return m.loadSecretDetails(name) }
 				}
 			}
 		case "K":
@@ -2396,6 +2486,7 @@ func (m *model) clearSearch() {
 	m.ecs.FilteredTasks = nil
 	m.ecr.FilteredRepos = nil
 	m.ecr.FilteredImages = nil
+	m.secretsFiltered = nil
 }
 
 func (m *model) initHistory(start screen) {
@@ -2467,7 +2558,7 @@ func (m *model) goToServiceSelection() {
 // Helper functions for VIM navigation
 func (m *model) handleVimNavigation(action vim.NavigationAction) {
 	// For detail screens, handle viewport scrolling instead of item navigation
-	if m.currentScreen == ec2DetailsScreen || m.currentScreen == s3ObjectDetailsScreen || m.currentScreen == eksDetailsScreen || m.currentScreen == ecsTaskDetailsScreen || m.currentScreen == ecrImageDetailsScreen {
+	if m.currentScreen == ec2DetailsScreen || m.currentScreen == s3ObjectDetailsScreen || m.currentScreen == eksDetailsScreen || m.currentScreen == ecsTaskDetailsScreen || m.currentScreen == ecrImageDetailsScreen || m.currentScreen == secretsDetailsScreen {
 		m.handleDetailViewScroll(action)
 		return
 	}
@@ -2530,6 +2621,15 @@ func (m *model) handleVimNavigation(action vim.NavigationAction) {
 			listLength = len(m.ecr.Images)
 		}
 		currentIndex = m.ecr.SelectedImage
+	case secretsScreen:
+		if len(m.secretsFiltered) > 0 {
+			listLength = len(m.secretsFiltered)
+		} else if m.vimState.LastSearch != "" && len(m.secrets) == 0 {
+			return
+		} else {
+			listLength = len(m.secrets)
+		}
+		currentIndex = m.selectedSecretIndex
 	case accountScreen:
 		if len(m.ssoFilteredAccounts) > 0 {
 			listLength = len(m.ssoFilteredAccounts)
@@ -2692,6 +2792,12 @@ func (m *model) setSelectedIndex(index int) {
 		} else if index >= 0 && index < len(m.ecr.Images) {
 			m.ecr.SelectedImage = index
 		}
+	case secretsScreen:
+		if len(m.secretsFiltered) > 0 && index >= 0 && index < len(m.secretsFiltered) {
+			m.selectedSecretIndex = index
+		} else if index >= 0 && index < len(m.secrets) {
+			m.selectedSecretIndex = index
+		}
 	}
 }
 
@@ -2751,6 +2857,11 @@ func (m *model) applyVimSearch() {
 	case ecrImagesScreen:
 		for _, img := range m.ecr.Images {
 			line := fmt.Sprintf("%s %s %s", img.Digest, strings.Join(img.Tags, ","), img.ManifestType)
+			searchItems = append(searchItems, strings.ToLower(line))
+		}
+	case secretsScreen:
+		for _, sec := range m.secrets {
+			line := fmt.Sprintf("%s %s %t", sec.Name, sec.Description, sec.RotationEnabled)
 			searchItems = append(searchItems, strings.ToLower(line))
 		}
 	default:
@@ -2813,6 +2924,11 @@ func (m *model) applyVimSearch() {
 			for _, idx := range m.vimState.SearchResults {
 				m.ecr.FilteredImages = append(m.ecr.FilteredImages, m.ecr.Images[idx])
 			}
+		case secretsScreen:
+			m.secretsFiltered = make([]aws.SecretSummary, 0, len(m.vimState.SearchResults))
+			for _, idx := range m.vimState.SearchResults {
+				m.secretsFiltered = append(m.secretsFiltered, m.secrets[idx])
+			}
 		}
 
 		// Reset selection to first filtered result
@@ -2842,6 +2958,8 @@ func (m *model) applyVimSearch() {
 			m.ecr.FilteredRepos = []aws.ECRRepository{}
 		case ecrImagesScreen:
 			m.ecr.FilteredImages = []aws.ECRImage{}
+		case secretsScreen:
+			m.secretsFiltered = []aws.SecretSummary{}
 		}
 	}
 }
@@ -2871,6 +2989,9 @@ func (m *model) executeVimCommand(commandStr string) tea.Cmd {
 			m.currentScreen = ecrScreen
 		} else if m.currentScreen == ecrImageDetailsScreen {
 			m.currentScreen = ecrImagesScreen
+		} else if m.currentScreen == secretsDetailsScreen {
+			m.currentScreen = secretsScreen
+			m.currentSecretDetails = nil
 		} else {
 			return tea.Quit
 		}
@@ -2917,6 +3038,7 @@ func (m *model) executeVimCommand(commandStr string) tea.Cmd {
 		m.ecs.FilteredTasks = nil
 		m.ecr.FilteredRepos = nil
 		m.ecr.FilteredImages = nil
+		m.secretsFiltered = nil
 		m.statusMessage = "Filter cleared"
 
 	case vim.CmdHelp, "h", "?":
@@ -3212,6 +3334,10 @@ func (m model) View() string {
 		content = m.renderECRImages()
 	case ecrImageDetailsScreen:
 		content = m.renderECRImageDetails()
+	case secretsScreen:
+		content = m.renderSecrets()
+	case secretsDetailsScreen:
+		content = m.renderSecretDetails()
 	case helpScreen:
 		content = m.renderHelp()
 	}
@@ -3383,6 +3509,12 @@ func (m model) renderK9sHeader() string {
 	case ecrImageDetailsScreen:
 		serviceName = "ECR"
 		viewName = "Image Details"
+	case secretsScreen:
+		serviceName = "Secrets"
+		viewName = "List"
+	case secretsDetailsScreen:
+		serviceName = "Secrets"
+		viewName = "Details"
 	}
 
 	leftSide.WriteString(labelStyle.Render("Service: ") + valueStyle.Render(serviceName) + "\n")
@@ -3510,6 +3642,17 @@ func (m model) renderK9sHeader() string {
 		keyHints = []string{
 			keyHintKeyStyle.Render("<esc>") + " " + keyHintActionStyle.Render("Images"),
 			keyHintKeyStyle.Render("<r>") + " " + keyHintActionStyle.Render("Reload Scan"),
+		}
+	case secretsScreen:
+		keyHints = []string{
+			keyHintKeyStyle.Render("<enter>") + " " + keyHintActionStyle.Render("Details"),
+			keyHintKeyStyle.Render("</>") + " " + keyHintActionStyle.Render("Search"),
+			keyHintKeyStyle.Render("<r>") + " " + keyHintActionStyle.Render("Refresh"),
+		}
+	case secretsDetailsScreen:
+		keyHints = []string{
+			keyHintKeyStyle.Render("<esc>") + " " + keyHintActionStyle.Render("Back"),
+			keyHintKeyStyle.Render("<r>") + " " + keyHintActionStyle.Render("Reload"),
 		}
 	}
 
@@ -3711,6 +3854,14 @@ func (m model) renderK9sBreadcrumb() string {
 			repo = "<" + repo + ">"
 		}
 		breadcrumbs = []string{"<ecr>", "<repositories>", repo, "<images>", "<details>"}
+	case secretsScreen:
+		breadcrumbs = []string{"<secrets>", "<list>"}
+	case secretsDetailsScreen:
+		name := "<secret>"
+		if m.currentSecretDetails != nil {
+			name = "<" + m.currentSecretDetails.Name + ">"
+		}
+		breadcrumbs = []string{"<secrets>", "<list>", name, "<details>"}
 	}
 
 	var result strings.Builder
@@ -3938,7 +4089,7 @@ func (m model) renderAccountSelection() string {
 }
 
 func getServices() []string {
-	return []string{"EC2", "S3", "EKS", "ECS", "ECR"}
+	return []string{"EC2", "S3", "EKS", "ECS", "ECR", "Secrets"}
 }
 
 func (m model) renderServiceSelection() string {
@@ -5279,6 +5430,144 @@ func (m model) renderECRImageDetails() string {
 				}
 			}
 		}
+	}
+
+	return m.renderWithViewport(b.String())
+}
+
+func (m model) renderSecrets() string {
+	title := lipgloss.NewStyle().Bold(true).Render("Secrets Manager")
+	if m.loading {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Loading secrets...")
+	}
+	if m.err != nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("Error: %v", m.err))
+	}
+
+	list := m.secrets
+	if len(m.secretsFiltered) > 0 {
+		list = m.secretsFiltered
+	} else if m.vimState.LastSearch != "" {
+		list = []aws.SecretSummary{}
+	}
+	if len(list) == 0 {
+		msg := "No secrets found"
+		if m.vimState.LastSearch != "" {
+			msg = "No secrets match your search"
+		}
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(msg)
+	}
+
+	m.ensureVisible(m.selectedSecretIndex, len(list))
+	start, end := m.getVisibleRange(len(list))
+
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Underline(true)
+	var bld strings.Builder
+	bld.WriteString(title + "\n\n")
+	bld.WriteString(headerStyle.Render(fmt.Sprintf("%-32s %-10s %-19s %-19s", "SECRET", "ROTATION", "CHANGED", "ACCESSED")) + "\n")
+	for i := start; i < end; i++ {
+		sec := list[i]
+		rot := "off"
+		if sec.RotationEnabled {
+			rot = "on"
+		}
+		row := fmt.Sprintf("%-32s %-10s %-19s %-19s",
+			uiShared.Truncate(sec.Name, 32),
+			rot,
+			formatTime(sec.LastChanged),
+			formatTime(sec.LastAccessed),
+		)
+		if i == m.selectedSecretIndex {
+			row = "\x1b[48;5;51m\x1b[38;5;0m\x1b[1m" + row + "\x1b[K\x1b[0m"
+		}
+		bld.WriteString(row + "\n")
+	}
+	bld.WriteString(fmt.Sprintf("\nShowing %d-%d of %d secrets", start+1, end, len(list)))
+
+	// quick summary
+	if len(list) > 0 && m.selectedSecretIndex < len(list) {
+		sec := list[m.selectedSecretIndex]
+		bld.WriteString("\n\n")
+		bld.WriteString(lipgloss.NewStyle().Bold(true).Render("Selected Secret") + "\n")
+		bld.WriteString(fmt.Sprintf("Name: %s\nDesc: %s\nRotation: %t (Next: %s)\nKMS: %s\nService: %s\nPrimary Region: %s\n",
+			sec.Name, sec.Description, sec.RotationEnabled, formatTime(sec.NextRotation), sec.KMSKeyID, sec.OwningService, sec.PrimaryRegion))
+	}
+
+	return bld.String()
+}
+
+func (m model) renderSecretDetails() string {
+	title := lipgloss.NewStyle().Bold(true).Render("Secret Details")
+	val := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	if m.loading && m.currentSecretDetails == nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Loading secret details...")
+	}
+	if m.err != nil && m.currentSecretDetails == nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("Error: %v", m.err))
+	}
+	if m.currentSecretDetails == nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("No secret selected")
+	}
+
+	sec := m.currentSecretDetails
+	var b strings.Builder
+	b.WriteString(title + "\n\n")
+	b.WriteString(fmt.Sprintf("Name: %s\nARN: %s\nDesc: %s\nKMS: %s\nService: %s\nCreated: %s\nChanged: %s\nAccessed: %s\nRotation: %t (Next: %s) Lambda: %s\n",
+		sec.Name, sec.Arn, sec.Description, sec.KMSKeyID, sec.OwningService, formatTime(sec.CreatedAt), formatTime(sec.LastChanged), formatTime(sec.LastAccessed), sec.RotationEnabled, formatTime(sec.NextRotation), sec.RotationARN))
+	if sec.Rotation != nil {
+		days := int64(0)
+		if sec.Rotation.AutomaticallyAfterDays != nil {
+			days = *sec.Rotation.AutomaticallyAfterDays
+		}
+		dur := ""
+		if sec.Rotation.Duration != nil {
+			dur = *sec.Rotation.Duration
+		}
+		sched := ""
+		if sec.Rotation.ScheduleExpression != nil {
+			sched = *sec.Rotation.ScheduleExpression
+		}
+		b.WriteString(fmt.Sprintf("Rotation Rules: after %d days duration %s schedule %s\n",
+			days, dur, sched))
+	}
+
+	if len(sec.Versions) > 0 {
+		b.WriteString("\nVersions (newest first):\n")
+		limit := len(sec.Versions)
+		if limit > 10 {
+			limit = 10
+		}
+		for _, v := range sec.Versions[:limit] {
+			b.WriteString(fmt.Sprintf(" - %s [%s] created %s\n", val(v.VersionId), strings.Join(v.VersionStages, ","), formatTime(v.CreatedDate)))
+		}
+	}
+
+	if len(sec.Replication) > 0 {
+		b.WriteString("\nReplication:\n")
+		for _, r := range sec.Replication {
+			b.WriteString(fmt.Sprintf(" - %s status %s kms %s lastAccess %s\n", val(r.Region), r.Status, val(r.KmsKeyId), formatTime(r.LastAccessedDate)))
+		}
+	}
+
+	if len(sec.Tags) > 0 {
+		b.WriteString("\nTags:\n")
+		for _, t := range sec.Tags {
+			b.WriteString(fmt.Sprintf(" - %s: %s\n", val(t.Key), val(t.Value)))
+		}
+	}
+
+	b.WriteString("\nSecret Value:\n")
+	if sec.RawJSON != "" {
+		b.WriteString(sec.RawJSON + "\n")
+	} else if sec.ValueString != "" {
+		b.WriteString(sec.ValueString + "\n")
+	} else {
+		b.WriteString("<binary or empty>\n")
 	}
 
 	return m.renderWithViewport(b.String())
