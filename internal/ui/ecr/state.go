@@ -1,26 +1,17 @@
 package ecr
 
-import (
-	"context"
-
-	"github.com/noelruault/lazyaws/internal/aws"
-)
+import "github.com/noelruault/lazyaws/internal/aws"
 
 // State holds ECR-specific UI state.
 type State struct {
-	Repositories      []string
-	FilteredRepos     []string
+	Repositories      []aws.ECRRepository
+	FilteredRepos     []aws.ECRRepository
 	SelectedRepoIndex int
 
-	Images      []string
-	FilteredImg []string
-	SelectedImg int
-}
+	CurrentRepo string
 
-// LoadRepositories fetches ECR repositories.
-func LoadRepositories(ctx context.Context, client *aws.Client) ([]string, error) {
-	if client == nil {
-		return nil, nil
-	}
-	return client.ListECRRepositories(ctx)
+	Images          []aws.ECRImage
+	FilteredImages  []aws.ECRImage
+	SelectedImage   int
+	ImageScanResult *aws.ECRScanResult
 }

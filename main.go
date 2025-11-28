@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +45,8 @@ const (
 	ecsTasksScreen
 	ecsTaskDetailsScreen
 	ecrScreen
+	ecrImagesScreen
+	ecrImageDetailsScreen
 	helpScreen
 	serviceScreen
 )
@@ -262,6 +265,24 @@ type ecsTaskLogsLoadedMsg struct {
 	taskArn string
 	logs    []aws.ECSLogStream
 	err     error
+}
+
+type ecrReposLoadedMsg struct {
+	repos []aws.ECRRepository
+	err   error
+}
+
+type ecrImagesLoadedMsg struct {
+	repo   string
+	images []aws.ECRImage
+	err    error
+}
+
+type ecrScanLoadedMsg struct {
+	repo   string
+	digest string
+	scan   *aws.ECRScanResult
+	err    error
 }
 
 type ssoConfigSavedMsg struct {
@@ -522,6 +543,27 @@ func (m model) loadECSTaskLogs(clusterName, taskArn string) tea.Msg {
 	defer cancel()
 	logs, err := m.awsClient.GetECSTaskLogs(ctx, clusterName, taskArn, 50)
 	return ecsTaskLogsLoadedMsg{taskArn: taskArn, logs: logs, err: err}
+}
+
+func (m model) loadECRRepositories() tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repos, err := m.awsClient.ListECRRepositoriesDetailed(ctx)
+	return ecrReposLoadedMsg{repos: repos, err: err}
+}
+
+func (m model) loadECRImages(repoName string) tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	images, err := m.awsClient.ListECRImages(ctx, repoName)
+	return ecrImagesLoadedMsg{repo: repoName, images: images, err: err}
+}
+
+func (m model) loadECRScan(repoName, digest string) tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	scan, err := m.awsClient.GetECRImageScan(ctx, repoName, digest)
+	return ecrScanLoadedMsg{repo: repoName, digest: digest, scan: scan, err: err}
 }
 
 func (m model) loadEKSClusterDetails(clusterName string) tea.Cmd {
@@ -1259,6 +1301,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ecrReposLoadedMsg:
+		m.loading = false
+		m.err = msg.err
+		if msg.err == nil {
+			m.ecr.Repositories = msg.repos
+			m.ecr.FilteredRepos = nil
+			m.ecr.SelectedRepoIndex = 0
+			m.ecr.CurrentRepo = ""
+			m.ecr.Images = nil
+			m.ecr.FilteredImages = nil
+			m.ecr.ImageScanResult = nil
+			m.statusMessage = fmt.Sprintf("Loaded %d ECR repositories", len(msg.repos))
+		}
+		return m, nil
+
+	case ecrImagesLoadedMsg:
+		m.loading = false
+		m.err = msg.err
+		if msg.err == nil {
+			m.ecr.CurrentRepo = msg.repo
+			m.ecr.Images = msg.images
+			m.ecr.FilteredImages = nil
+			m.ecr.SelectedImage = 0
+			m.ecr.ImageScanResult = nil
+			m.currentScreen = ecrImagesScreen
+			m.viewportOffset = 0
+			m.statusMessage = fmt.Sprintf("Loaded %d images", len(msg.images))
+		}
+		return m, nil
+
+	case ecrScanLoadedMsg:
+		m.loading = false
+		m.err = msg.err
+		if msg.err == nil {
+			m.ecr.ImageScanResult = msg.scan
+			m.statusMessage = fmt.Sprintf("Loaded scan for %s", msg.digest)
+		}
+		return m, nil
+
 	case eksClusterDetailsLoadedMsg:
 		m.loading = false
 		m.err = msg.err
@@ -1576,7 +1657,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentScreen = ecsScreen
 				m.ecs.SelectedSvc = 0
 				return m, nil
-			} else if m.currentScreen == ecsScreen || m.currentScreen == ec2Screen || m.currentScreen == s3Screen || m.currentScreen == eksScreen {
+			} else if m.currentScreen == ecrImagesScreen {
+				m.currentScreen = ecrScreen
+				m.ecr.Images = nil
+				m.ecr.FilteredImages = nil
+				m.ecr.SelectedImage = 0
+				m.ecr.ImageScanResult = nil
+				return m, nil
+			} else if m.currentScreen == ecrImageDetailsScreen {
+				m.currentScreen = ecrImagesScreen
+				return m, nil
+			} else if m.currentScreen == ecsScreen || m.currentScreen == ec2Screen || m.currentScreen == s3Screen || m.currentScreen == eksScreen || m.currentScreen == ecrScreen {
 				// Return to service selector from any main service screen
 				m.goToServiceSelection()
 				return m, nil
@@ -1665,7 +1756,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.navigateToScreen(ecrScreen)
 					m.viewportOffset = 0
 					m.statusMessage = "Switched to ECR"
-					// TODO: load ECR repositories when wired
+					if len(m.ecr.Repositories) == 0 && m.awsClient != nil {
+						m.loading = true
+						return m, m.loadECRRepositories
+					}
 					return m, nil
 				default:
 					return m, nil
@@ -1782,6 +1876,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loading = true
 					return m, func() tea.Msg { return m.loadECSTaskLogs(m.ecs.CurrentCluster, selectedTask.Arn) }
 				}
+			} else if m.currentScreen == ecrScreen {
+				repos := m.ecr.Repositories
+				if len(m.ecr.FilteredRepos) > 0 {
+					repos = m.ecr.FilteredRepos
+				}
+				if len(repos) > 0 && m.ecr.SelectedRepoIndex < len(repos) {
+					selectedRepo := repos[m.ecr.SelectedRepoIndex]
+					m.loading = true
+					m.viewportOffset = 0
+					return m, func() tea.Msg { return m.loadECRImages(selectedRepo.Name) }
+				}
+			} else if m.currentScreen == ecrImagesScreen {
+				images := m.ecr.Images
+				if len(m.ecr.FilteredImages) > 0 {
+					images = m.ecr.FilteredImages
+				}
+				if len(images) > 0 && m.ecr.SelectedImage < len(images) {
+					selected := images[m.ecr.SelectedImage]
+					m.navigateToScreen(ecrImageDetailsScreen)
+					m.viewportOffset = 0
+					m.loading = true
+					return m, func() tea.Msg { return m.loadECRScan(m.ecr.CurrentRepo, selected.Digest) }
+				}
 			} else if m.currentScreen == accountScreen {
 				// Switch to selected AWS account
 				accounts := m.ssoAccounts
@@ -1873,6 +1990,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					task := tasks[m.ecs.SelectedTask]
 					m.loading = true
 					return m, func() tea.Msg { return m.loadECSTaskLogs(cluster, task.Arn) }
+				}
+			} else if m.currentScreen == ecrScreen {
+				m.loading = true
+				return m, m.loadECRRepositories
+			} else if m.currentScreen == ecrImagesScreen {
+				if m.ecr.CurrentRepo != "" {
+					m.loading = true
+					return m, func() tea.Msg { return m.loadECRImages(m.ecr.CurrentRepo) }
+				}
+			} else if m.currentScreen == ecrImageDetailsScreen {
+				if m.ecr.CurrentRepo != "" {
+					images := m.ecr.Images
+					if len(m.ecr.FilteredImages) > 0 {
+						images = m.ecr.FilteredImages
+					}
+					if len(images) > 0 && m.ecr.SelectedImage < len(images) {
+						img := images[m.ecr.SelectedImage]
+						m.loading = true
+						return m, func() tea.Msg { return m.loadECRScan(m.ecr.CurrentRepo, img.Digest) }
+					}
 				}
 			}
 		case "K":
@@ -2257,6 +2394,8 @@ func (m *model) clearSearch() {
 	m.ecs.Filtered = nil
 	m.ecs.FilteredSvcs = nil
 	m.ecs.FilteredTasks = nil
+	m.ecr.FilteredRepos = nil
+	m.ecr.FilteredImages = nil
 }
 
 func (m *model) initHistory(start screen) {
@@ -2328,7 +2467,7 @@ func (m *model) goToServiceSelection() {
 // Helper functions for VIM navigation
 func (m *model) handleVimNavigation(action vim.NavigationAction) {
 	// For detail screens, handle viewport scrolling instead of item navigation
-	if m.currentScreen == ec2DetailsScreen || m.currentScreen == s3ObjectDetailsScreen || m.currentScreen == eksDetailsScreen || m.currentScreen == ecsTaskDetailsScreen {
+	if m.currentScreen == ec2DetailsScreen || m.currentScreen == s3ObjectDetailsScreen || m.currentScreen == eksDetailsScreen || m.currentScreen == ecsTaskDetailsScreen || m.currentScreen == ecrImageDetailsScreen {
 		m.handleDetailViewScroll(action)
 		return
 	}
@@ -2382,6 +2521,15 @@ func (m *model) handleVimNavigation(action vim.NavigationAction) {
 			listLength = len(m.ecr.Repositories)
 		}
 		currentIndex = m.ecr.SelectedRepoIndex
+	case ecrImagesScreen:
+		if len(m.ecr.FilteredImages) > 0 {
+			listLength = len(m.ecr.FilteredImages)
+		} else if m.vimState.LastSearch != "" && len(m.ecr.Images) == 0 {
+			return
+		} else {
+			listLength = len(m.ecr.Images)
+		}
+		currentIndex = m.ecr.SelectedImage
 	case accountScreen:
 		if len(m.ssoFilteredAccounts) > 0 {
 			listLength = len(m.ssoFilteredAccounts)
@@ -2538,6 +2686,12 @@ func (m *model) setSelectedIndex(index int) {
 		} else if index >= 0 && index < len(m.ecr.Repositories) {
 			m.ecr.SelectedRepoIndex = index
 		}
+	case ecrImagesScreen:
+		if len(m.ecr.FilteredImages) > 0 && index >= 0 && index < len(m.ecr.FilteredImages) {
+			m.ecr.SelectedImage = index
+		} else if index >= 0 && index < len(m.ecr.Images) {
+			m.ecr.SelectedImage = index
+		}
 	}
 }
 
@@ -2587,6 +2741,16 @@ func (m *model) applyVimSearch() {
 	case ecsTasksScreen:
 		for _, task := range m.ecs.Tasks {
 			line := fmt.Sprintf("%s %s %s %s %s", task.ID, task.Status, task.Health, task.CPU, task.Memory)
+			searchItems = append(searchItems, strings.ToLower(line))
+		}
+	case ecrScreen:
+		for _, repo := range m.ecr.Repositories {
+			line := fmt.Sprintf("%s %s %s", repo.Name, repo.TagMutability, repo.EncryptionType)
+			searchItems = append(searchItems, strings.ToLower(line))
+		}
+	case ecrImagesScreen:
+		for _, img := range m.ecr.Images {
+			line := fmt.Sprintf("%s %s %s", img.Digest, strings.Join(img.Tags, ","), img.ManifestType)
 			searchItems = append(searchItems, strings.ToLower(line))
 		}
 	default:
@@ -2640,9 +2804,14 @@ func (m *model) applyVimSearch() {
 				m.ecs.FilteredTasks = append(m.ecs.FilteredTasks, m.ecs.Tasks[idx])
 			}
 		case ecrScreen:
-			m.ecr.FilteredRepos = make([]string, 0, len(m.vimState.SearchResults))
+			m.ecr.FilteredRepos = make([]aws.ECRRepository, 0, len(m.vimState.SearchResults))
 			for _, idx := range m.vimState.SearchResults {
 				m.ecr.FilteredRepos = append(m.ecr.FilteredRepos, m.ecr.Repositories[idx])
+			}
+		case ecrImagesScreen:
+			m.ecr.FilteredImages = make([]aws.ECRImage, 0, len(m.vimState.SearchResults))
+			for _, idx := range m.vimState.SearchResults {
+				m.ecr.FilteredImages = append(m.ecr.FilteredImages, m.ecr.Images[idx])
 			}
 		}
 
@@ -2670,7 +2839,9 @@ func (m *model) applyVimSearch() {
 		case ecsTasksScreen:
 			m.ecs.FilteredTasks = []aws.ECSTask{}
 		case ecrScreen:
-			m.ecr.FilteredRepos = []string{}
+			m.ecr.FilteredRepos = []aws.ECRRepository{}
+		case ecrImagesScreen:
+			m.ecr.FilteredImages = []aws.ECRImage{}
 		}
 	}
 }
@@ -2696,6 +2867,10 @@ func (m *model) executeVimCommand(commandStr string) tea.Cmd {
 		} else if m.currentScreen == s3ObjectDetailsScreen {
 			m.currentScreen = s3BrowseScreen
 			m.s3.ObjectDetails = nil
+		} else if m.currentScreen == ecrImagesScreen {
+			m.currentScreen = ecrScreen
+		} else if m.currentScreen == ecrImageDetailsScreen {
+			m.currentScreen = ecrImagesScreen
 		} else {
 			return tea.Quit
 		}
@@ -2740,6 +2915,8 @@ func (m *model) executeVimCommand(commandStr string) tea.Cmd {
 		m.ecs.Filtered = nil
 		m.ecs.FilteredSvcs = nil
 		m.ecs.FilteredTasks = nil
+		m.ecr.FilteredRepos = nil
+		m.ecr.FilteredImages = nil
 		m.statusMessage = "Filter cleared"
 
 	case vim.CmdHelp, "h", "?":
@@ -2796,6 +2973,10 @@ func (m *model) executeVimCommand(commandStr string) tea.Cmd {
 		m.clearSearch()
 		m.navigateToScreen(ecrScreen)
 		m.viewportOffset = 0
+		if len(m.ecr.Repositories) == 0 && m.awsClient != nil {
+			m.loading = true
+			return m.loadECRRepositories
+		}
 		m.statusMessage = "Switched to ECR"
 
 	case vim.CmdServices:
@@ -3025,6 +3206,12 @@ func (m model) View() string {
 		content = m.renderECSTasks()
 	case ecsTaskDetailsScreen:
 		content = m.renderECSTaskDetails()
+	case ecrScreen:
+		content = m.renderECRRepositories()
+	case ecrImagesScreen:
+		content = m.renderECRImages()
+	case ecrImageDetailsScreen:
+		content = m.renderECRImageDetails()
 	case helpScreen:
 		content = m.renderHelp()
 	}
@@ -3187,6 +3374,15 @@ func (m model) renderK9sHeader() string {
 	case ecsTaskDetailsScreen:
 		serviceName = "ECS"
 		viewName = "Task Details"
+	case ecrScreen:
+		serviceName = "ECR"
+		viewName = "Repositories"
+	case ecrImagesScreen:
+		serviceName = "ECR"
+		viewName = "Images"
+	case ecrImageDetailsScreen:
+		serviceName = "ECR"
+		viewName = "Image Details"
 	}
 
 	leftSide.WriteString(labelStyle.Render("Service: ") + valueStyle.Render(serviceName) + "\n")
@@ -3296,6 +3492,24 @@ func (m model) renderK9sHeader() string {
 		keyHints = []string{
 			keyHintKeyStyle.Render("<esc>") + " " + keyHintActionStyle.Render("Back"),
 			keyHintKeyStyle.Render("<r>") + " " + keyHintActionStyle.Render("Reload Logs"),
+		}
+	case ecrScreen:
+		keyHints = []string{
+			keyHintKeyStyle.Render("<enter>") + " " + keyHintActionStyle.Render("Images"),
+			keyHintKeyStyle.Render("</>") + " " + keyHintActionStyle.Render("Search"),
+			keyHintKeyStyle.Render("<r>") + " " + keyHintActionStyle.Render("Refresh"),
+		}
+	case ecrImagesScreen:
+		keyHints = []string{
+			keyHintKeyStyle.Render("<enter>") + " " + keyHintActionStyle.Render("Details/Scan"),
+			keyHintKeyStyle.Render("</>") + " " + keyHintActionStyle.Render("Search"),
+			keyHintKeyStyle.Render("<r>") + " " + keyHintActionStyle.Render("Refresh"),
+			keyHintKeyStyle.Render("<esc>") + " " + keyHintActionStyle.Render("Repositories"),
+		}
+	case ecrImageDetailsScreen:
+		keyHints = []string{
+			keyHintKeyStyle.Render("<esc>") + " " + keyHintActionStyle.Render("Images"),
+			keyHintKeyStyle.Render("<r>") + " " + keyHintActionStyle.Render("Reload Scan"),
 		}
 	}
 
@@ -3479,6 +3693,24 @@ func (m model) renderK9sBreadcrumb() string {
 			taskLabel = "<" + m.ecs.Tasks[m.ecs.SelectedTask].ID + ">"
 		}
 		breadcrumbs = []string{"<ecs>", "<clusters>", cluster, "<services>", service, "<tasks>", taskLabel, "<details>"}
+	case ecrScreen:
+		breadcrumbs = []string{"<ecr>", "<repositories>"}
+	case ecrImagesScreen:
+		repo := m.ecr.CurrentRepo
+		if repo == "" {
+			repo = "<repo>"
+		} else {
+			repo = "<" + repo + ">"
+		}
+		breadcrumbs = []string{"<ecr>", "<repositories>", repo, "<images>"}
+	case ecrImageDetailsScreen:
+		repo := m.ecr.CurrentRepo
+		if repo == "" {
+			repo = "<repo>"
+		} else {
+			repo = "<" + repo + ">"
+		}
+		breadcrumbs = []string{"<ecr>", "<repositories>", repo, "<images>", "<details>"}
 	}
 
 	var result strings.Builder
@@ -4812,6 +5044,239 @@ func (m model) renderECSTaskDetails() string {
 			}
 			for _, ev := range stream.Events {
 				b.WriteString(fmt.Sprintf("   [%s] %s\n", ev.Timestamp.Format("2006-01-02 15:04:05"), ev.Message))
+			}
+		}
+	}
+
+	return m.renderWithViewport(b.String())
+}
+
+func (m model) renderECRRepositories() string {
+	title := lipgloss.NewStyle().Bold(true).Render("ECR Repositories")
+	if m.loading {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Loading ECR repositories...")
+	}
+	if m.err != nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("Error: %v", m.err))
+	}
+
+	repos := m.ecr.Repositories
+	if len(m.ecr.FilteredRepos) > 0 {
+		repos = m.ecr.FilteredRepos
+	} else if m.vimState.LastSearch != "" {
+		repos = []aws.ECRRepository{}
+	}
+
+	if len(repos) == 0 {
+		msg := "No ECR repositories found"
+		if m.vimState.LastSearch != "" {
+			msg = "No repositories match your search"
+		}
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(msg)
+	}
+
+	m.ensureVisible(m.ecr.SelectedRepoIndex, len(repos))
+	start, end := m.getVisibleRange(len(repos))
+
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Underline(true)
+	var b strings.Builder
+	b.WriteString(title + "\n\n")
+	b.WriteString(headerStyle.Render(fmt.Sprintf("%-26s %-36s %-10s %-8s", "REPOSITORY", "URI", "SCAN", "TAGS")) + "\n")
+	for i := start; i < end; i++ {
+		repo := repos[i]
+		scan := "off"
+		if repo.ScanOnPush {
+			scan = "on"
+		}
+		row := fmt.Sprintf("%-26s %-36s %-10s %-8s",
+			uiShared.Truncate(repo.Name, 26),
+			uiShared.Truncate(repo.URI, 36),
+			scan,
+			uiShared.Truncate(repo.TagMutability, 8),
+		)
+		if i == m.ecr.SelectedRepoIndex {
+			row = "\x1b[48;5;51m\x1b[38;5;0m\x1b[1m" + row + "\x1b[K\x1b[0m"
+		}
+		b.WriteString(row + "\n")
+	}
+	b.WriteString(fmt.Sprintf("\nShowing %d-%d of %d repositories", start+1, end, len(repos)))
+
+	// Details for selected repo
+	if len(repos) > 0 && m.ecr.SelectedRepoIndex < len(repos) {
+		repo := repos[m.ecr.SelectedRepoIndex]
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Repository Details") + "\n")
+		b.WriteString(fmt.Sprintf("Name: %s\nURI: %s\nCreated: %s\nRegistry: %s\nScan on Push: %t\nTag Mutability: %s\nEncryption: %s %s\n",
+			repo.Name,
+			repo.URI,
+			formatTime(repo.CreatedAt),
+			repo.RegistryID,
+			repo.ScanOnPush,
+			repo.TagMutability,
+			repo.EncryptionType,
+			repo.KMSKey))
+		if repo.PolicyText != "" {
+			b.WriteString("\nPolicy:\n")
+			b.WriteString(m.renderWithViewport(repo.PolicyText))
+		}
+		if repo.LifecyclePolicy != "" {
+			b.WriteString("\nLifecycle Policy:\n")
+			b.WriteString(repo.LifecyclePolicy + "\n")
+		}
+	}
+
+	return m.renderWithViewport(b.String())
+}
+
+func (m model) renderECRImages() string {
+	title := lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("ECR Images - %s", m.ecr.CurrentRepo))
+	if m.loading {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Loading ECR images...")
+	}
+	if m.err != nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("Error: %v", m.err))
+	}
+
+	images := m.ecr.Images
+	if len(m.ecr.FilteredImages) > 0 {
+		images = m.ecr.FilteredImages
+	} else if m.vimState.LastSearch != "" {
+		images = []aws.ECRImage{}
+	}
+
+	if len(images) == 0 {
+		msg := "No images found for this repository"
+		if m.vimState.LastSearch != "" {
+			msg = "No images match your search"
+		}
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(msg)
+	}
+
+	m.ensureVisible(m.ecr.SelectedImage, len(images))
+	start, end := m.getVisibleRange(len(images))
+
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Underline(true)
+	var b strings.Builder
+	b.WriteString(title + "\n\n")
+	b.WriteString(headerStyle.Render(fmt.Sprintf("%-15s %-25s %-10s %-18s %-12s", "DIGEST", "TAGS", "SIZE", "PUSHED", "MANIFEST")) + "\n")
+	for i := start; i < end; i++ {
+		img := images[i]
+		digest := img.Digest
+		if len(digest) > 12 {
+			digest = digest[len(digest)-12:]
+		}
+		tags := "<untagged>"
+		if len(img.Tags) > 0 {
+			tags = strings.Join(img.Tags, ",")
+		}
+		row := fmt.Sprintf("%-15s %-25s %-10s %-18s %-12s",
+			digest,
+			uiShared.Truncate(tags, 25),
+			formatBytes(img.SizeBytes),
+			formatTime(img.PushedAt),
+			uiShared.Truncate(img.ManifestType, 12),
+		)
+		if i == m.ecr.SelectedImage {
+			row = "\x1b[48;5;51m\x1b[38;5;0m\x1b[1m" + row + "\x1b[K\x1b[0m"
+		}
+		b.WriteString(row + "\n")
+	}
+	b.WriteString(fmt.Sprintf("\nShowing %d-%d of %d images", start+1, end, len(images)))
+
+	// Quick details
+	if len(images) > 0 && m.ecr.SelectedImage < len(images) {
+		img := images[m.ecr.SelectedImage]
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Selected Image") + "\n")
+		tags := "<untagged>"
+		if len(img.Tags) > 0 {
+			tags = strings.Join(img.Tags, ",")
+		}
+		b.WriteString(fmt.Sprintf("Digest: %s\nTags: %s\nSize: %s\nPushed: %s\nManifest: %s\n",
+			img.Digest,
+			tags,
+			formatBytes(img.SizeBytes),
+			formatTime(img.PushedAt),
+			img.ManifestType))
+	}
+
+	return b.String()
+}
+
+func (m model) renderECRImageDetails() string {
+	title := lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("ECR Image Details - %s", m.ecr.CurrentRepo))
+	var b strings.Builder
+	b.WriteString(title + "\n\n")
+
+	images := m.ecr.Images
+	if len(m.ecr.FilteredImages) > 0 {
+		images = m.ecr.FilteredImages
+	}
+	if len(images) == 0 || m.ecr.SelectedImage >= len(images) {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("No image selected"))
+		return b.String()
+	}
+
+	img := images[m.ecr.SelectedImage]
+	tags := "<untagged>"
+	if len(img.Tags) > 0 {
+		tags = strings.Join(img.Tags, ",")
+	}
+
+	b.WriteString(fmt.Sprintf("Digest: %s\nTags: %s\nSize: %s\nPushed: %s\nManifest: %s\nArtifact: %s\nRegistry: %s\n",
+		img.Digest,
+		tags,
+		formatBytes(img.SizeBytes),
+		formatTime(img.PushedAt),
+		img.ManifestType,
+		img.ArtifactType,
+		img.RegistryID,
+	))
+
+	if img.Severity != nil && len(img.Severity) > 0 {
+		b.WriteString("\nVulnerability summary:\n")
+		var sevKeys []string
+		for k := range img.Severity {
+			sevKeys = append(sevKeys, k)
+		}
+		sort.Strings(sevKeys)
+		for _, k := range sevKeys {
+			b.WriteString(fmt.Sprintf(" - %s: %d\n", k, img.Severity[k]))
+		}
+	}
+
+	b.WriteString("\nScan Findings (use 'r' to reload):\n")
+	if m.loading {
+		b.WriteString(" Loading scan...\n")
+	} else if m.err != nil && m.ecr.ImageScanResult == nil {
+		b.WriteString(fmt.Sprintf(" Error loading scan: %v\n", m.err))
+	} else if m.ecr.ImageScanResult == nil {
+		b.WriteString(" No scan data available\n")
+	} else {
+		scan := m.ecr.ImageScanResult
+		b.WriteString(fmt.Sprintf(" Status: %s (%s)\n", scan.Status, scan.Description))
+		b.WriteString(fmt.Sprintf(" Completed: %s | DB Updated: %s\n", formatTime(scan.CompletedAt), formatTime(scan.DBUpdatedAt)))
+		if len(scan.SeverityCount) > 0 {
+			b.WriteString(" Severity counts:\n")
+			var keys []string
+			for k := range scan.SeverityCount {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				b.WriteString(fmt.Sprintf("  - %s: %d\n", k, scan.SeverityCount[k]))
+			}
+		}
+		if len(scan.Findings) > 0 {
+			b.WriteString("\nFindings (first 10):\n")
+			for i, f := range scan.Findings {
+				b.WriteString(fmt.Sprintf(" %d. %s (%s)\n", i+1, f.Name, f.Severity))
+				if f.Description != "" {
+					b.WriteString("    " + f.Description + "\n")
+				}
+				if f.URI != "" {
+					b.WriteString("    " + f.URI + "\n")
+				}
 			}
 		}
 	}
