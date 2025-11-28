@@ -298,6 +298,8 @@ const (
 	CmdEC2           = "ec2"
 	CmdS3            = "s3"
 	CmdEKS           = "eks"
+	CmdECS           = "ecs"
+	CmdECR           = "ecr"
 	CmdServices      = "services"
 	CmdAccount       = "account"
 	CmdRegion        = "region"
@@ -312,7 +314,7 @@ func AllCommands() []string {
 		"cf", "clearfilter",
 		"sa", "selectall",
 		"da", "deselectall",
-		"ec2", "s3", "eks", "services",
+		"ec2", "s3", "eks", "ecs", "ecr", "services",
 		"account", // primary; "acc" remains accepted as an alias
 		"region",
 	}
