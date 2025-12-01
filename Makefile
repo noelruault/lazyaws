@@ -14,10 +14,12 @@ help:
 clean: ## Clean up build artifacts
 	@go clean -cache -modcache -testcache -fuzzcache
 	@find . -type d \( -name "go-build" -o -name ".gocache" -o -name ".gomodcache" \) -exec rm -rf {} + 2>/dev/null || true
-	@rm -rf ./web/dist || true
+	@rm -rf tmp || true
 
 start: ## Start the application
-	go mod tidy && go build -o bin/lazyaws && ./bin/lazyaws
+	go mod tidy && \
+	go build -o bin/lazyaws && \
+	./bin/lazyaws
 
 config: ## Open the config file
 	@$(EDITOR) $(HOME)/.lazyaws/config.json

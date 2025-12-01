@@ -232,6 +232,13 @@ func (c *Client) DownloadObject(ctx context.Context, bucketName, key, localPath 
 
 // DownloadObjectWithProgress downloads an S3 object with progress tracking
 func (c *Client) DownloadObjectWithProgress(ctx context.Context, bucketName, key, localPath string, progressCallback ProgressCallback) error {
+	// Ensure context has a reasonable timeout
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+	}
+
 	// Get object size first for progress tracking
 	headInput := &s3.HeadObjectInput{
 		Bucket: &bucketName,
@@ -243,6 +250,12 @@ func (c *Client) DownloadObjectWithProgress(ctx context.Context, bucketName, key
 	}
 
 	objectSize := getInt64(headResult.ContentLength)
+
+	// Ensure destination directory exists
+	destDir := filepath.Dir(localPath)
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create download directory %s: %w", destDir, err)
+	}
 
 	// Create the file
 	file, err := os.Create(localPath)

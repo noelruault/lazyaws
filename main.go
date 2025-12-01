@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -59,6 +60,8 @@ const (
 	authMethodProfile = 1
 	authMethodSSO     = 2
 	maxAuthMethod     = authMethodSSO
+
+	downloadPath = "tmp/downloads"
 )
 
 type model struct {
@@ -162,6 +165,7 @@ type objectDetailsLoadedMsg struct {
 
 type fileOperationCompletedMsg struct {
 	operation string
+	target    string
 	err       error
 }
 
@@ -696,7 +700,7 @@ func (m model) downloadS3Object(bucket, key, localPath string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		err := m.awsClient.DownloadObject(ctx, bucket, key, localPath)
-		return fileOperationCompletedMsg{operation: "download", err: err}
+		return fileOperationCompletedMsg{operation: "download", target: localPath, err: err}
 	}
 }
 
@@ -704,7 +708,7 @@ func (m model) uploadS3Object(bucket, key, localPath string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		err := m.awsClient.UploadObject(ctx, bucket, key, localPath)
-		return fileOperationCompletedMsg{operation: "upload", err: err}
+		return fileOperationCompletedMsg{operation: "upload", target: localPath, err: err}
 	}
 }
 
@@ -1516,7 +1520,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.statusMessage = fmt.Sprintf("Error %sing: %v", msg.operation, msg.err)
 		} else {
-			m.statusMessage = fmt.Sprintf("Successfully %sed file", msg.operation)
+			target := msg.target
+			if target == "" {
+				target = downloadPath
+			}
+			m.statusMessage = fmt.Sprintf("Successfully %sed file to %s", msg.operation, target)
 		}
 		return m, nil
 
@@ -2185,9 +2193,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							parts := strings.Split(fileName, "/")
 							fileName = parts[len(parts)-1]
 						}
+						localPath := filepath.Join(downloadPath, fileName)
 						m.loading = true
-						m.statusMessage = fmt.Sprintf("Downloading %s...", fileName)
-						return m, m.downloadS3Object(m.s3.CurrentBucket, selectedObject.Key, fileName)
+						m.statusMessage = fmt.Sprintf("Downloading %s...", localPath)
+						return m, m.downloadS3Object(m.s3.CurrentBucket, selectedObject.Key, localPath)
 					}
 				}
 			} else if m.currentScreen == s3ObjectDetailsScreen && m.s3.ObjectDetails != nil {
@@ -2197,9 +2206,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					parts := strings.Split(fileName, "/")
 					fileName = parts[len(parts)-1]
 				}
+				localPath := filepath.Join(downloadPath, fileName)
 				m.loading = true
-				m.statusMessage = fmt.Sprintf("Downloading %s...", fileName)
-				return m, m.downloadS3Object(m.s3.CurrentBucket, m.s3.ObjectDetails.Key, fileName)
+				m.statusMessage = fmt.Sprintf("Downloading %s...", localPath)
+				return m, m.downloadS3Object(m.s3.CurrentBucket, m.s3.ObjectDetails.Key, localPath)
 			}
 		case "u":
 			// Upload file to S3 (prompt for file path)
@@ -5577,7 +5587,55 @@ func (m model) renderSecretDetails() string {
 
 // Placeholder renders to keep build intact after refactors
 func (m model) renderS3ObjectDetails() string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("S3 object details view not implemented yet")
+	title := lipgloss.NewStyle().Bold(true).Render("S3 Object Details")
+	if m.loading && m.s3.ObjectDetails == nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("Loading object details...")
+	}
+	if m.err != nil && m.s3.ObjectDetails == nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("Error: %v", m.err))
+	}
+	if m.s3.ObjectDetails == nil {
+		return title + "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("No object selected")
+	}
+
+	od := m.s3.ObjectDetails
+	var b strings.Builder
+	b.WriteString(title + "\n\n")
+	b.WriteString(fmt.Sprintf("Key: %s\nSize: %s\nLast Modified: %s\nStorage Class: %s\nContent Type: %s\nETag: %s\n",
+		od.Key,
+		formatBytes(od.Size),
+		od.LastModified,
+		od.StorageClass,
+		od.ContentType,
+		od.ETag))
+
+	if len(od.Metadata) > 0 {
+		b.WriteString("\nMetadata:\n")
+		keys := make([]string, 0, len(od.Metadata))
+		for k := range od.Metadata {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(fmt.Sprintf(" - %s: %s\n", k, od.Metadata[k]))
+		}
+	}
+
+	if len(od.Tags) > 0 {
+		b.WriteString("\nTags:\n")
+		keys := make([]string, 0, len(od.Tags))
+		for k := range od.Tags {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(fmt.Sprintf(" - %s: %s\n", k, od.Tags[k]))
+		}
+	}
+
+	b.WriteString("\nPress 'd' to download, 'esc' to go back.")
+
+	return m.renderWithViewport(b.String())
 }
 
 func (m model) renderEKS() string {

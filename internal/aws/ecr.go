@@ -3,7 +3,9 @@ package aws
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -178,27 +180,102 @@ func (c *Client) ListECRImages(ctx context.Context, repoName string) ([]ECRImage
 	return images, nil
 }
 
-// GetECRImageScan retrieves scan findings (limited set for UI).
+// chooseBestTag picks the most stable/unique tag for an image digest.
+// No semver, no external deps.
+func chooseBestTag(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+
+	// Tags we want to avoid because they point to multiple digests over time
+	avoidable := map[string]bool{
+		"latest":     true,
+		"staging":    true,
+		"production": true,
+		"prod":       true,
+		"dev":        true,
+		"test":       true,
+		"edge":       true,
+		"canary":     true,
+	}
+
+	// 1. Pick the first "stable-ish" tag (numbers/dots/hyphens)
+	var stable []string
+	for _, t := range tags {
+		if avoidable[strings.ToLower(t)] {
+			continue
+		}
+		// heuristic: version-ish or release-ish strings
+		if strings.ContainsAny(t, "0123456789.") {
+			stable = append(stable, t)
+		}
+	}
+
+	// Prefer stable-looking tag
+	if len(stable) > 0 {
+		return stable[0]
+	}
+
+	// 2. Pick any tag that is not in avoid list
+	for _, t := range tags {
+		if !avoidable[strings.ToLower(t)] {
+			return t
+		}
+	}
+
+	// 3. Fallback — forced to pick something
+	return tags[0]
+}
+
+// GetECRImageScan retrieves scan findings for an image digest.
+// ECR scans are tied to tags, so we resolve the tag first.
 func (c *Client) GetECRImageScan(ctx context.Context, repoName, digest string) (*ECRScanResult, error) {
 	if c.ECR == nil {
 		return nil, fmt.Errorf("ECR client not initialized")
 	}
+
+	// Ensure we have a timeout
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 	}
 
+	// 1. Resolve tags for the digest
+	descOut, err := c.ECR.DescribeImages(ctx, &ecr.DescribeImagesInput{
+		RepositoryName: aws.String(repoName),
+		ImageIds: []ecrTypes.ImageIdentifier{
+			{ImageDigest: aws.String(digest)},
+		},
+	})
+	if err != nil || len(descOut.ImageDetails) == 0 {
+		return nil, fmt.Errorf("describe image: %w", err)
+	}
+
+	details := descOut.ImageDetails[0]
+	if len(details.ImageTags) == 0 {
+		return nil, fmt.Errorf("image %s has no tag; cannot fetch scan", digest)
+	}
+
+	// Choose best tag (maybe a bit overengineered)
+	tag := chooseBestTag(details.ImageTags)
+
+	// 2. Retrieve scan findings
 	out, err := c.ECR.DescribeImageScanFindings(ctx, &ecr.DescribeImageScanFindingsInput{
 		RepositoryName: aws.String(repoName),
 		ImageId: &ecrTypes.ImageIdentifier{
-			ImageDigest: aws.String(digest),
+			ImageTag: aws.String(tag),
 		},
 	})
 	if err != nil {
+		// Provide a friendly explanation for common cause
+		if strings.Contains(err.Error(), "ScanNotFoundException") {
+			return nil, fmt.Errorf("no scan exists for tag %q; trigger a scan first", tag)
+		}
 		return nil, err
 	}
 
+	// 3. Build result
 	res := &ECRScanResult{
 		SeverityCount: map[string]int32{},
 	}
@@ -211,18 +288,18 @@ func (c *Client) GetECRImageScan(ctx context.Context, repoName, digest string) (
 	if out.ImageScanFindings != nil {
 		res.CompletedAt = out.ImageScanFindings.ImageScanCompletedAt
 		res.DBUpdatedAt = out.ImageScanFindings.VulnerabilitySourceUpdatedAt
-		if out.ImageScanFindings.FindingSeverityCounts != nil {
-			for k, v := range out.ImageScanFindings.FindingSeverityCounts {
-				res.SeverityCount[k] = v
-			}
+
+		// Severity map
+		maps.Copy(res.SeverityCount, out.ImageScanFindings.FindingSeverityCounts)
+
+		// Limit findings
+		findings := out.ImageScanFindings.Findings
+		if len(findings) > 10 {
+			findings = findings[:10]
 		}
-		// limit findings to 10 for UI readability
-		limit := len(out.ImageScanFindings.Findings)
-		if limit > 10 {
-			limit = 10
-		}
-		for _, f := range out.ImageScanFindings.Findings[:limit] {
-			finding := ECRScanFinding{
+
+		for _, f := range findings {
+			fd := ECRScanFinding{
 				Name:        getString(f.Name),
 				Severity:    string(f.Severity),
 				Description: getString(f.Description),
@@ -231,10 +308,10 @@ func (c *Client) GetECRImageScan(ctx context.Context, repoName, digest string) (
 			}
 			for _, attr := range f.Attributes {
 				if attr.Key != nil && attr.Value != nil {
-					finding.Attributes[*attr.Key] = *attr.Value
+					fd.Attributes[*attr.Key] = *attr.Value
 				}
 			}
-			res.Findings = append(res.Findings, finding)
+			res.Findings = append(res.Findings, fd)
 		}
 	}
 
