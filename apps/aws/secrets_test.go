@@ -2,8 +2,37 @@ package aws
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
+
+// An RDS-managed password is generated from a charset that includes & < >, and a secret's value has to be reproduced byte for byte: a displayed password that was re-encoded on the way out cannot be pasted anywhere.
+func TestPrettySecretJSONPreservesTheValueVerbatim(t *testing.T) {
+	got := prettySecretJSON(`{"username":"admin","password":"aB3&xY<z>Q7#pL9$mN2"}`)
+
+	if !strings.Contains(got, `aB3&xY<z>Q7#pL9$mN2`) {
+		t.Errorf("password was altered in rendering:\n%s", got)
+	}
+	// Re-indenting this input introduces no escapes at all, so any backslash means a character was rewritten.
+	if strings.ContainsRune(got, '\\') {
+		t.Errorf("value carries an escape, so copying it yields the wrong password:\n%s", got)
+	}
+}
+
+// Re-encoding also sorts keys, so the rendered secret stops matching what is stored.
+func TestPrettySecretJSONKeepsKeyOrder(t *testing.T) {
+	got := prettySecretJSON(`{"username":"admin","password":"hunter2"}`)
+
+	if strings.Index(got, "username") > strings.Index(got, "password") {
+		t.Errorf("keys were reordered:\n%s", got)
+	}
+}
+
+func TestPrettySecretJSONIgnoresNonJSON(t *testing.T) {
+	if got := prettySecretJSON("just-a-plain-string"); got != "" {
+		t.Errorf("a non-JSON secret has no pretty form, got %q", got)
+	}
+}
 
 func TestSecretsMutationsGuardNilClient(t *testing.T) {
 	c := &Client{}

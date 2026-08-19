@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -255,11 +256,22 @@ func (c *Client) GetSecretValueString(ctx context.Context, name string) (value s
 	}
 	if valOut.SecretString != nil {
 		value = *valOut.SecretString
-		var anyJSON interface{}
-		if err := json.Unmarshal([]byte(value), &anyJSON); err == nil {
-			pretty, _ := json.MarshalIndent(anyJSON, "", "  ")
-			prettyJSON = string(pretty)
-		}
+		prettyJSON = prettySecretJSON(value)
 	}
 	return value, prettyJSON, nil
+}
+
+// prettySecretJSON only re-indents the stored bytes.
+// Decoding and re-encoding would rewrite the ampersand and angle brackets as numeric escapes and sort the keys, so a rendered RDS password would no longer be the password.
+func prettySecretJSON(value string) string {
+	if !json.Valid([]byte(value)) {
+		return ""
+	}
+
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(value), "", "  "); err != nil {
+		return ""
+	}
+
+	return buf.String()
 }

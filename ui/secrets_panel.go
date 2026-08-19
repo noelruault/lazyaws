@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -254,11 +255,31 @@ func (gui *Gui) renderSecretValue(secret *aws.SecretSummary) tasks.TaskFunc {
 }
 
 func formatSecretValue(value, prettyJSON string) string {
+	body := value + "\n"
 	if prettyJSON != "" {
-		return prettyJSON + "\n"
+		body = prettyJSON + "\n"
+	} else if value == "" {
+		body = "(empty)\n"
 	}
-	if value == "" {
-		return "(empty)\n"
+
+	return secretFidelityWarning(value) + body
+}
+
+// secretFidelityWarning covers what cleanString strips downstream, because a silently shortened credential looks exactly like a correct one.
+func secretFidelityWarning(value string) string {
+	const byteOrderMark = rune(0xFEFF)
+
+	var dropped []string
+	if strings.ContainsRune(value, '\r') {
+		dropped = append(dropped, "carriage returns")
 	}
-	return value + "\n"
+	if strings.HasPrefix(value, string(byteOrderMark)) {
+		dropped = append(dropped, "a leading byte-order mark")
+	}
+	if len(dropped) == 0 {
+		return ""
+	}
+
+	warning := "this value contains " + strings.Join(dropped, " and ") + ", which the pane cannot show; read it with the AWS CLI instead of copying from here"
+	return utils.ColoredString(warning, color.FgYellow) + "\n\n"
 }
