@@ -1,25 +1,33 @@
 # Loop spec — TuiRedesign
 
 **Branch:** `tui-redesign`. One writer.
-**This file is the operating contract. The loop reads it every cycle. FILL IT IN.**
+**This file is the operating contract. The loop reads it every cycle.**
 
 ## What we are building
 
-<!-- Describe the goal / north star. What does "done" look like? -->
+A single-screen redesign of the lazyaws TUI, incremental and never breaking the running app:
+
+- Left side stays 8 stacked resource panels, but every row becomes glanceable: prominent name, muted identifiers, aligned columns, semantic status badges (icon + word, never color alone), in-panel empty states.
+- Right side gets an `Overview` tab per resource, first in the tab list, consolidating what today is spread across tabs that hold one or two lines each. Existing tabs, keys, and data flows are preserved; nothing is removed.
+- Overviews use a two-column text layout that collapses to one column on narrow terminals, never soft-wraps (wrap off, width-aware rendering), and every section degrades to an explicit `unavailable` state instead of inventing data.
+- ECS views must show the container image a deployment is actually running (from DescribeTasks container data; desired image from the task definition when nothing runs, labeled as such).
+- Tiered auto-refresh: focused panel list and open overview every ~2s, CloudWatch metrics every ~60s (GetMetricData is billed per metric requested), single-flight per panel, adaptive SDK retry, backoff on throttle errors. Manual `r`/`R` refresh keeps working.
+- Selection is preserved by resource identity across reloads, never by index; the detail pane must never describe a different resource than the visibly selected row.
+
+The reference TUI quality bar is k9s/lazygit information hierarchy. It must still look and behave like a TUI: no gradients, no boxes-in-boxes, color used sparingly and semantically.
 
 ## Green gate (trust exit codes, from repo root)
 
-A cycle may only commit if ALL of these exit 0 (edit to match this repo):
+A cycle may only commit if ALL of these exit 0:
 
 ```
-# e.g.
-# npm run typecheck
-# npm run build
-# npm test
+make lint
+make test
 ```
 
-Noisy warnings are not failures; trust `$?`. **Never commit red.** Non-trivial pure logic leaves
-ONE assert-based unit test wired into the gate.
+Noisy warnings are not failures; trust `$?`. **Never commit red.** Non-trivial pure logic leaves ONE assert-based unit test wired into the gate.
+
+Connected verification (best-effort, never part of the gate): when the locally configured read-only staging AWS profile has live credentials, run the TUI against it and eyeball the ticket's surface; record what was checked in the handoff. If credentials are expired, say so in the handoff and move on; never block or fail a cycle on missing credentials, and never perform AWS write operations to test UI behavior.
 
 ## Definition of Done (the builder only stops when ALL hold)
 
@@ -28,19 +36,25 @@ The terminal `final-dod` ticket emits the literal phrase `backlog empty` ONLY wh
 - every backlog ticket is in built.md;
 - every group has been reviewed in-cycle and carries a `- reviewed <id> <sha>: …` line in `review.md`;
 - the full green gate passes end-to-end;
-- <!-- any project-specific DoD checks: coverage, perf budgets, visual/QA passes... -->
+- benchmarks exist and run for the fit-table renderer, the column zipper, each overview formatter, and the list rerender path;
+- the README key table is regenerated if any key binding changed (`TestReadmeKeyTableIsCurrent` green);
+- the existing arrangement/layout invariant tests pass unmodified;
+- every overview formatter has tests covering empty, error/partial, and missing-optional-field states.
 
 If any item is not yet true, KEEP LOOPING — split the gap into new append-only tickets.
 
 ## Out of scope (never becomes a ticket)
 
-<!-- deploys, device tests, anything the loop must not attempt -->
+- Any AWS mutation (start/stop/delete/rotate/put) for testing purposes; this loop is UI + read paths only.
+- Pushing to or rebasing `main`; this loop owns only `tui-redesign`.
+- Replacing gocui or any TUI framework change.
+- New third-party dependencies, including clipboard libraries (copy uses the existing popup pattern).
+- Editing `.plans/` or referencing local planning documents from code, comments, commits, or committed docs.
+- Reworking the EKS N+1 fetch pattern or S3 pagination gaps (pre-existing, tracked elsewhere).
 
 ## Pipeline conventions (baked in — do not re-derive)
 
 - **One loop, one branch (`tui-redesign`), one group per cycle, green-only.**
-- **Review is a BLOCKING step inside the cycle**, not a second loop: the same cycle that builds a
-  group audits it against the handoff and the diff, FIXES what it finds, records one line in
-  `review.md`, and only then closes the group. It never files a review ticket — a review queue costs
-  a cycle of orientation per finding and grows without bound.
+- **Review is a BLOCKING step inside the cycle**, not a second loop: the same cycle that builds a group audits it against the handoff and the diff, FIXES what it finds, records one line in `review.md`, and only then closes the group. It never files a review ticket — a review queue costs a cycle of orientation per finding and grows without bound.
 - ids are **append-only + stable**. Never renumber/delete.
+- Comments explain why, never what; markdown and comments are never hard-wrapped to a column; commit subjects are plain descriptive English (no `type(scope):` prefixes — a local hook blocks them).
