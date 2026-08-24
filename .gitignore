@@ -16,8 +16,6 @@ AGENTS.md
 .plans/
 .backups/
 docs/lazydocker-tui/
-scripts/loop-next.sh
-scripts/docs-slice.sh
 scripts/demo-gif/
 README.backup.md
 

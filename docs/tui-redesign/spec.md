@@ -58,3 +58,21 @@ If any item is not yet true, KEEP LOOPING — split the gap into new append-only
 - **Review is a BLOCKING step inside the cycle**, not a second loop: the same cycle that builds a group audits it against the handoff and the diff, FIXES what it finds, records one line in `review.md`, and only then closes the group. It never files a review ticket — a review queue costs a cycle of orientation per finding and grows without bound.
 - ids are **append-only + stable**. Never renumber/delete.
 - Comments explain why, never what; markdown and comments are never hard-wrapped to a column; commit subjects are plain descriptive English (no `type(scope):` prefixes — a local hook blocks them).
+
+## Running the loop
+
+Everything the loop needs is in this directory: this spec, `backlog.md`, the ledgers, the cycle prompt and runner config in `loop/`, and the selector scripts in `scripts/` at the repo root.
+
+With loopctl (preferred; handles accounts, usage-limit waits, stall guards, cost ledgering): copy `loop/tui-redesign.{loop,prompt}` into your loopctl checkout's `loops/`, set `TARGET`/`LOG` in the `.loop` to your paths, then `loopctl tui-redesign start`.
+
+Without loopctl, a cycle is just one `claude -p` run of the prompt from the repo root on the `tui-redesign` branch:
+
+```
+while :; do
+  out="$(claude -p "$(cat docs/tui-redesign/loop/tui-redesign.prompt)")"
+  printf '%s\n' "$out"
+  case "$out" in *"backlog empty"*) break;; *"pause:"*) break;; esac
+done
+```
+
+Requirements: the `claude` CLI logged in, Go toolchain for the gate (`make lint test`), and optionally the `router` CLI for in-cycle delegation (cycles skip delegation cleanly when it is absent). AWS credentials are only needed for the best-effort connected checks; cycles proceed without them.
