@@ -61,6 +61,13 @@ Every group is reviewed and repaired inside the cycle that built it (spec.md), s
 - [ ] `s9-footer-labels` [d1] — align per-panel options-bar labels with the redesign vocabulary (navigate/inspect/copy/refresh/filter/actions/quit), labels only, no key behavior changes.
 - [ ] `s9-benchmarks` [d2] — benchmarks with the benchForceColor helper: RenderTableFit (100 rows x 5 cells, width 60), Columns (two 40-line blocks, width 140), each overview formatter with hand-built structs, list rerender with 100 instances. Record results in the handoff; budgets are review guidance, not failing assertions.
 
+## Stage 10 — autonomous UI validation (Playwright over ttyd)
+
+- [ ] `s10-ui-harness` [d4] HUGE — Playwright cannot drive a terminal directly, so bridge it: a `make ui-test` target that starts a fake-AWS endpoint (moto server or LocalStack, wired via `AWS_ENDPOINT_URL`), seeds it with a script (a few EC2 instances incl. one private-only, one ECS cluster+service+running task, S3 buckets, ECR repos, secrets with and without rotation, two VPCs), launches the built TUI inside `ttyd --writable`, and drives the xterm.js page with Playwright: helpers for sendKeys/readScreen/screenshot, non-zero exit on any failed journey. Harness lives under `test/ui` (Node + Playwright, deliberately outside the Go module). Leaves one smoke journey: app boots against the fake endpoint and all 8 panels render.
+- [ ] `s10-ui-journeys-panels` [d3] (needs: `s10-ui-harness`) — one journey per left panel: focus via its number key, arrow through rows, assert row content, the selected-row highlight, and in-panel empty states against the seeded data.
+- [ ] `s10-ui-journeys-overview` [d3] (needs: `s10-ui-harness`) — per resource: open the Overview tab, assert header and sections render including explicit unavailable/no-data states, cycle tabs with `[` and `]`, resize the terminal narrow and assert the two-column layout stacks instead of wrapping.
+- [ ] `s10-ui-journeys-keys` [d3] (needs: `s10-ui-harness`) — filter with `/`, refresh with `r`/`R`, copy popup with `y`, actions menu `a`, options `x`, quit `q`: assert each key does what the footer claims.
+
 ## Terminal
 
 - [ ] `final-dod` — HUGE. **The only ticket that may emit "backlog empty", and it is dispatched ALONE** (that is what the HUGE token buys: batched with other tickets, a cycle could reach the stop sentinel while its group was still open). Confirm every group carries a

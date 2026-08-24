@@ -39,7 +39,8 @@ The terminal `final-dod` ticket emits the literal phrase `backlog empty` ONLY wh
 - benchmarks exist and run for the fit-table renderer, the column zipper, each overview formatter, and the list rerender path;
 - the README key table is regenerated if any key binding changed (`TestReadmeKeyTableIsCurrent` green);
 - the existing arrangement/layout invariant tests pass unmodified;
-- every overview formatter has tests covering empty, error/partial, and missing-optional-field states.
+- every overview formatter has tests covering empty, error/partial, and missing-optional-field states;
+- the Playwright journey suite (`make ui-test`) passes end-to-end against the seeded fake-AWS endpoint. It is part of the DoD and of the stage-10 tickets' own verification, NOT of the per-cycle `make lint test` gate: it needs ttyd, Node and a local emulator, and a cycle on a machine without them must not go red for that.
 
 If any item is not yet true, KEEP LOOPING — split the gap into new append-only tickets.
 
