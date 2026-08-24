@@ -63,7 +63,7 @@ If any item is not yet true, KEEP LOOPING — split the gap into new append-only
 
 Everything the loop needs is in this directory: this spec, `backlog.md`, the ledgers, the cycle prompt and runner config in `loop/`, and the selector scripts in `scripts/` at the repo root.
 
-With loopctl (preferred; handles accounts, usage-limit waits, stall guards, cost ledgering): copy `loop/tui-redesign.{loop,prompt}` into your loopctl checkout's `loops/`, set `TARGET`/`LOG` in the `.loop` to your paths, then `loopctl tui-redesign start`.
+With loopctl (preferred; handles accounts, usage-limit waits, stall guards, cost ledgering): symlink or copy `loop/tui-redesign.{loop,prompt}` into your loopctl checkout's `loops/`, set `TARGET`/`LOG` in the `.loop` to your paths, then `loopctl tui-redesign start`. The files here are the source of truth; loopctl only discovers them.
 
 Without loopctl, a cycle is just one `claude -p` run of the prompt from the repo root on the `tui-redesign` branch:
 
