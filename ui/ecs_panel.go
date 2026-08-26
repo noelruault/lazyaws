@@ -128,14 +128,25 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *ecsRow) bool { return a.name() < b.name() },
-		GetTableCells: func(row *ecsRow) []string {
+		GetTableCellsFit: func(row *ecsRow) []utils.Cell {
 			switch row.Kind {
 			case ecsRowKindService:
-				return presentation.GetECSServiceDisplayStrings(row.Service)
+				return presentation.GetECSServiceDisplayCells(row.Service)
 			case ecsRowKindTask:
-				return presentation.GetECSTaskDisplayStrings(row.Task)
+				return presentation.GetECSTaskDisplayCells(row.Task)
 			default:
-				return presentation.GetECSClusterDisplayStrings(row.Cluster)
+				return presentation.GetECSClusterDisplayCells(row.Cluster)
+			}
+		},
+		// The three drill levels are three different tables, so the weights come off the row being rendered rather than off the drill state, which a queued rerender can find already changed.
+		Weights: func(row *ecsRow) []int {
+			switch row.Kind {
+			case ecsRowKindService:
+				return presentation.ECSServiceWeights()
+			case ecsRowKindTask:
+				return presentation.ECSTaskWeights()
+			default:
+				return presentation.ECSClusterWeights()
 			}
 		},
 	}

@@ -50,6 +50,13 @@ type SideListPanel[T comparable] struct {
 
 	GetTableCells func(T) []string
 
+	// GetTableCellsFit renders a row as plain-text cells, laying the panel out with RenderTableFit instead of RenderTable so one long value cannot push the other columns off-screen.
+	// A panel sets this or GetTableCells, never both; the panels still on GetTableCells are the ones stage 2 has not migrated yet.
+	GetTableCellsFit func(T) []utils.Cell
+	// Weights sizes the columns of a table whose rows are shaped like the one passed, which is the first row on screen.
+	// It takes an item because a panel can change row shape as it is used (the ECS panel's rows differ per drill level), and reading the shape off the rows actually being rendered is what stops the two from drifting apart.
+	Weights func(T) []int
+
 	OnRerender func() error
 
 	DisableFilter bool
@@ -186,7 +193,7 @@ func (self *SideListPanel[T]) SelectByItem(item T) bool {
 // SelectByCell matches rendered identity but cannot find decorated cells by raw name.
 func (self *SideListPanel[T]) SelectByCell(needle string) bool {
 	for idx, item := range self.List.GetItems() {
-		for _, cell := range self.GetTableCells(item) {
+		for _, cell := range self.searchCells(item) {
 			if cell == needle {
 				self.SetSelectedLineIdx(idx)
 				return true
@@ -247,7 +254,7 @@ func (self *SideListPanel[T]) FilterAndSort() {
 		}
 
 		if slices.ContainsFunc(self.Gui.IgnoreStrings(), func(ignore string) bool {
-			return slices.ContainsFunc(self.GetTableCells(item), func(searchString string) bool {
+			return slices.ContainsFunc(self.searchCells(item), func(searchString string) bool {
 				return strings.Contains(searchString, ignore)
 			})
 		}) {
@@ -255,7 +262,7 @@ func (self *SideListPanel[T]) FilterAndSort() {
 		}
 
 		if filterString != "" {
-			return slices.ContainsFunc(self.GetTableCells(item), func(searchString string) bool {
+			return slices.ContainsFunc(self.searchCells(item), func(searchString string) bool {
 				return strings.Contains(searchString, filterString)
 			})
 		}
@@ -279,11 +286,7 @@ func (self *SideListPanel[T]) RerenderList() error {
 			return self.afterRerender()
 		}
 
-		table := make([][]string, len(items))
-		for i, item := range items {
-			table[i] = self.GetTableCells(item)
-		}
-		renderedTable, err := utils.RenderTable(table)
+		renderedTable, err := self.renderTable(items)
 		if err != nil {
 			return err
 		}
@@ -293,6 +296,41 @@ func (self *SideListPanel[T]) RerenderList() error {
 	})
 
 	return nil
+}
+
+// renderTable lays the rows out for the view's current width, which is why it must run inside the Update closure rather than ahead of it.
+func (self *SideListPanel[T]) renderTable(items []T) (string, error) {
+	if self.GetTableCellsFit == nil {
+		table := make([][]string, len(items))
+		for i, item := range items {
+			table[i] = self.GetTableCells(item)
+		}
+
+		return utils.RenderTable(table)
+	}
+
+	table := make([][]utils.Cell, len(items))
+	for i, item := range items {
+		table[i] = self.GetTableCellsFit(item)
+	}
+
+	return utils.RenderTableFit(table, self.View.InnerWidth(), self.Weights(items[0]))
+}
+
+// searchCells is the plain text of a row, for filtering and for finding a row by what it says.
+// Cell.Text is unstyled by construction, whereas GetTableCells hands back strings that already carry colour escapes, so a filter over those can only ever match the columns nothing colours.
+func (self *SideListPanel[T]) searchCells(item T) []string {
+	if self.GetTableCellsFit == nil {
+		return self.GetTableCells(item)
+	}
+
+	cells := self.GetTableCellsFit(item)
+	texts := make([]string, len(cells))
+	for i, cell := range cells {
+		texts[i] = cell.Text
+	}
+
+	return texts
 }
 
 // emptyMessage is what a panel shows in place of rows.

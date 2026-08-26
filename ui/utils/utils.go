@@ -129,6 +129,16 @@ type Cell struct {
 	Color color.Attribute
 }
 
+// Rendered is the cell's text with its own colour applied, for the tables still laid out as plain strings.
+// It is the only place the zero-value rule lives: passing a 0 attribute to ColoredString would wrap the text in a reset pair rather than leave it alone.
+func (c Cell) Rendered() string {
+	if c.Color == 0 {
+		return c.Text
+	}
+
+	return ColoredString(c.Text, c.Color)
+}
+
 // render fits the cell's text into width terminal cells and only then colours it.
 func (c Cell) render(width int) string {
 	// runewidth.Truncate subtracts the tail's own width from the budget, so at width 0 it still returns a one-cell "…" and overflows the column.
@@ -136,11 +146,7 @@ func (c Cell) render(width int) string {
 		return ""
 	}
 
-	text := runewidth.Truncate(c.Text, width, "…")
-	if c.Color == 0 {
-		return text
-	}
-	return ColoredString(text, c.Color)
+	return Cell{Text: runewidth.Truncate(c.Text, width, "…"), Color: c.Color}.Rendered()
 }
 
 // RenderTableFit lays rows out inside width terminal cells, so one long value cannot push every other column off-screen the way RenderTable does.

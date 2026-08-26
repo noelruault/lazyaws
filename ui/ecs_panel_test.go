@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jesseduffield/gocui"
+	"github.com/mattn/go-runewidth"
+
 	"github.com/noelruault/lazyaws/apps/aws"
 )
 
@@ -318,5 +321,54 @@ func TestFormatECSTaskDefDiffNoPrevious(t *testing.T) {
 
 	if !strings.Contains(out, "no previous revision") {
 		t.Errorf("formatECSTaskDefDiff() = %q, want a \"no previous revision\" message", out)
+	}
+}
+
+// resizeView gives a view a real width, which the headless harness otherwise leaves at the 10-cell placeholder createAllViews sets, too narrow for any row assertion to mean anything.
+func resizeView(t *testing.T, g *gocui.Gui, name string, width, height int) {
+	t.Helper()
+
+	set := func(x1, y1 int) error {
+		_, err := g.SetView(name, 0, 0, x1, y1, 0)
+		if err != nil && err.Error() != gocui.ErrUnknownView.Error() {
+			return err
+		}
+		return nil
+	}
+	run(t, g, func() error { return set(width+1, height+1) })
+	t.Cleanup(func() { run(t, g, func() error { return set(10, 10) }) })
+}
+
+// The whole point of laying the side panels out with RenderTableFit is that a long name cannot push the columns that identify a row off the right-hand edge.
+func TestECSPanelRendersClusterRowsInsideTheViewWidth(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	resizeView(t, g, "ecs", 60, 20)
+
+	run(t, g, func() error {
+		gui.Panels.ECS.SetItems([]*ecsRow{
+			{Kind: ecsRowKindCluster, Cluster: &aws.ECSCluster{Name: "prod", Status: "ACTIVE", RunningTasksCount: 3, ActiveServicesCount: 2}},
+			{Kind: ecsRowKindCluster, Cluster: &aws.ECSCluster{
+				Name: strings.Repeat("very-long-cluster-name-", 5), Status: "ACTIVE", PendingTasksCount: 1, ActiveServicesCount: 9,
+			}},
+		})
+		return gui.Panels.ECS.RerenderList()
+	})
+
+	width := ask(g, func() int { return gui.Views.ECS.InnerWidth() })
+	buffer := ask(g, func() string { return gui.Views.ECS.Buffer() })
+
+	for _, line := range strings.Split(strings.TrimRight(buffer, "\n"), "\n") {
+		if got := runewidth.StringWidth(line); got > width {
+			t.Errorf("line %q is %d cells wide, want at most %d", line, got, width)
+		}
+	}
+	// The badge is the rightmost column, so it is the first thing an overrunning name would have cost.
+	for _, want := range []string{"prod", "● healthy", "● deploying", "3 running / 0 pending"} {
+		if !strings.Contains(buffer, want) {
+			t.Errorf("ECS view = %q, want it to still show %q", buffer, want)
+		}
+	}
+	if !strings.Contains(buffer, "…") {
+		t.Errorf("ECS view = %q, want the over-long name cut with an ellipsis", buffer)
 	}
 }

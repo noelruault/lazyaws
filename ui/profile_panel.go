@@ -16,6 +16,7 @@ import (
 	"github.com/noelruault/lazyaws/ui/panels"
 	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/tasks"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
 
 func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
@@ -40,14 +41,15 @@ func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b string) bool { return a < b },
-		GetTableCells: func(profile string) []string {
+		GetTableCellsFit: func(profile string) []utils.Cell {
 			region, accountID := "", ""
 			if profile == gui.CurrentProfile && gui.Client != nil {
 				region = gui.Client.GetRegion()
 				accountID = gui.Client.GetAccountID()
 			}
-			return presentation.GetProfileDisplayStrings(profile, gui.CurrentProfile, region, accountID)
+			return presentation.GetProfileDisplayCells(profile, gui.CurrentProfile, region, accountID)
 		},
+		Weights: func(string) []int { return []int{1} },
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/ui/tasks"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
 
 // stubGui supplies only what FilterAndSort reads; the rest of IGui is never reached from these tests.
@@ -144,5 +145,65 @@ func TestEmptyMessageIsBlankWhenThePanelHasNoMessage(t *testing.T) {
 
 	if got := panel.emptyMessage(); got != "" {
 		t.Errorf("emptyMessage() = %q, want the empty string", got)
+	}
+}
+
+// A migrated panel filters on Cell.Text, which is plain by construction.
+// Filtering its rendered strings instead would mean matching user input against text that already carries colour escapes, so a filter could never hit a coloured column.
+func TestFilterAndSortMatchesTheCellsOfAMigratedPanel(t *testing.T) {
+	forceColor(t)
+
+	for _, tt := range []struct {
+		name    string
+		filter  string
+		ignores []string
+		want    []string
+	}{
+		{"filter matches a plain cell", "work", nil, []string{"worker"}},
+		{"filter matches a coloured cell", "tagged-worker", nil, []string{"worker"}},
+		{"ignore matches a coloured cell", "", []string{"tagged-worker"}, []string{"bastion"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			panel := &SideListPanel[string]{
+				ListPanel: ListPanel[string]{List: NewFilteredList[string]()},
+				Gui:       &stubGui{filter: tt.filter, ignores: tt.ignores},
+				GetTableCellsFit: func(item string) []utils.Cell {
+					return []utils.Cell{{Text: item}, {Text: "tagged-" + item, Color: color.FgYellow}}
+				},
+				Weights: func(string) []int { return []int{0, 1} },
+			}
+			panel.List.SetItems([]string{"bastion", "worker"})
+
+			panel.FilterAndSort()
+
+			got := panel.List.GetItems()
+			if len(got) != len(tt.want) {
+				t.Fatalf("items = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("item %d = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// SelectByCell has to find a row by the plain text a migrated panel shows, not by a string nobody can type.
+func TestSelectByCellFindsAMigratedPanelsRow(t *testing.T) {
+	panel := &SideListPanel[string]{
+		ListPanel:        ListPanel[string]{List: NewFilteredList[string]()},
+		Gui:              &stubGui{},
+		GetTableCellsFit: func(item string) []utils.Cell { return []utils.Cell{{Text: item, Color: color.FgGreen}} },
+		Weights:          func(string) []int { return []int{1} },
+	}
+	panel.List.SetItems([]string{"bastion", "worker"})
+	panel.FilterAndSort()
+
+	if !panel.SelectByCell("worker") {
+		t.Fatal("SelectByCell(worker) = false, want the row found by its plain text")
+	}
+	if got := panel.SelectedIdx; got != 1 {
+		t.Errorf("SelectedIdx = %d, want 1", got)
 	}
 }
