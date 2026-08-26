@@ -45,9 +45,10 @@ func (gui *Gui) getS3Panel() *panels.SideListPanel[*aws.Bucket] {
 		Sort: func(a, b *aws.Bucket) bool {
 			return a.Name < b.Name
 		},
-		GetTableCells: func(b *aws.Bucket) []string {
-			return presentation.GetBucketDisplayStrings(b)
+		GetTableCellsFit: func(b *aws.Bucket) []utils.Cell {
+			return presentation.GetBucketDisplayCells(b)
 		},
+		Weights: func(*aws.Bucket) []int { return presentation.BucketWeights() },
 	}
 }
 

@@ -47,9 +47,10 @@ func (gui *Gui) getEC2Panel() *panels.SideListPanel[*aws.Instance] {
 			}
 			return a.Name < b.Name
 		},
-		GetTableCells: func(inst *aws.Instance) []string {
-			return presentation.GetInstanceDisplayStrings(inst)
+		GetTableCellsFit: func(inst *aws.Instance) []utils.Cell {
+			return presentation.GetInstanceDisplayCells(inst)
 		},
+		Weights: func(*aws.Instance) []int { return presentation.InstanceWeights() },
 	}
 }
 
