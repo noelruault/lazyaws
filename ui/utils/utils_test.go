@@ -264,3 +264,34 @@ func TestRenderTableFitRejectsMalformedInput(t *testing.T) {
 		})
 	}
 }
+
+// Overflowing the budget is the one failure RenderTableFit exists to prevent, and the cases above only pin a handful of widths.
+// Sweeping every width against wide runes, colour and each weight shape is what catches an off-by-one in the arithmetic rather than in an expectation.
+func TestRenderTableFitNeverExceedsTheWidth(t *testing.T) {
+	forceColor(t)
+
+	texts := []string{"", "a", "日本語テキスト", "0123456789abcdefghij", "ｦｧ日a"}
+	weightSets := [][]int{{0, 0, 0}, {0, 1, 0}, {1, 1, 1}, {0, 0, 3}, {2, 0, 1}, {5, 1, 1}}
+
+	for _, weights := range weightSets {
+		for _, first := range texts {
+			for _, second := range texts {
+				rows := [][]Cell{
+					{{Text: first, Color: color.FgGreen}, {Text: second}, {Text: "badge"}},
+					{{Text: second}, {Text: first, Color: color.Bold}, {Text: ""}},
+				}
+				for width := range 46 {
+					out, err := RenderTableFit(rows, width, weights)
+					if err != nil {
+						t.Fatalf("RenderTableFit(weights=%v, width=%d): %v", weights, width, err)
+					}
+					for _, line := range strings.Split(out, "\n") {
+						if cells := runewidth.StringWidth(Decolorise(line)); cells > width {
+							t.Fatalf("weights=%v width=%d: line %q is %d cells wide", weights, width, line, cells)
+						}
+					}
+				}
+			}
+		}
+	}
+}

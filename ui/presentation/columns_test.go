@@ -160,3 +160,35 @@ func TestCsiPrefixLen(t *testing.T) {
 		}
 	}
 }
+
+// The cases above pin one width; a zipped row overflowing its terminal is the failure that corrupts the whole pane, so sweep every width against wide runes, colour and each gap.
+func TestColumnsNeverExceedsTheWidth(t *testing.T) {
+	forceColor(t)
+
+	blocks := []string{
+		"",
+		"one",
+		"alpha\nbeta\ngamma",
+		utils.ColoredString("web-01", color.FgGreen) + "\n" + utils.ColoredString(strings.Repeat("x", 200), color.Bold),
+		"日本語テキストです\n" + strings.Repeat("y", 300),
+		SectionTitle("Configuration") + "\n" + Badge("running") + "\n" + Gauge(20, 42),
+	}
+
+	for _, left := range blocks {
+		for _, right := range blocks {
+			for _, gap := range []int{0, 1, 2, 5} {
+				for width := range 261 {
+					// Stacked and passthrough both hand the blocks back at their own width, which is the documented fallback rather than a budget.
+					if width < minTwoColWidth || right == "" {
+						continue
+					}
+					for _, line := range strings.Split(Columns(width, gap, left, right), "\n") {
+						if cells := runewidth.StringWidth(utils.Decolorise(line)); cells > width {
+							t.Fatalf("gap=%d width=%d: line %q is %d cells wide", gap, width, line, cells)
+						}
+					}
+				}
+			}
+		}
+	}
+}
