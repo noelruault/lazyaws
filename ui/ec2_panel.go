@@ -77,7 +77,7 @@ func (gui *Gui) loadEC2List() error {
 		for i := range instances {
 			rows[i] = &instances[i]
 		}
-		gui.Panels.EC2.SetItems(rows)
+		gui.Panels.EC2.SetItemsKeepSelection(rows, func(inst *aws.Instance) string { return inst.ID })
 		return gui.Panels.EC2.RerenderList()
 	})
 }

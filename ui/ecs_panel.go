@@ -867,7 +867,7 @@ func (gui *Gui) loadECSList() error {
 			return nil
 		}
 
-		gui.Panels.ECS.SetItems(rows)
+		gui.Panels.ECS.SetItemsKeepSelection(rows, func(row *ecsRow) string { return row.arn() })
 		return gui.Panels.ECS.RerenderList()
 	})
 }

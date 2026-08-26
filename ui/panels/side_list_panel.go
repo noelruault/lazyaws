@@ -245,6 +245,30 @@ func (self *SideListPanel[T]) SetItems(items []T) {
 	self.FilterAndSort()
 }
 
+// SetItemsKeepSelection replaces the rows and keeps the selection on the same resource rather than on the same line.
+// The panels sort running-first, so any reload that changes one item's state reorders the list and an index-preserved selection silently lands on a different resource, with the detail pane then describing something other than the highlighted row.
+// key must be an identity, not a cache key: ContextState.GetItemContextCacheKey deliberately mixes in mutable state (the secrets panel folds in whether the value is revealed), so it is the wrong thing to match on here.
+func (self *SideListPanel[T]) SetItemsKeepSelection(items []T, key func(T) string) {
+	previous := ""
+	if item, err := self.GetSelectedItem(); err == nil {
+		previous = key(item)
+	}
+
+	self.SetItems(items)
+
+	// An empty key cannot identify anything, so an item that has none leaves the clamped index alone rather than matching the first other item that also has none.
+	if previous == "" {
+		return
+	}
+
+	for idx, item := range self.List.GetItems() {
+		if key(item) == previous {
+			self.SetSelectedLineIdx(idx)
+			return
+		}
+	}
+}
+
 func (self *SideListPanel[T]) FilterAndSort() {
 	filterString := self.Gui.FilterString(self.View)
 

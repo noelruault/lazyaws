@@ -207,3 +207,92 @@ func TestSelectByCellFindsAMigratedPanelsRow(t *testing.T) {
 		t.Errorf("SelectedIdx = %d, want 1", got)
 	}
 }
+
+// A reload must keep the selection on the resource the user is looking at, whatever line it lands on.
+func TestSetItemsKeepSelectionFollowsTheResource(t *testing.T) {
+	// A row carries its identity and a mutable state, so the reloads below can reorder, drop and rename without the key changing.
+	type row struct {
+		id    string
+		state string
+	}
+	key := func(r row) string { return r.id }
+
+	first := row{id: "i-1", state: "running"}
+	second := row{id: "i-2", state: "running"}
+	third := row{id: "i-3", state: "stopped"}
+
+	for _, tt := range []struct {
+		name     string
+		reloaded []row
+		selected int
+		want     string
+	}{
+		{"same order keeps the same row", []row{first, second, third}, 1, "i-2"},
+		{"a reorder follows the resource", []row{third, second, first}, 1, "i-2"},
+		{"a reorder that moves it to the top follows it there", []row{second, third, first}, 2, "i-3"},
+		{"a state change on the selected row still finds it", []row{first, {id: "i-2", state: "stopped"}, third}, 1, "i-2"},
+		{"a new row above the selection does not shift the selection", []row{{id: "i-0", state: "running"}, first, second, third}, 1, "i-2"},
+		{"the selected row disappearing leaves the index clamped", []row{first, third}, 1, "i-3"},
+		{"the last row disappearing clamps to the new end", []row{first, second}, 2, "i-2"},
+		{"an empty reload selects nothing", nil, 1, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			panel := &SideListPanel[row]{
+				ListPanel:     ListPanel[row]{List: NewFilteredList[row]()},
+				Gui:           &stubGui{},
+				GetTableCells: func(r row) []string { return []string{r.id, r.state} },
+			}
+			panel.SetItems([]row{first, second, third})
+			panel.SetSelectedLineIdx(tt.selected)
+
+			panel.SetItemsKeepSelection(tt.reloaded, key)
+
+			got := ""
+			if item, err := panel.GetSelectedItem(); err == nil {
+				got = item.id
+			}
+			if got != tt.want {
+				t.Errorf("selected = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An item with no identity must not be matched by another item that also has none, or the selection lands on an unrelated row.
+func TestSetItemsKeepSelectionIgnoresAnEmptyKey(t *testing.T) {
+	panel := &SideListPanel[string]{
+		ListPanel:     ListPanel[string]{List: NewFilteredList[string]()},
+		Gui:           &stubGui{},
+		GetTableCells: func(item string) []string { return []string{item} },
+	}
+	panel.SetItems([]string{"", "worker"})
+	panel.SetSelectedLineIdx(0)
+
+	// "worker" sorts after the unnamed row, so a key match on "" would move the selection onto it.
+	panel.SetItemsKeepSelection([]string{"worker", ""}, func(item string) string { return item })
+
+	if got := panel.SelectedIdx; got != 0 {
+		t.Errorf("SelectedIdx = %d, want 0 (an empty key identifies nothing, so the index stands)", got)
+	}
+}
+
+// The selection survives a reload of a filtered list, where the panel only ever sees the rows the filter kept.
+func TestSetItemsKeepSelectionWorksThroughAFilter(t *testing.T) {
+	panel := &SideListPanel[string]{
+		ListPanel:     ListPanel[string]{List: NewFilteredList[string]()},
+		Gui:           &stubGui{filter: "web"},
+		GetTableCells: func(item string) []string { return []string{item} },
+	}
+	panel.SetItems([]string{"web-1", "web-2", "worker"})
+	panel.SetSelectedLineIdx(1)
+
+	panel.SetItemsKeepSelection([]string{"worker", "web-2", "web-1"}, func(item string) string { return item })
+
+	item, err := panel.GetSelectedItem()
+	if err != nil {
+		t.Fatalf("GetSelectedItem() error = %v", err)
+	}
+	if item != "web-2" {
+		t.Errorf("selected = %q, want web-2", item)
+	}
+}

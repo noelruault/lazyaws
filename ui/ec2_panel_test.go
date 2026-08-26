@@ -59,3 +59,38 @@ func TestFormatEC2ConfigNilASG(t *testing.T) {
 		t.Errorf("formatEC2Config with nil ASG should report none, got: %q", out)
 	}
 }
+
+// The EC2 panel sorts running instances first, so a reload that stops one instance reorders the list under the cursor.
+// Selecting by index there would leave the detail pane describing a different instance than the highlighted row.
+func TestEC2ReloadKeepsTheSelectedInstance(t *testing.T) {
+	gui := newTestGui(t)
+
+	web := &aws.Instance{ID: "i-web", Name: "web", State: "running"}
+	worker := &aws.Instance{ID: "i-worker", Name: "worker", State: "running"}
+	batch := &aws.Instance{ID: "i-batch", Name: "batch", State: "stopped"}
+
+	gui.Panels.EC2.SetItems([]*aws.Instance{web, worker, batch})
+	if !gui.Panels.EC2.SelectByItem(worker) {
+		t.Fatal("SelectByItem(worker) = false, want the row the test is about")
+	}
+
+	// A reload hands back fresh pointers, which is why identity has to be the instance id and not the item itself.
+	reloaded := []*aws.Instance{
+		{ID: "i-batch", Name: "batch", State: "running"},
+		{ID: "i-worker", Name: "worker", State: "stopped"},
+		{ID: "i-web", Name: "web", State: "running"},
+	}
+	gui.Panels.EC2.SetItemsKeepSelection(reloaded, func(inst *aws.Instance) string { return inst.ID })
+
+	selected, err := gui.Panels.EC2.GetSelectedItem()
+	if err != nil {
+		t.Fatalf("GetSelectedItem() error = %v", err)
+	}
+	if selected.ID != "i-worker" {
+		t.Errorf("selected = %s, want i-worker (the row that was selected before the reload)", selected.ID)
+	}
+	// The stopped worker sorts last now, so the fix is only real if the index moved with it.
+	if got := gui.Panels.EC2.SelectedIdx; got != 2 {
+		t.Errorf("SelectedIdx = %d, want 2 (running-first sort moves the stopped worker to the end)", got)
+	}
+}

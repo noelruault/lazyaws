@@ -100,7 +100,7 @@ func (gui *Gui) loadSecretsList() error {
 		for i := range secrets {
 			rows[i] = &secrets[i]
 		}
-		gui.Panels.Secrets.SetItems(rows)
+		gui.Panels.Secrets.SetItemsKeepSelection(rows, func(s *aws.SecretSummary) string { return s.Name })
 		return gui.Panels.Secrets.RerenderList()
 	})
 }

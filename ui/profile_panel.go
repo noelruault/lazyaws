@@ -54,15 +54,12 @@ func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
 }
 
 func (gui *Gui) refreshProfile() error {
-	gui.Panels.Profile.SetItems(listAWSProfiles())
+	firstLoad := gui.Panels.Profile.List.Len() == 0
+	gui.Panels.Profile.SetItemsKeepSelection(listAWSProfiles(), func(profile string) string { return profile })
 
-	if gui.CurrentProfile != "" {
-		for i, p := range gui.Panels.Profile.List.GetItems() {
-			if p == gui.CurrentProfile {
-				gui.Panels.Profile.SetSelectedLineIdx(i)
-				break
-			}
-		}
+	// The panel opens on the connected profile, but this is a reloader: later refreshes must leave the cursor wherever the user moved it.
+	if firstLoad && gui.CurrentProfile != "" {
+		gui.Panels.Profile.SelectByItem(gui.CurrentProfile)
 	}
 
 	return gui.Panels.Profile.RerenderList()

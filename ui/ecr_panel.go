@@ -68,7 +68,7 @@ func (gui *Gui) loadECRList() error {
 		for i := range repos {
 			rows[i] = &repos[i]
 		}
-		gui.Panels.ECR.SetItems(rows)
+		gui.Panels.ECR.SetItemsKeepSelection(rows, func(r *aws.ECRRepository) string { return r.Name })
 		return gui.Panels.ECR.RerenderList()
 	})
 }

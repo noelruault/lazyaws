@@ -75,7 +75,7 @@ func (gui *Gui) loadS3List() error {
 		for i := range buckets {
 			rows[i] = &buckets[i]
 		}
-		gui.Panels.S3.SetItems(rows)
+		gui.Panels.S3.SetItemsKeepSelection(rows, func(b *aws.Bucket) string { return b.Name })
 		return gui.Panels.S3.RerenderList()
 	})
 }

@@ -82,7 +82,7 @@ func (gui *Gui) loadVPCList() error {
 		for i := range vpcs {
 			rows[i] = &vpcs[i]
 		}
-		gui.Panels.VPC.SetItems(rows)
+		gui.Panels.VPC.SetItemsKeepSelection(rows, func(v *aws.VPC) string { return v.ID })
 		return gui.Panels.VPC.RerenderList()
 	})
 }

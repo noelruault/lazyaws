@@ -119,7 +119,7 @@ func (gui *Gui) loadEKSList() error {
 		for i := range clusters {
 			rows[i] = &clusters[i]
 		}
-		gui.Panels.EKS.SetItems(rows)
+		gui.Panels.EKS.SetItemsKeepSelection(rows, func(c *aws.EKSCluster) string { return c.Name })
 		return gui.Panels.EKS.RerenderList()
 	})
 }
