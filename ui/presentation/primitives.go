@@ -13,11 +13,16 @@ import (
 
 // Badge renders the state icon next to the state word, so a state is never carried by colour alone.
 func Badge(status string) string {
+	return BadgeCell(status).Rendered()
+}
+
+// BadgeCell is Badge for a row laid out with RenderTableFit, where the text must stay plain until the table has measured and cut it.
+func BadgeCell(status string) utils.Cell {
 	row := statusStyleTable[statusKindOf(status)]
 	if strings.TrimSpace(status) == "" {
-		return utils.ColoredString(row.icon, row.color)
+		return utils.Cell{Text: row.icon, Color: row.color}
 	}
-	return utils.ColoredString(row.icon+" "+status, row.color)
+	return utils.Cell{Text: row.icon + " " + status, Color: row.color}
 }
 
 // Gauge renders a textual meter, "▕████░░░░░░▏ 40.0%". width sizes the bar body only, excluding the brackets and the number.

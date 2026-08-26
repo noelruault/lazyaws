@@ -8,7 +8,9 @@ import (
 
 	"github.com/noelruault/lazyaws/apps/aws"
 	"github.com/noelruault/lazyaws/ui/panels"
+	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/tasks"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
 
 // eksLogTypeOrder keeps disabled control-plane log types visible.
@@ -87,13 +89,10 @@ func (gui *Gui) getEKSPanel() *panels.SideListPanel[*aws.EKSCluster] {
 		Sort: func(a, b *aws.EKSCluster) bool {
 			return a.Name < b.Name
 		},
-		GetTableCells: func(c *aws.EKSCluster) []string {
-			status := c.Status
-			if status == "" {
-				status = "-"
-			}
-			return []string{c.Name, status, fmt.Sprintf("%d", c.NodeCount), c.CreatedAt}
+		GetTableCellsFit: func(c *aws.EKSCluster) []utils.Cell {
+			return presentation.GetEKSClusterDisplayCells(c)
 		},
+		Weights: func(*aws.EKSCluster) []int { return presentation.EKSClusterWeights() },
 	}
 }
 

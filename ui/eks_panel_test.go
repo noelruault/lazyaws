@@ -96,6 +96,8 @@ func TestRerenderListShowsTheEmptyMessageInTheSideView(t *testing.T) {
 // A panel with rows must not gain the empty message, and the rows themselves must still be there.
 func TestRerenderListDropsTheEmptyMessageOnceRowsArrive(t *testing.T) {
 	gui, g := newHeadlessGui(t)
+	// The EKS panel lays out with RenderTableFit, and a headless view keeps the 10-cell placeholder createAllViews gives it, which cuts every row to "▶ AC…".
+	resizeView(t, g, "eks", 60, 20)
 
 	run(t, g, func() error {
 		gui.Panels.EKS.SetItems([]*aws.EKSCluster{{Name: "prod", Status: "ACTIVE"}})
