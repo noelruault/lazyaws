@@ -12,9 +12,9 @@ Every group is reviewed and repaired inside the cycle that built it (spec.md), s
 
 ## Stage 2 — left panels, one at a time
 
-- [ ] `s2-inpanel-empty` [d2] — `RerenderList` renders the panel's `NoItemsMessage` muted (color.Faint) inside the side view when the list is empty, keeping the existing main-panel message too. Shorten messages to "no EKS clusters" style. Headless test asserting the EKS view buffer.
-- [ ] `s2-left-profiles-ecs` [d2] — migrate Profiles (verify current cells, no visual change expected) and ECS cluster rows to Cell-based RenderTableFit: `icon  name  N services  R running / P pending  badge`, badge green `● healthy` when Status==ACTIVE and Pending==0, yellow `● deploying` when Pending>0, red `● <status>` otherwise, all from fields already on ECSCluster. Exact-cell tests per state.
-- [ ] `s2-left-ec2-s3` [d2] — EC2 rows: bold name (or "(no name)"), muted instance id, type, private IP, through RenderTableFit. S3 rows migrated unchanged in content. Exact-cell tests including a 60-char name at width 40.
+- [x] `s2-inpanel-empty` [d2] — `RerenderList` renders the panel's `NoItemsMessage` muted (color.Faint) inside the side view when the list is empty, keeping the existing main-panel message too. Shorten messages to "no EKS clusters" style. Headless test asserting the EKS view buffer.
+- [x] `s2-left-profiles-ecs` [d2] — migrate Profiles (verify current cells, no visual change expected) and ECS cluster rows to Cell-based RenderTableFit: `icon  name  N services  R running / P pending  badge`, badge green `● healthy` when Status==ACTIVE and Pending==0, yellow `● deploying` when Pending>0, red `● <status>` otherwise, all from fields already on ECSCluster. Exact-cell tests per state.
+- [x] `s2-left-ec2-s3` [d2] — EC2 rows: bold name (or "(no name)"), muted instance id, type, private IP, through RenderTableFit. S3 rows migrated unchanged in content. Exact-cell tests including a 60-char name at width 40.
 - [ ] `s2-left-eks-ecr` [d2] — EKS and ECR rows through RenderTableFit; ECR mutability rendered as an amber badge. Exact-cell tests.
 - [ ] `s2-left-secrets` [d3] — add rotation cadence to `SecretSummary` mapped from ListSecrets `RotationRules.AutomaticallyAfterDays` (nil-safe: RotationEnabled is ABSENT, not false, on never-rotated secrets); row renders `rotation 7d` / `rotation off` in the right column. Tests: nil rotation, 7d rotation, pending-deletion secret.
 - [ ] `s2-left-vpc` [d1] — VPC rows through RenderTableFit with the vpc id muted. Exact-cell tests.
