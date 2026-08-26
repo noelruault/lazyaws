@@ -190,6 +190,10 @@ func RenderTableFit(rows [][]Cell, width int, weights []int) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
+// flexibleFloor is the width a flexible column claims before the content-sized ones are paid, enough for a recognisable prefix and an ellipsis.
+// Like minTwoColWidth it is a tune-by-eye number, not a derived one.
+const flexibleFloor = 8
+
 // fitColumnWidths splits width between the columns, leaving one space between each pair.
 func fitColumnWidths(rows [][]Cell, width int, weights []int) []int {
 	columns := len(weights)
@@ -200,11 +204,12 @@ func fitColumnWidths(rows [][]Cell, width int, weights []int) []int {
 
 	budget := max(width-(columns-1), 0)
 
-	contentWidth, totalWeight, lastFlexible := 0, 0, -1
+	contentWidth, totalWeight, lastFlexible, flexibleCount := 0, 0, -1, 0
 	for i, weight := range weights {
 		if weight > 0 {
 			totalWeight += weight
 			lastFlexible = i
+			flexibleCount++
 			continue
 		}
 		for _, cells := range rows {
@@ -213,7 +218,10 @@ func fitColumnWidths(rows [][]Cell, width int, weights []int) []int {
 		contentWidth += widths[i]
 	}
 
-	share, given := max(budget-contentWidth, 0), 0
+	// Content-sized columns can fill the budget on their own, which would leave the flexible columns nothing.
+	// They are the ones holding the row's identifying text, so starving them empties the column you read the list by while four narrower ones survive.
+	// Claiming a floor here is what lets the left-to-right clamp below take those cells back off the trailing columns instead.
+	share, given := min(max(budget-contentWidth, flexibleFloor*flexibleCount), budget), 0
 	for i, weight := range weights {
 		if weight == 0 {
 			continue

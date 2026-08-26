@@ -1,9 +1,11 @@
 package presentation
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/apps/aws"
 	"github.com/noelruault/lazyaws/ui/utils"
@@ -169,5 +171,24 @@ func TestECSWeightsMatchTheirRowWidths(t *testing.T) {
 				t.Errorf("%d weights for %d cells", len(tt.weights), tt.cells)
 			}
 		})
+	}
+}
+
+// A side panel is routinely narrower than the five columns this row wants, and the name is the one thing that makes the row identifiable.
+// Degrading right to left is safe here: the leftmost cell is the status icon, so dropping the badge does not drop the status.
+func TestClusterRowKeepsTheNameInANarrowPanel(t *testing.T) {
+	c := &aws.ECSCluster{Name: "production-eu-west-1-primary", Status: "ACTIVE", RunningTasksCount: 12, PendingTasksCount: 1, ActiveServicesCount: 9}
+
+	for _, width := range []int{30, 40, 50, 60, 80} {
+		rendered, err := utils.RenderTableFit([][]utils.Cell{GetECSClusterDisplayCells(c)}, width, ECSClusterWeights())
+		if err != nil {
+			t.Fatalf("width %d: %v", width, err)
+		}
+		if got := runewidth.StringWidth(rendered); got > width {
+			t.Errorf("width %d: row is %d cells wide: %q", width, got, rendered)
+		}
+		if !strings.HasPrefix(rendered, "▶ product") {
+			t.Errorf("width %d: row = %q, want the cluster name after the status icon", width, rendered)
+		}
 	}
 }

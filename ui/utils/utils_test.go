@@ -295,3 +295,69 @@ func TestRenderTableFitNeverExceedsTheWidth(t *testing.T) {
 		}
 	}
 }
+
+// The column that identifies a row is the flexible one, so it must never be the column that disappears.
+// Sizing the content columns first spends the whole budget before the flexible one is paid, which empties the column the list is read by while narrower ones survive at full width.
+func TestRenderTableFitNeverStarvesTheFlexibleColumn(t *testing.T) {
+	row := []Cell{
+		{Text: "▶"},
+		{Text: "production-eu-west-1-primary"},
+		{Text: "9 services"},
+		{Text: "12 running / 1 pending"},
+		{Text: "● deploying"},
+	}
+	weights := []int{0, 1, 0, 0, 0}
+
+	// Below this the row cannot show a prefix and an ellipsis at all, and every column is down to scraps.
+	for width := flexibleFloor + len(row); width <= 200; width++ {
+		rendered, err := RenderTableFit([][]Cell{row}, width, weights)
+		if err != nil {
+			t.Fatalf("width %d: %v", width, err)
+		}
+		if got := runewidth.StringWidth(rendered); got > width {
+			t.Fatalf("width %d: row is %d cells wide: %q", width, got, rendered)
+		}
+		if !strings.HasPrefix(rendered, "▶ p") {
+			t.Errorf("width %d: row = %q, want the flexible column still showing its text", width, rendered)
+		}
+	}
+}
+
+// The floor is a minimum, not a fixed size: a flexible column with room to spare must still absorb the slack.
+func TestRenderTableFitStillGivesTheFlexibleColumnTheSlack(t *testing.T) {
+	row := []Cell{{Text: "name"}, {Text: "tail"}}
+
+	rendered, err := RenderTableFit([][]Cell{row}, 40, []int{1, 0})
+	if err != nil {
+		t.Fatalf("RenderTableFit: %v", err)
+	}
+
+	// 40 cells: a 35-wide flexible column, one separator, then the 4-wide content column.
+	if want := "name" + strings.Repeat(" ", 31) + " tail"; rendered != want {
+		t.Errorf("row = %q, want %q", rendered, want)
+	}
+}
+
+// The floor is claimed per flexible column, not once for the row: the EC2 row flexes both its name and its instance id, and a single floor shared between them leaves each too short to recognise.
+func TestFitColumnWidthsClaimsTheFloorForEveryFlexibleColumn(t *testing.T) {
+	rows := [][]Cell{{
+		{Text: "▶"},
+		{Text: strings.Repeat("n", 40)},
+		{Text: "i-0123456789abcdef0"},
+		{Text: "t3.micro"},
+		{Text: "10.0.0.5"},
+	}}
+	weights := []int{0, 2, 1, 0, 0}
+
+	// 30 cells: the content columns alone want more than this, so the floor is what the flexible columns get.
+	widths := fitColumnWidths(rows, 30, weights)
+
+	if got := widths[1] + widths[2]; got < 2*flexibleFloor {
+		t.Errorf("the two flexible columns got %d cells (%d and %d), want at least %d", got, widths[1], widths[2], 2*flexibleFloor)
+	}
+	for _, i := range []int{1, 2} {
+		if widths[i] == 0 {
+			t.Errorf("flexible column %d got no width at all: %v", i, widths)
+		}
+	}
+}
