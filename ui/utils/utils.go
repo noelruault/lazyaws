@@ -121,6 +121,115 @@ func RenderTable(rows [][]string) (string, error) {
 	return strings.Join(paddedDisplayRows, "\n"), nil
 }
 
+// Cell is one cell of a RenderTableFit table, keeping styling apart from text.
+// Truncation has to happen on plain text: cutting a string that already carries ANSI escapes splits an escape pair and bleeds the colour into everything after it.
+type Cell struct {
+	Text string
+	// Color is applied after truncation. The zero value leaves Text unstyled, since color.Reset as a cell style would mean nothing.
+	Color color.Attribute
+}
+
+// render fits the cell's text into width terminal cells and only then colours it.
+func (c Cell) render(width int) string {
+	// runewidth.Truncate subtracts the tail's own width from the budget, so at width 0 it still returns a one-cell "…" and overflows the column.
+	if width <= 0 {
+		return ""
+	}
+
+	text := runewidth.Truncate(c.Text, width, "…")
+	if c.Color == 0 {
+		return text
+	}
+	return ColoredString(text, c.Color)
+}
+
+// RenderTableFit lays rows out inside width terminal cells, so one long value cannot push every other column off-screen the way RenderTable does.
+// A weight of 0 sizes its column to the widest cell in it; weights above 0 share what is left over in proportion, and the last of them absorbs the rounding remainder.
+// Cells too wide for their column are cut with a trailing "…".
+func RenderTableFit(rows [][]Cell, width int, weights []int) (string, error) {
+	if len(rows) == 0 {
+		return "", nil
+	}
+
+	columns := len(rows[0])
+	for _, cells := range rows {
+		if len(cells) != columns {
+			return "", errors.New("each row must have the same number of cells to display")
+		}
+	}
+	if len(weights) != columns {
+		return "", fmt.Errorf("got %d column weights for %d columns", len(weights), columns)
+	}
+	for _, weight := range weights {
+		if weight < 0 {
+			return "", fmt.Errorf("column weight %d is negative", weight)
+		}
+	}
+
+	columnWidths := fitColumnWidths(rows, width, weights)
+
+	lines := make([]string, len(rows))
+	for i, cells := range rows {
+		var line strings.Builder
+		for j, cell := range cells {
+			if j > 0 {
+				line.WriteByte(' ')
+			}
+			line.WriteString(WithPadding(cell.render(columnWidths[j]), columnWidths[j]))
+		}
+		// Columns squeezed to nothing would otherwise leave a run of separators hanging off the end of the row.
+		lines[i] = strings.TrimRight(line.String(), " ")
+	}
+
+	return strings.Join(lines, "\n"), nil
+}
+
+// fitColumnWidths splits width between the columns, leaving one space between each pair.
+func fitColumnWidths(rows [][]Cell, width int, weights []int) []int {
+	columns := len(weights)
+	widths := make([]int, columns)
+	if columns == 0 {
+		return widths
+	}
+
+	budget := max(width-(columns-1), 0)
+
+	contentWidth, totalWeight, lastFlexible := 0, 0, -1
+	for i, weight := range weights {
+		if weight > 0 {
+			totalWeight += weight
+			lastFlexible = i
+			continue
+		}
+		for _, cells := range rows {
+			widths[i] = max(widths[i], runewidth.StringWidth(cells[i].Text))
+		}
+		contentWidth += widths[i]
+	}
+
+	share, given := max(budget-contentWidth, 0), 0
+	for i, weight := range weights {
+		if weight == 0 {
+			continue
+		}
+		if i == lastFlexible {
+			widths[i] = share - given
+			continue
+		}
+		widths[i] = share * weight / totalWeight
+		given += widths[i]
+	}
+
+	// Content-sized columns can overrun the terminal on their own, so spend the budget left to right: the leftmost columns carry the identifying text and are the ones worth keeping.
+	spent := 0
+	for i := range widths {
+		widths[i] = max(min(widths[i], budget-spent), 0)
+		spent += widths[i]
+	}
+
+	return widths
+}
+
 func getPadWidths(rows [][]string) []int {
 	if len(rows[0]) <= 1 {
 		return []int{}
