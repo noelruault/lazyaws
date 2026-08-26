@@ -74,13 +74,17 @@ var stateAliases = map[string]statusKind{
 	"alarm":             statusFailed, // CloudWatch alarm state
 }
 
+// statusKindOf resolves a service's raw state word through the shared aliases, so a state that renders green in one panel cannot render red in another.
+func statusKindOf(rawState string) statusKind {
+	if kind, ok := stateAliases[strings.ToLower(strings.TrimSpace(rawState))]; ok {
+		return kind
+	}
+	return statusUnknown
+}
+
 // StatusCell preserves raw text in long style and falls back to "?" for unknown compact states.
 func StatusCell(rawState string, style StatusStyle) string {
-	kind := statusUnknown
-	if k, ok := stateAliases[strings.ToLower(strings.TrimSpace(rawState))]; ok {
-		kind = k
-	}
-	row := statusStyleTable[kind]
+	row := statusStyleTable[statusKindOf(rawState)]
 
 	var text string
 	switch style {

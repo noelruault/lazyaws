@@ -263,17 +263,9 @@ func formatEC2Metrics(m *aws.InstanceMetrics) string {
 	})
 }
 
+// formatByteCount keeps the panel call sites short now that the formatter is shared with the presentation overviews.
 func formatByteCount(b float64) string {
-	const unit = 1024.0
-	if b < unit {
-		return fmt.Sprintf("%.0f B", b)
-	}
-	div, exp := unit, 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", b/div, "KMGTPE"[exp])
+	return presentation.FormatByteCount(b)
 }
 
 // renderEC2Storage refetches per tab and treats optional snapshots as best effort.
