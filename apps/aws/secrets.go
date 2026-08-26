@@ -21,14 +21,16 @@ type SecretSummary struct {
 	LastChanged     *time.Time
 	LastAccessed    *time.Time
 	RotationEnabled bool
-	NextRotation    *time.Time
-	PrimaryRegion   string
-	Tags            []secretsmanagertypes.Tag
-	HasReplication  bool
-	OwningService   string
-	KMSKeyID        string
-	LastRotated     *time.Time
-	DeletedDate     *time.Time
+	// RotationDays is 0 when Secrets Manager reports no day cadence, which is not the same as "does not rotate": a secret scheduled by a cron() or rate() expression only gets AutomaticallyAfterDays filled in after its first successful rotation.
+	RotationDays   int64
+	NextRotation   *time.Time
+	PrimaryRegion  string
+	Tags           []secretsmanagertypes.Tag
+	HasReplication bool
+	OwningService  string
+	KMSKeyID       string
+	LastRotated    *time.Time
+	DeletedDate    *time.Time
 }
 
 type SecretDetails struct {
@@ -41,6 +43,15 @@ type SecretDetails struct {
 	RawJSON     string
 	// ResourcePolicy is "" when absent or when its best-effort fetch fails.
 	ResourcePolicy string
+}
+
+// rotationDays reads the cadence off a rotation schedule that is absent on every secret that has never had one configured.
+func rotationDays(rules *secretsmanagertypes.RotationRulesType) int64 {
+	if rules == nil || rules.AutomaticallyAfterDays == nil {
+		return 0
+	}
+
+	return *rules.AutomaticallyAfterDays
 }
 
 func (c *Client) ListSecrets(ctx context.Context, includeDeleted bool) ([]SecretSummary, error) {
@@ -69,6 +80,7 @@ func (c *Client) ListSecrets(ctx context.Context, includeDeleted bool) ([]Secret
 				LastChanged:     s.LastChangedDate,
 				LastAccessed:    s.LastAccessedDate,
 				RotationEnabled: s.RotationEnabled != nil && *s.RotationEnabled,
+				RotationDays:    rotationDays(s.RotationRules),
 				NextRotation:    s.NextRotationDate,
 				PrimaryRegion:   getString(s.PrimaryRegion),
 				Tags:            s.Tags,
@@ -126,6 +138,7 @@ func (c *Client) GetSecretDetails(ctx context.Context, name string) (*SecretDeta
 			LastChanged:     desc.LastChangedDate,
 			LastAccessed:    desc.LastAccessedDate,
 			RotationEnabled: desc.RotationEnabled != nil && *desc.RotationEnabled,
+			RotationDays:    rotationDays(desc.RotationRules),
 			NextRotation:    desc.NextRotationDate,
 			PrimaryRegion:   getString(desc.PrimaryRegion),
 			Tags:            desc.Tags,

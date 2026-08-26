@@ -70,9 +70,10 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 		Sort: func(a, b *aws.SecretSummary) bool {
 			return a.Name < b.Name
 		},
-		GetTableCells: func(s *aws.SecretSummary) []string {
-			return presentation.GetSecretDisplayStrings(s)
+		GetTableCellsFit: func(s *aws.SecretSummary) []utils.Cell {
+			return presentation.GetSecretDisplayCells(s)
 		},
+		Weights: func(*aws.SecretSummary) []int { return presentation.SecretWeights() },
 	}
 }
 

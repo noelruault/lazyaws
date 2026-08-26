@@ -4,7 +4,24 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	secretsmanagertypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 )
+
+// RotationRules is absent on every secret that has never had rotation configured, and AutomaticallyAfterDays is absent again on one scheduled by a cron() or rate() expression that has not rotated yet.
+func TestRotationDaysIsNilSafe(t *testing.T) {
+	if got := rotationDays(nil); got != 0 {
+		t.Errorf("rotationDays(nil) = %d, want 0", got)
+	}
+	if got := rotationDays(&secretsmanagertypes.RotationRulesType{}); got != 0 {
+		t.Errorf("rotationDays with no cadence = %d, want 0", got)
+	}
+
+	days := int64(7)
+	if got := rotationDays(&secretsmanagertypes.RotationRulesType{AutomaticallyAfterDays: &days}); got != 7 {
+		t.Errorf("rotationDays = %d, want 7", got)
+	}
+}
 
 // An RDS-managed password is generated from a charset that includes & < >, and a secret's value has to be reproduced byte for byte: a displayed password that was re-encoded on the way out cannot be pasted anywhere.
 func TestPrettySecretJSONPreservesTheValueVerbatim(t *testing.T) {
