@@ -4,41 +4,94 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
+	"github.com/mattn/go-runewidth"
+
 	"github.com/noelruault/lazyaws/apps/aws"
 	"github.com/noelruault/lazyaws/ui/utils"
 )
 
-func TestGetVPCDisplayStrings(t *testing.T) {
-	got := GetVPCDisplayStrings(&aws.VPC{
+func TestGetVPCDisplayCells(t *testing.T) {
+	// The CIDR leads because it is what a VPC gets recognised by when tracing reachability between networks.
+	wantCells(t, GetVPCDisplayCells(&aws.VPC{
 		ID:    "vpc-0123456789abcdef0",
 		Name:  "stage-vpc",
 		State: "available",
 		CIDR:  "10.0.0.0/16",
+	}), []utils.Cell{
+		{Text: "▶", Color: color.FgGreen},
+		{Text: "10.0.0.0/16", Color: color.Bold},
+		{Text: "stage-vpc"},
+		{Text: "vpc-0123456789abcdef0", Color: color.Faint},
 	})
+}
 
-	if len(got) != 4 {
-		t.Fatalf("got %d cells, want 4", len(got))
+func TestGetVPCDisplayCellsMarksTheDefaultVPC(t *testing.T) {
+	got := GetVPCDisplayCells(&aws.VPC{ID: "vpc-1", State: "available", CIDR: "172.31.0.0/16", IsDefault: true})
+
+	if !strings.Contains(got[2].Text, "(default)") {
+		t.Errorf("label cell = %q, want the default marker", got[2].Text)
 	}
-	if cell := utils.Decolorise(got[0]); cell != "▶" {
-		t.Errorf("status cell = %q, want the running icon", cell)
-	}
-	// The CIDR leads because it is what a VPC gets recognised by when tracing reachability between networks.
-	if got[1] != "10.0.0.0/16" {
-		t.Errorf("first text cell = %q, want the CIDR", got[1])
-	}
-	if got[2] != "stage-vpc" {
-		t.Errorf("label cell = %q", got[2])
+	if !strings.Contains(got[2].Text, "(no name)") {
+		t.Errorf("label cell = %q, want the unnamed placeholder kept", got[2].Text)
 	}
 }
 
-func TestGetVPCDisplayStringsMarksTheDefaultVPC(t *testing.T) {
-	got := GetVPCDisplayStrings(&aws.VPC{ID: "vpc-1", State: "available", CIDR: "172.31.0.0/16", IsDefault: true})
+// Every VPC row carries a 21-cell id, so a side panel squeezes this row shape even with a short label.
+func TestVPCRowKeepsTheCIDRAndBothIdentifiersInANarrowPanel(t *testing.T) {
+	forceColor(t)
+	const width = 40
 
-	if !strings.Contains(got[2], "(default)") {
-		t.Errorf("label cell = %q, want the default marker", got[2])
+	vpc := &aws.VPC{
+		ID:    "vpc-0123456789abcdef0",
+		Name:  strings.Repeat("v", 40),
+		State: "available",
+		CIDR:  "10.0.0.0/16",
 	}
-	if !strings.Contains(got[2], "(no name)") {
-		t.Errorf("label cell = %q, want the unnamed placeholder kept", got[2])
+
+	rendered, err := utils.RenderTableFit([][]utils.Cell{GetVPCDisplayCells(vpc)}, width, VPCWeights())
+	if err != nil {
+		t.Fatalf("RenderTableFit: %v", err)
+	}
+
+	plain := utils.Decolorise(rendered)
+	if got := runewidth.StringWidth(plain); got > width {
+		t.Errorf("row is %d cells wide, want at most %d: %q", got, width, plain)
+	}
+	// The CIDR is content-sized, so it is the one column that must never be cut: a truncated network address is a different network.
+	if !strings.HasPrefix(plain, "▶ 10.0.0.0/16 ") {
+		t.Errorf("row = %q, want the icon and the whole CIDR", plain)
+	}
+	for _, want := range []string{"vvv", "vpc-0"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("row = %q, want it to still show %q", plain, want)
+		}
+	}
+}
+
+// A proportional share of a wide panel under-pays a column whose content is a fixed 21 cells, so the id used to be cut at width 60 while the label column sat on idle padding.
+func TestVPCRowShowsTheWholeIDOnceThePanelHasRoom(t *testing.T) {
+	forceColor(t)
+
+	vpc := &aws.VPC{ID: "vpc-0123456789abcdef0", Name: "stage-vpc", State: "available", CIDR: "10.0.0.0/16"}
+
+	rendered, err := utils.RenderTableFit([][]utils.Cell{GetVPCDisplayCells(vpc)}, 60, VPCWeights())
+	if err != nil {
+		t.Fatalf("RenderTableFit: %v", err)
+	}
+
+	plain := utils.Decolorise(rendered)
+	if !strings.Contains(plain, "vpc-0123456789abcdef0") {
+		t.Errorf("row = %q, want the whole vpc id at a width that fits it", plain)
+	}
+	if strings.Contains(plain, "…") {
+		t.Errorf("row = %q, want nothing cut at a width everything fits in", plain)
+	}
+}
+
+func TestVPCWeightsMatchTheRowWidth(t *testing.T) {
+	if got, want := len(VPCWeights()), len(GetVPCDisplayCells(&aws.VPC{})); got != want {
+		t.Errorf("%d weights for %d cells", got, want)
 	}
 }
 

@@ -52,9 +52,10 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 			}
 			return a.CIDR < b.CIDR
 		},
-		GetTableCells: func(v *aws.VPC) []string {
-			return presentation.GetVPCDisplayStrings(v)
+		GetTableCellsFit: func(v *aws.VPC) []utils.Cell {
+			return presentation.GetVPCDisplayCells(v)
 		},
+		Weights: func(*aws.VPC) []int { return presentation.VPCWeights() },
 	}
 }
 
