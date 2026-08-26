@@ -42,7 +42,7 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 			List: panels.NewFilteredList[*aws.VPC](),
 			View: gui.Views.VPC,
 		},
-		NoItemsMessage: "no vpcs found",
+		NoItemsMessage: "no VPCs",
 		Gui:            gui.intoInterface(),
 
 		// The default VPC sorts last: every account has one and it is rarely the one being investigated.

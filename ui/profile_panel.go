@@ -36,7 +36,7 @@ func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
 			List: panels.NewFilteredList[string](),
 			View: gui.Views.Profile,
 		},
-		NoItemsMessage: "no AWS profiles found in ~/.aws/config",
+		NoItemsMessage: "no AWS profiles in ~/.aws/config",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b string) bool { return a < b },

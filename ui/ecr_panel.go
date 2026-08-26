@@ -32,7 +32,7 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 			List: panels.NewFilteredList[*aws.ECRRepository](),
 			View: gui.Views.ECR,
 		},
-		NoItemsMessage: "no ECR repositories found",
+		NoItemsMessage: "no ECR repositories",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *aws.ECRRepository) bool {

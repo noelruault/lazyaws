@@ -36,7 +36,7 @@ func (gui *Gui) getEC2Panel() *panels.SideListPanel[*aws.Instance] {
 			List: panels.NewFilteredList[*aws.Instance](),
 			View: gui.Views.EC2,
 		},
-		NoItemsMessage: "no EC2 instances found",
+		NoItemsMessage: "no EC2 instances",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *aws.Instance) bool {

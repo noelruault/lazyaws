@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/fatih/color"
 	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/ui/tasks"
@@ -273,6 +274,11 @@ func (self *SideListPanel[T]) RerenderList() error {
 	self.Gui.Update(func() error {
 		self.View.Clear()
 		items := self.List.GetItems()
+		if len(items) == 0 {
+			fmt.Fprint(self.View, self.emptyMessage())
+			return self.afterRerender()
+		}
+
 		table := make([][]string, len(items))
 		for i, item := range items {
 			table[i] = self.GetTableCells(item)
@@ -283,18 +289,34 @@ func (self *SideListPanel[T]) RerenderList() error {
 		}
 		fmt.Fprint(self.View, renderedTable)
 
-		if self.OnRerender != nil {
-			if err := self.OnRerender(); err != nil {
-				return err
-			}
-		}
-
-		if self.Gui.IsCurrentView(self.View) {
-			return self.HandleSelect()
-		}
-		return nil
+		return self.afterRerender()
 	})
 
+	return nil
+}
+
+// emptyMessage is what a panel shows in place of rows.
+// HandleSelect puts the same words in the main panel, but only for the focused panel, so without this an empty side panel is an unexplained blank box.
+// It is a method rather than an inline call so the muting is assertable: gocui parses escapes into cell attributes, and View.Buffer() hands the text back stripped of them.
+func (self *SideListPanel[T]) emptyMessage() string {
+	if self.NoItemsMessage == "" {
+		return ""
+	}
+
+	return utils.ColoredString(self.NoItemsMessage, color.Faint)
+}
+
+// afterRerender runs the hooks every rerender owes its caller, whether or not the panel had rows to draw.
+func (self *SideListPanel[T]) afterRerender() error {
+	if self.OnRerender != nil {
+		if err := self.OnRerender(); err != nil {
+			return err
+		}
+	}
+
+	if self.Gui.IsCurrentView(self.View) {
+		return self.HandleSelect()
+	}
 	return nil
 }
 

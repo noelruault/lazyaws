@@ -59,7 +59,7 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 			List: panels.NewFilteredList[*aws.SecretSummary](),
 			View: gui.Views.Secrets,
 		},
-		NoItemsMessage: "no secrets found",
+		NoItemsMessage: "no secrets",
 		Gui:            gui.intoInterface(),
 
 		OnSelect: func(s *aws.SecretSummary) error {

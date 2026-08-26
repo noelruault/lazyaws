@@ -2,7 +2,10 @@ package panels
 
 import (
 	"context"
+	"strings"
 	"testing"
+
+	"github.com/fatih/color"
 
 	"github.com/jesseduffield/gocui"
 
@@ -105,5 +108,41 @@ func TestGetMainTabTitles(t *testing.T) {
 	state.GetMainTabs = func() []MainTab[string] { return nil }
 	if got := state.GetMainTabTitles(); len(got) != 0 {
 		t.Errorf("GetMainTabTitles() with no tabs = %v, want empty", got)
+	}
+}
+
+// forceColor makes the styling observable: a test binary is not a tty, so fatih/color otherwise strips every escape and any assertion about muting passes vacuously.
+func forceColor(t *testing.T) {
+	t.Helper()
+
+	previous := color.NoColor
+	color.NoColor = false
+	t.Cleanup(func() { color.NoColor = previous })
+}
+
+// gocui turns escapes into cell attributes, so the muting cannot be read back off the view: assert it on the string the panel writes.
+func TestEmptyMessageIsMuted(t *testing.T) {
+	forceColor(t)
+
+	panel := &SideListPanel[string]{NoItemsMessage: "no EKS clusters"}
+
+	got := panel.emptyMessage()
+	want := color.New(color.Faint).Sprint("no EKS clusters")
+	if got != want {
+		t.Errorf("emptyMessage() = %q, want %q", got, want)
+	}
+	if !strings.Contains(got, "no EKS clusters") {
+		t.Errorf("emptyMessage() = %q, want it to still carry the message text", got)
+	}
+}
+
+// The menu panel deliberately has no message, and an empty view is better than a stray escape pair.
+func TestEmptyMessageIsBlankWhenThePanelHasNoMessage(t *testing.T) {
+	forceColor(t)
+
+	panel := &SideListPanel[string]{}
+
+	if got := panel.emptyMessage(); got != "" {
+		t.Errorf("emptyMessage() = %q, want the empty string", got)
 	}
 }

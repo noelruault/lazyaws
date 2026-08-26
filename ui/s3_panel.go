@@ -39,7 +39,7 @@ func (gui *Gui) getS3Panel() *panels.SideListPanel[*aws.Bucket] {
 			List: panels.NewFilteredList[*aws.Bucket](),
 			View: gui.Views.S3,
 		},
-		NoItemsMessage: "no S3 buckets found",
+		NoItemsMessage: "no S3 buckets",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *aws.Bucket) bool {

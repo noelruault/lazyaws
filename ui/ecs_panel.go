@@ -124,7 +124,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 			List: panels.NewFilteredList[*ecsRow](),
 			View: gui.Views.ECS,
 		},
-		NoItemsMessage: "no ECS resources found",
+		NoItemsMessage: "no ECS resources",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *ecsRow) bool { return a.name() < b.name() },

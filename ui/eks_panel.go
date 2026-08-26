@@ -81,7 +81,7 @@ func (gui *Gui) getEKSPanel() *panels.SideListPanel[*aws.EKSCluster] {
 			List: panels.NewFilteredList[*aws.EKSCluster](),
 			View: gui.Views.EKS,
 		},
-		NoItemsMessage: "no EKS clusters found",
+		NoItemsMessage: "no EKS clusters",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *aws.EKSCluster) bool {
