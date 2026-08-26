@@ -50,6 +50,17 @@ func TestGetEKSClusterDisplayCells(t *testing.T) {
 			},
 		},
 		{
+			// The panel used to substitute "-" for an absent status; the badge answers it with the style table's unknown icon instead, and must not render a bare separator-only cell.
+			"a cluster with no status at all",
+			&aws.EKSCluster{Name: "quiet", CreatedAt: "2026-01-02 15:04:05"},
+			[]utils.Cell{
+				{Text: "?", Color: color.FgWhite},
+				{Text: "quiet", Color: color.Bold},
+				{Text: "0 nodes"},
+				{Text: "2026-01-02", Color: color.Faint},
+			},
+		},
+		{
 			"a deleting cluster",
 			&aws.EKSCluster{Name: "old", Status: "DELETING", NodeCount: 3, CreatedAt: "2025-11-30 08:00:00"},
 			[]utils.Cell{
@@ -93,10 +104,12 @@ func TestEKSClusterRowKeepsTheNameAndTheWholeDateInANarrowPanel(t *testing.T) {
 	if !strings.Contains(plain, "…") {
 		t.Errorf("row = %q, want the name cut with an ellipsis", plain)
 	}
-	for _, want := range []string{"12 nodes", "2026-01-02"} {
-		if !strings.Contains(plain, want) {
-			t.Errorf("row = %q, want it to still show %q whole", plain, want)
-		}
+	if !strings.Contains(plain, "12 nodes") {
+		t.Errorf("row = %q, want the node count kept whole", plain)
+	}
+	// Ending on the date is what says it was not cut: an untrimmed stamp contains the date too, and would end on the ellipsis that eats its time of day.
+	if !strings.HasSuffix(plain, "2026-01-02") {
+		t.Errorf("row = %q, want it to end on a whole date", plain)
 	}
 }
 
