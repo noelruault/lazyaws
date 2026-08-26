@@ -119,10 +119,13 @@ func (gui *Gui) loadEKSList() error {
 		for i := range clusters {
 			rows[i] = &clusters[i]
 		}
-		gui.Panels.EKS.SetItemsKeepSelection(rows, func(c *aws.EKSCluster) string { return c.Name })
+		gui.Panels.EKS.SetItemsKeepSelection(rows, eksSelectionKey)
 		return gui.Panels.EKS.RerenderList()
 	})
 }
+
+// eksSelectionKey identifies a cluster across reloads; cluster names are unique per region.
+func eksSelectionKey(cluster *aws.EKSCluster) string { return cluster.Name }
 
 func (gui *Gui) renderEKSConfig(cluster *aws.EKSCluster) tasks.TaskFunc {
 	name := cluster.Name

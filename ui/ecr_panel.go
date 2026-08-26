@@ -68,10 +68,13 @@ func (gui *Gui) loadECRList() error {
 		for i := range repos {
 			rows[i] = &repos[i]
 		}
-		gui.Panels.ECR.SetItemsKeepSelection(rows, func(r *aws.ECRRepository) string { return r.Name })
+		gui.Panels.ECR.SetItemsKeepSelection(rows, ecrSelectionKey)
 		return gui.Panels.ECR.RerenderList()
 	})
 }
+
+// ecrSelectionKey identifies a repository across reloads; repository names are unique per registry.
+func ecrSelectionKey(repo *aws.ECRRepository) string { return repo.Name }
 
 // renderECRConfig reuses policy data already fetched with the repository row.
 func (gui *Gui) renderECRConfig(repo *aws.ECRRepository) tasks.TaskFunc {

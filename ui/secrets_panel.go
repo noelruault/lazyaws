@@ -100,10 +100,13 @@ func (gui *Gui) loadSecretsList() error {
 		for i := range secrets {
 			rows[i] = &secrets[i]
 		}
-		gui.Panels.Secrets.SetItemsKeepSelection(rows, func(s *aws.SecretSummary) string { return s.Name })
+		gui.Panels.Secrets.SetItemsKeepSelection(rows, secretsSelectionKey)
 		return gui.Panels.Secrets.RerenderList()
 	})
 }
+
+// secretsSelectionKey identifies a secret across reloads by name rather than ARN, because the same name reappears with a new ARN after a delete and recreate.
+func secretsSelectionKey(secret *aws.SecretSummary) string { return secret.Name }
 
 func (gui *Gui) handleSecretsToggleDeleted(g *gocui.Gui, v *gocui.View) error {
 	gui.secretsShowDeleted = !gui.secretsShowDeleted

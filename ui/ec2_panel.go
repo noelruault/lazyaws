@@ -77,10 +77,13 @@ func (gui *Gui) loadEC2List() error {
 		for i := range instances {
 			rows[i] = &instances[i]
 		}
-		gui.Panels.EC2.SetItemsKeepSelection(rows, func(inst *aws.Instance) string { return inst.ID })
+		gui.Panels.EC2.SetItemsKeepSelection(rows, ec2SelectionKey)
 		return gui.Panels.EC2.RerenderList()
 	})
 }
+
+// ec2SelectionKey identifies an instance across reloads. The Name tag is absent on plenty of instances and duplicated across an autoscaling group, so the id is the only identity.
+func ec2SelectionKey(inst *aws.Instance) string { return inst.ID }
 
 func (gui *Gui) renderEC2Config(inst *aws.Instance) tasks.TaskFunc {
 	id := inst.ID

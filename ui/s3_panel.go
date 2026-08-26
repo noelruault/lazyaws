@@ -75,10 +75,13 @@ func (gui *Gui) loadS3List() error {
 		for i := range buckets {
 			rows[i] = &buckets[i]
 		}
-		gui.Panels.S3.SetItemsKeepSelection(rows, func(b *aws.Bucket) string { return b.Name })
+		gui.Panels.S3.SetItemsKeepSelection(rows, s3SelectionKey)
 		return gui.Panels.S3.RerenderList()
 	})
 }
+
+// s3SelectionKey identifies a bucket across reloads; bucket names are globally unique.
+func s3SelectionKey(bucket *aws.Bucket) string { return bucket.Name }
 
 // renderS3Config defers the full bucket scan so slow size calculation cannot block other metadata.
 func (gui *Gui) renderS3Config(bucket *aws.Bucket) tasks.TaskFunc {

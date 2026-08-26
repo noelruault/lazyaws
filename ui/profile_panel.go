@@ -55,7 +55,7 @@ func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
 
 func (gui *Gui) refreshProfile() error {
 	firstLoad := gui.Panels.Profile.List.Len() == 0
-	gui.Panels.Profile.SetItemsKeepSelection(listAWSProfiles(), func(profile string) string { return profile })
+	gui.Panels.Profile.SetItemsKeepSelection(listAWSProfiles(), profileSelectionKey)
 
 	// The panel opens on the connected profile, but this is a reloader: later refreshes must leave the cursor wherever the user moved it.
 	if firstLoad && gui.CurrentProfile != "" {
@@ -64,6 +64,9 @@ func (gui *Gui) refreshProfile() error {
 
 	return gui.Panels.Profile.RerenderList()
 }
+
+// profileSelectionKey identifies a profile row across reloads; the row IS its name.
+func profileSelectionKey(profile string) string { return profile }
 
 func (gui *Gui) handleProfileSwitch(g *gocui.Gui, v *gocui.View) error {
 	profile, err := gui.Panels.Profile.GetSelectedItem()

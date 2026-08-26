@@ -867,10 +867,13 @@ func (gui *Gui) loadECSList() error {
 			return nil
 		}
 
-		gui.Panels.ECS.SetItemsKeepSelection(rows, func(row *ecsRow) string { return row.arn() })
+		gui.Panels.ECS.SetItemsKeepSelection(rows, ecsSelectionKey)
 		return gui.Panels.ECS.RerenderList()
 	})
 }
+
+// ecsSelectionKey identifies a cluster, service or task row across reloads. The drill level is not part of it because drillECS empties the list before loading the next level.
+func ecsSelectionKey(row *ecsRow) string { return row.arn() }
 
 func (gui *Gui) fetchECSRows(ctx context.Context, level ecsDrillLevel, cluster, service string) ([]*ecsRow, error) {
 	switch level {

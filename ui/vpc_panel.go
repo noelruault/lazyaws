@@ -82,10 +82,13 @@ func (gui *Gui) loadVPCList() error {
 		for i := range vpcs {
 			rows[i] = &vpcs[i]
 		}
-		gui.Panels.VPC.SetItemsKeepSelection(rows, func(v *aws.VPC) string { return v.ID })
+		gui.Panels.VPC.SetItemsKeepSelection(rows, vpcSelectionKey)
 		return gui.Panels.VPC.RerenderList()
 	})
 }
+
+// vpcSelectionKey identifies a VPC across reloads. The CIDR is not identity: VPCs in different regions, and peered ones, can share it.
+func vpcSelectionKey(vpc *aws.VPC) string { return vpc.ID }
 
 // vpcTab runs one tab's fetch under the shared timeout and generation check, leaving each render below as only its query and its formatting.
 func (gui *Gui) vpcTab(vpc *aws.VPC, render func(context.Context, string) (string, error)) tasks.TaskFunc {
