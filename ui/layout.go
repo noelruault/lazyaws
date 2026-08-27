@@ -56,6 +56,9 @@ func (gui *Gui) layout(g *gocui.Gui) error {
 	// Chat rewraps here because layout owns race-free access to the new width.
 	gui.syncQWidth()
 
+	// Width-aware tabs re-render here for the same reason, and after the loop above so main already carries its new size.
+	gui.syncMainWidth()
+
 	// Dimming belongs to frame state, so layout owns it instead of popup creation.
 	gui.syncDim()
 

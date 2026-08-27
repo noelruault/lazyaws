@@ -78,6 +78,12 @@ type Gui struct {
 
 	// panelThrottles bound goroutine creation from repeated refresh keys.
 	panelThrottles map[string]*throttle
+
+	// mainWidth is main's inner width as of the last layout pass, so a resize can be told from the many layout passes that change nothing.
+	mainWidth int
+
+	// rerenderMainTab collapses a drag-resize into one re-render per 50ms window.
+	rerenderMainTab *throttle
 }
 
 type Panels struct {
@@ -170,6 +176,7 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 	gui.Registry = gui.newRegistry()
 	gui.Keys, gui.startupProblems = buildKeymap(cfg.User.Keybindings)
 	gui.throttledRefresh = newThrottle(50*time.Millisecond, gui.refresh)
+	gui.rerenderMainTab = newThrottle(50*time.Millisecond, gui.rerenderCurrentMainTab)
 	gui.panelThrottles = make(map[string]*throttle)
 	for name, reload := range gui.panelReloaders() {
 		reload := reload

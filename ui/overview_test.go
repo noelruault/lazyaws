@@ -1,0 +1,220 @@
+package ui
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/jesseduffield/gocui"
+
+	"github.com/noelruault/lazyaws/ui/tasks"
+)
+
+func TestOverviewInterval(t *testing.T) {
+	tests := []struct {
+		name    string
+		seconds int
+		want    time.Duration
+	}{
+		{name: "the default", seconds: 2, want: 2 * time.Second},
+		{name: "a slow refresh", seconds: 60, want: 60 * time.Second},
+		{name: "the fastest a config can ask for", seconds: 1, want: time.Second},
+		{name: "zero turns it off", seconds: 0, want: 0},
+		{name: "a negative cannot reach time.NewTicker", seconds: -5, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := overviewInterval(tt.seconds); got != tt.want {
+				t.Errorf("overviewInterval(%d) = %v, want %v", tt.seconds, got, tt.want)
+			}
+		})
+	}
+}
+
+// counter records how often an overview asked for its content, which is the only visible difference between the ticking and the one-shot task paths.
+type counter struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *counter) render(context.Context) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n++
+
+	return "overview body"
+}
+
+func (c *counter) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.n
+}
+
+// atLeast polls because the task runs on its own goroutine; it reports the count it settled on.
+func (c *counter) atLeast(want int, within time.Duration) int {
+	for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+		if c.count() >= want {
+			break
+		}
+	}
+
+	return c.count()
+}
+
+func TestOverviewTaskWithoutAnIntervalRendersOnce(t *testing.T) {
+	gui, _ := newHeadlessGui(t)
+
+	var calls counter
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	task := gui.newOverviewTask(0, calls.render)
+	go task(ctx)
+
+	if got := calls.atLeast(1, time.Second); got != 1 {
+		t.Fatalf("renders = %d, want 1 before the wait", got)
+	}
+
+	// Long enough that the 15ms ticker the sibling test uses would have fired several times.
+	time.Sleep(150 * time.Millisecond)
+	if got := calls.count(); got != 1 {
+		t.Errorf("renders = %d after waiting, want 1: an interval of 0 must not start a ticker", got)
+	}
+}
+
+func TestOverviewTaskRepeatsOnItsInterval(t *testing.T) {
+	gui, _ := newHeadlessGui(t)
+
+	var calls counter
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	task := gui.newOverviewTask(15*time.Millisecond, calls.render)
+	go task(ctx)
+
+	if got := calls.atLeast(3, time.Second); got < 3 {
+		t.Errorf("renders = %d, want at least 3: a non-zero interval must keep re-rendering", got)
+	}
+}
+
+// A profile switch invalidates whatever the previous profile's credentials were fetching, so a render that lands afterwards must not reach the screen.
+func TestOverviewDropsAResultFromASupersededProfile(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	resizeView(t, g, "main", 60, 10)
+
+	ctx := context.Background()
+
+	gui.Gen = 1
+	gui.renderOverview(ctx, func(context.Context) string { return "current profile" })
+	if got := mainBufferWithin(g, gui, "current profile", time.Second); !strings.Contains(got, "current profile") {
+		t.Fatalf("main = %q, want the render made under the live profile", got)
+	}
+
+	gui.renderOverview(ctx, func(context.Context) string {
+		gui.Gen++
+
+		return "stale profile"
+	})
+
+	// Polled rather than read once, because reRenderStringMain lands through a queued gocui update.
+	for deadline := time.Now().Add(150 * time.Millisecond); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if got := ask(g, func() string { return gui.Views.Main.Buffer() }); strings.Contains(got, "stale profile") {
+			t.Fatalf("main = %q, want the superseded render dropped", got)
+		}
+	}
+}
+
+// The overview sizes its own columns, so the width it is built with has to be main's real inner width and not a guess.
+func TestOverviewTabCapturesMainsInnerWidth(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	resizeView(t, g, "main", 64, 12)
+
+	widths := make(chan int, 4)
+	tab := overviewTab(gui, func(_ context.Context, item string, width int) string {
+		widths <- width
+
+		return item
+	})
+
+	if tab.Key != overviewTabKey || tab.Title != "Overview" {
+		t.Fatalf("tab = {%q %q}, want {%q %q}", tab.Key, tab.Title, overviewTabKey, "Overview")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Render belongs on the UI loop: that is the contract the width capture relies on.
+	task := ask(g, func() tasks.TaskFunc { return tab.Render("body") })
+	go task(ctx)
+
+	want := ask(g, func() int { return gui.Views.Main.InnerWidth() })
+	select {
+	case got := <-widths:
+		if got != want {
+			t.Errorf("render was given width %d, want main's inner width %d", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the overview task never rendered")
+	}
+}
+
+// Layout runs on every event, so a re-render must cost something only when the width actually moved.
+func TestSyncMainWidthRerendersOnlyWhenTheWidthMoves(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+
+	var calls counter
+	gui.rerenderMainTab = newThrottle(time.Millisecond, func() { calls.render(context.Background()) })
+
+	resizeView(t, g, "main", 60, 10)
+	run(t, g, func() error { gui.syncMainWidth(); return nil })
+	if got := calls.count(); got != 1 {
+		t.Fatalf("re-renders = %d after the first width, want 1", got)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	run(t, g, func() error { gui.syncMainWidth(); return nil })
+	if got := calls.count(); got != 1 {
+		t.Errorf("re-renders = %d after an unchanged width, want 1", got)
+	}
+
+	resizeView(t, g, "main", 90, 10)
+	time.Sleep(5 * time.Millisecond)
+	run(t, g, func() error { gui.syncMainWidth(); return nil })
+	if got := calls.count(); got != 2 {
+		t.Errorf("re-renders = %d after a resize, want 2", got)
+	}
+}
+
+// rerenderCurrentMainTab has to clear ObjectKey, or ShouldRefresh keeps the task that was laid out for the old width.
+func TestRerenderCurrentMainTabClearsTheObjectKey(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+
+	gui.State.ViewStack = []string{"ec2", "main"}
+	gui.State.Panels.Main.ObjectKey = "ec2-i-123-overview"
+
+	gui.rerenderCurrentMainTab()
+
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+		if ask(g, func() string { return gui.State.Panels.Main.ObjectKey }) != "ec2-i-123-overview" {
+			return
+		}
+	}
+
+	t.Error("ObjectKey still holds the pre-resize key, so ShouldRefresh will skip the re-render")
+}
+
+func mainBufferWithin(g *gocui.Gui, gui *Gui, want string, within time.Duration) string {
+	var got string
+	for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+		got = ask(g, func() string { return gui.Views.Main.Buffer() })
+		if strings.Contains(got, want) {
+			break
+		}
+	}
+
+	return got
+}
