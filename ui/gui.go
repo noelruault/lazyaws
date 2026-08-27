@@ -203,14 +203,14 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 // panelReloaders keeps full and focused refresh paths aligned.
 func (gui *Gui) panelReloaders() map[string]func() error {
 	return map[string]func() error{
-		"profile": gui.refreshProfile,
-		"ecs":     gui.loadECSList,
-		"ec2":     gui.loadEC2List,
-		"s3":      gui.loadS3List,
-		"eks":     gui.loadEKSList,
-		"ecr":     gui.loadECRList,
-		"secrets": gui.loadSecretsList,
-		"vpc":     gui.loadVPCList,
+		profileReloader: gui.refreshProfile,
+		"ecs":           gui.loadECSList,
+		"ec2":           gui.loadEC2List,
+		"s3":            gui.loadS3List,
+		"eks":           gui.loadEKSList,
+		"ecr":           gui.loadECRList,
+		"secrets":       gui.loadSecretsList,
+		"vpc":           gui.loadVPCList,
 	}
 }
 

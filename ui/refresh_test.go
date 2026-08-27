@@ -102,9 +102,11 @@ func TestSingleFlightReturnsTheReloadersError(t *testing.T) {
 func TestGoEveryRunsOnlyWhileBackgroundThreadsAreNotPaused(t *testing.T) {
 	gui := &Gui{}
 	gui.PauseBackgroundThreads.Store(true)
+	// goEvery's ticker has no stop, by design for a tier that lives as long as the app; pausing is how this test stops leaving one running for the rest of the binary, where its wakeups perturb every timing-sensitive test after it.
+	t.Cleanup(func() { gui.PauseBackgroundThreads.Store(true) })
 
 	var calls atomic.Int32
-	gui.goEvery(time.Millisecond, func() error {
+	gui.goEvery(5*time.Millisecond, func() error {
 		calls.Add(1)
 
 		return nil
@@ -155,13 +157,19 @@ func TestReloadFocusedPanelTriggersOnlyTheFocusedPanelsThrottle(t *testing.T) {
 }
 
 // With no credentials every panel but the profile list can only fail, and the profile list already reloads through refresh; a tier spending eight failing calls every couple of seconds is how a bad profile becomes a busy loop.
+// Headless, because with unnamed views the panel lookup misses and returns before the credentials guard is ever reached: the test would then pass whether the guard exists or not.
 func TestReloadFocusedPanelIsInertWithoutCredentials(t *testing.T) {
-	gui := newTestGui(t)
+	gui, _ := newHeadlessGui(t)
 	gui.State.ViewStack = []string{"ec2"}
 
 	var triggered atomic.Bool
 	gui.panelThrottles = map[string]*throttle{
 		"ec2": newThrottle(time.Hour, func() { triggered.Store(true) }),
+	}
+
+	// Proof the lookup itself succeeds, so a later miss cannot stand in for the guard under test.
+	if _, ok := gui.panelThrottles[gui.currentSideViewName()]; !ok {
+		t.Fatal("the focused panel has no throttle in this harness, so this test could not observe the guard")
 	}
 
 	if err := gui.reloadFocusedPanel(); err != nil {
@@ -350,5 +358,62 @@ func TestThrottleWatchTakeReportsOncePerFetch(t *testing.T) {
 	throttled, reported = watch.take()
 	if !reported || throttled {
 		t.Errorf("take() = (%v, %v), want a reported clean fetch: a failure that is not a throttle must not slow the pane down", throttled, reported)
+	}
+}
+
+// panelSeconds is documented as "0 turns it off", and off has to mean not started: time.NewTicker panics on a non-positive duration, so the guard is the difference between a switched-off tier and a crash at startup.
+func TestStartAutoRefreshHonoursPanelSecondsBeingOff(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		panelSeconds int
+		wantTriggers bool
+	}{
+		{name: "off", panelSeconds: 0},
+		{name: "on", panelSeconds: 2, wantTriggers: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := config.DefaultUserConfig()
+			user.Refresh.PanelSeconds = tc.panelSeconds
+
+			gui, _ := newHeadlessGuiWithConfig(t, user)
+			gui.Client = readyTestClient()
+			gui.State.ViewStack = []string{"ec2"}
+			t.Cleanup(func() { gui.PauseBackgroundThreads.Store(true) })
+
+			var triggered atomic.Bool
+			gui.panelThrottles = map[string]*throttle{
+				"ec2": newThrottle(time.Hour, func() { triggered.Store(true) }),
+			}
+
+			// goEvery fires once up front, so a started tier is observable without waiting out an interval.
+			gui.startAutoRefresh()
+			// Stops the ticker this started from outliving the test; the up-front call has already happened.
+			gui.PauseBackgroundThreads.Store(true)
+
+			if got := triggered.Load(); got != tc.wantTriggers {
+				t.Errorf("with panelSeconds %d the tier triggered = %v, want %v", tc.panelSeconds, got, tc.wantTriggers)
+			}
+		})
+	}
+}
+
+// The auth-problem path reloads the profile list by NAME, and it is the app's recovery path: reaching past the guard there would let a stuck reload be joined by one per throttle tick.
+func TestReloadProfilePanelGoesThroughTheSingleFlightGuard(t *testing.T) {
+	gui := newTestGui(t)
+
+	var guarded atomic.Int32
+	gui.panelReloads = map[string]func() error{
+		profileReloader: func() error {
+			guarded.Add(1)
+
+			return nil
+		},
+	}
+
+	if err := gui.reloadProfilePanel(); err != nil {
+		t.Fatalf("reloadProfilePanel() = %v", err)
+	}
+	if got := guarded.Load(); got != 1 {
+		t.Errorf("the guarded loader ran %d times, want 1: the recovery path reached past the guard", got)
 	}
 }

@@ -47,13 +47,15 @@ func TestMetricsMemoFresh(t *testing.T) {
 	}
 }
 
-// An empty memo must not answer, whatever maxAge says: with 0 meaning "never goes out of date" a zero timestamp would otherwise read as a valid reading and the pane would render an empty one forever.
+// An empty memo must not answer, whatever maxAge says: with 0 meaning "never goes out of date" a zero timestamp would otherwise read as a valid reading and the pane would render a nil one forever.
+// The empty key is the case that needs the timestamp check rather than the key check — an unnamed cluster or a blank instance id matches an untouched memo's own zero key, and answering there hands the pane a nil reading with no error to show for it.
 func TestMetricsMemoWithNothingKeptNeverAnswers(t *testing.T) {
-	memo := &metricsMemo[*InstanceMetrics]{}
-
-	for _, maxAge := range []time.Duration{0, time.Minute} {
-		if _, ok := memo.fresh("i-1", maxAge, time.Now()); ok {
-			t.Errorf("an empty memo answered for maxAge %v", maxAge)
+	for _, key := range []string{"i-1", ""} {
+		for _, maxAge := range []time.Duration{0, time.Minute} {
+			memo := &metricsMemo[*InstanceMetrics]{}
+			if _, ok := memo.fresh(key, maxAge, time.Now()); ok {
+				t.Errorf("an empty memo answered for key %q at maxAge %v", key, maxAge)
+			}
 		}
 	}
 }
