@@ -146,6 +146,14 @@ func getString(s *string) string {
 }
 
 func (c *Client) GetInstanceDetails(ctx context.Context, instanceID string) (*InstanceDetails, error) {
+	// The overview fans this out into its own goroutine, where a nil-client dereference inside the SDK is an unrecoverable panic rather than a failed tab.
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance id required")
+	}
+
 	input := &ec2.DescribeInstancesInput{
 		InstanceIds: []string{instanceID},
 	}
@@ -371,6 +379,14 @@ type ScheduledEvent struct {
 }
 
 func (c *Client) GetInstanceStatus(ctx context.Context, instanceID string) (*InstanceStatus, error) {
+	// Guarded for the same reason as GetInstanceDetails: the overview calls this off the UI goroutine.
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance id required")
+	}
+
 	input := &ec2.DescribeInstanceStatusInput{
 		InstanceIds:         []string{instanceID},
 		IncludeAllInstances: &[]bool{true}[0], // Otherwise stopped instances disappear from status results.
@@ -732,21 +748,34 @@ func (c *Client) SetInstanceUserData(ctx context.Context, instanceID, userData s
 	return nil
 }
 
-// GetConsoleOutput returns the instance's console output still base64-encoded, or "" when none is available.
-func (c *Client) GetConsoleOutput(ctx context.Context, instanceID string) (string, error) {
+// ConsoleOutput is the instance's console log with the time AWS last captured it.
+// The two travel together because the capture is boot-time on a long-running instance: a size on its own reads as a fresh log when it can be months old.
+type ConsoleOutput struct {
+	Content string
+	At      time.Time
+}
+
+// GetConsoleOutput returns the instance's console output still base64-encoded, with an empty Content when none is available.
+func (c *Client) GetConsoleOutput(ctx context.Context, instanceID string) (ConsoleOutput, error) {
 	input := &ec2.GetConsoleOutputInput{
 		InstanceId: &instanceID,
 	}
 
 	result, err := c.EC2.GetConsoleOutput(ctx, input)
 	if err != nil {
-		return "", fmt.Errorf("failed to get console output: %w", err)
+		return ConsoleOutput{}, fmt.Errorf("failed to get console output: %w", err)
 	}
 
 	if result.Output == nil {
-		return "", nil
+		return ConsoleOutput{}, nil
 	}
-	return *result.Output, nil
+
+	out := ConsoleOutput{Content: *result.Output}
+	if result.Timestamp != nil {
+		out.At = *result.Timestamp
+	}
+
+	return out, nil
 }
 
 // GetConsoleScreenshot returns the instance console screenshot as base64-encoded PNG bytes, or "" when not available.

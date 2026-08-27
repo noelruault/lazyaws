@@ -188,12 +188,12 @@ func (gui *Gui) renderEC2Status(inst *aws.Instance) tasks.TaskFunc {
 			if gen != gui.Gen {
 				return
 			}
-			gui.reRenderStringMain(formatEC2Status(status, alarms, consoleOutput, consoleScreenshot))
+			gui.reRenderStringMain(formatEC2Status(status, alarms, consoleOutput, consoleScreenshot, time.Now()))
 		},
 	})
 }
 
-func formatEC2Status(s *aws.InstanceStatus, alarms []aws.InstanceAlarm, consoleOutput, consoleScreenshot string) string {
+func formatEC2Status(s *aws.InstanceStatus, alarms []aws.InstanceAlarm, consoleOutput aws.ConsoleOutput, consoleScreenshot string, now time.Time) string {
 	out := utils.FormatMap(0, map[string]string{
 		"Instance state":  s.InstanceState,
 		"System status":   orNone(s.SystemStatus),
@@ -217,10 +217,10 @@ func formatEC2Status(s *aws.InstanceStatus, alarms []aws.InstanceAlarm, consoleO
 	}
 
 	out += "\nConsole output:\n"
-	if consoleOutput == "" {
+	if consoleOutput.Content == "" {
 		out += "none\n"
 	} else {
-		out += fmt.Sprintf("available (%s)\n", formatByteCount(float64(len(consoleOutput)*3/4)))
+		out += fmt.Sprintf("available (%s), captured %s\n", formatByteCount(float64(len(consoleOutput.Content)*3/4)), consoleCapture(consoleOutput.At, now))
 	}
 
 	out += "\nConsole screenshot:\n"
@@ -231,6 +231,15 @@ func formatEC2Status(s *aws.InstanceStatus, alarms []aws.InstanceAlarm, consoleO
 	}
 
 	return out
+}
+
+// consoleCapture dates the console log against now, because AWS captures it at boot and never again: on an instance up for months the size looks like a live log and the age is the only thing that says otherwise.
+func consoleCapture(at, now time.Time) string {
+	if at.IsZero() {
+		return "unknown"
+	}
+
+	return at.UTC().Format(time.RFC3339) + " (" + presentation.RelTime(at, now) + ")"
 }
 
 func (gui *Gui) renderEC2Metrics(inst *aws.Instance) tasks.TaskFunc {
