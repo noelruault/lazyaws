@@ -72,9 +72,11 @@ type Client struct {
 }
 
 func newClientFromConfig(cfg aws.Config) *Client {
-	// Every client is built here, including the cached-credentials path that never calls
-	// LoadDefaultConfig, so this is the only place the SDK logger cannot be bypassed.
+	// Every client is built here, including the cached-credentials path that never calls LoadDefaultConfig, so this is the only place the SDK logger and the retry mode cannot be bypassed.
 	cfg.Logger = sdkLogger{}
+	// A retry mode set only through load options is skipped on the cached path, which is the path taken in normal operation.
+	// Each service client resolves cfg.RetryMode into its own retryer as it is constructed, so this has to be assigned before the clients below are built. An explicit cfg.Retryer still wins: the SDK resolves that first and leaves the mode unread.
+	cfg.RetryMode = retryMode
 
 	return &Client{
 		EC2:                    ec2.NewFromConfig(cfg),
@@ -272,5 +274,10 @@ func (sdkLogger) Logf(classification logging.Classification, format string, v ..
 func baseLoadOptions() []func(*awsconfig.LoadOptions) error {
 	return []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithLogger(sdkLogger{}),
+		awsconfig.WithRetryMode(retryMode),
 	}
 }
+
+// retryMode adds client-side rate limiting on top of the standard retryer: after a throttle response the adaptive retryer slows the send rate itself instead of retrying into the same limit.
+// Refreshing eight panels and an open overview on a timer is many small reads against per-account API quotas, and the standard retryer answers a throttle by retrying, which is what turns one throttled call into a burst.
+const retryMode = aws.RetryModeAdaptive
