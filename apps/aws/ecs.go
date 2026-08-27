@@ -21,6 +21,19 @@ type ECSCapacityProviderStrategy struct {
 	Base             int32
 }
 
+// ECSClusterStatistics splits a cluster's task and service counts by launch type.
+// DescribeClusters only fills these when asked for the STATISTICS field; without it every count is zero, which is indistinguishable from an idle cluster.
+type ECSClusterStatistics struct {
+	RunningEC2Tasks         int32
+	RunningFargateTasks     int32
+	PendingEC2Tasks         int32
+	PendingFargateTasks     int32
+	ActiveEC2Services       int32
+	ActiveFargateServices   int32
+	DrainingEC2Services     int32
+	DrainingFargateServices int32
+}
+
 type ECSCluster struct {
 	Name                         string
 	Arn                          string
@@ -32,6 +45,10 @@ type ECSCluster struct {
 	ConsoleURL                   string
 	CapacityProviders            []string
 	DefaultCapacityProviderStrat []ECSCapacityProviderStrategy
+	Statistics                   ECSClusterStatistics
+	// ContainerInsights is the cluster's containerInsights setting verbatim (enabled, enhanced or disabled), empty when the cluster was described without the SETTINGS field.
+	// Empty is not disabled: it means unknown, and the difference decides whether the Insights metric namespace is worth querying at all.
+	ContainerInsights string
 }
 
 type ECSDeployment struct {
@@ -214,6 +231,8 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 
 		descOut, err := c.ECS.DescribeClusters(timeoutCtx, &ecs.DescribeClustersInput{
 			Clusters: out.ClusterArns,
+			// Both fields ride the call that already runs; asking for them separately would be a second describe per page for data the same response can carry.
+			Include: []ecsTypes.ClusterField{ecsTypes.ClusterFieldStatistics, ecsTypes.ClusterFieldSettings},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to describe ECS clusters: %w", err)
@@ -234,6 +253,8 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 			}
 
 			cluster.CapacityProviders = cl.CapacityProviders
+			cluster.Statistics = mapClusterStatistics(cl.Statistics)
+			cluster.ContainerInsights = containerInsightsSetting(cl.Settings)
 			for _, s := range cl.DefaultCapacityProviderStrategy {
 				cluster.DefaultCapacityProviderStrat = append(cluster.DefaultCapacityProviderStrat, ECSCapacityProviderStrategy{
 					CapacityProvider: getString(s.CapacityProvider),
@@ -252,6 +273,49 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 	}
 
 	return clusters, nil
+}
+
+// mapClusterStatistics reads the STATISTICS key-value list into named fields.
+// Keys are matched case-insensitively because AWS documents them with a leading capital while the API answers with a leading lowercase, and a key that misses is silently zero rather than an error.
+func mapClusterStatistics(stats []ecsTypes.KeyValuePair) ECSClusterStatistics {
+	byName := make(map[string]int32, len(stats))
+	for _, kv := range stats {
+		n, err := strconv.ParseInt(getString(kv.Value), 10, 32)
+		if err != nil {
+			continue
+		}
+		byName[strings.ToLower(getString(kv.Name))] = int32(n)
+	}
+	return ECSClusterStatistics{
+		RunningEC2Tasks:         byName["runningec2taskscount"],
+		RunningFargateTasks:     byName["runningfargatetaskscount"],
+		PendingEC2Tasks:         byName["pendingec2taskscount"],
+		PendingFargateTasks:     byName["pendingfargatetaskscount"],
+		ActiveEC2Services:       byName["activeec2servicecount"],
+		ActiveFargateServices:   byName["activefargateservicecount"],
+		DrainingEC2Services:     byName["drainingec2servicecount"],
+		DrainingFargateServices: byName["drainingfargateservicecount"],
+	}
+}
+
+func containerInsightsSetting(settings []ecsTypes.ClusterSetting) string {
+	for _, s := range settings {
+		if s.Name == ecsTypes.ClusterSettingNameContainerInsights {
+			return getString(s.Value)
+		}
+	}
+	return ""
+}
+
+// ContainerInsightsEnabled reports whether the Insights metric namespace is worth querying for this cluster.
+// enhanced is the observability tier above enabled, not a different answer to "does ECS/ContainerInsights publish here".
+func ContainerInsightsEnabled(setting string) bool {
+	switch strings.ToLower(setting) {
+	case "enabled", "enhanced":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECSService, error) {
