@@ -266,6 +266,18 @@ func clusterFixture() (*aws.ECSCluster, *aws.ECSClusterOverview) {
 // The overview is rendered below minTwoColWidth so each block is laid out whole; above it Columns interleaves the two blocks line by line and cuts each to its own column.
 const overviewTestWidth = 100
 
+// lineContaining returns the whole rendered line holding needle, so an assertion can pin what the line ENDS on.
+// A Contains check against the pane cannot: a line that grew an extra entry still contains the shorter text it was asked about.
+func lineContaining(pane, needle string) string {
+	for _, line := range strings.Split(pane, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+
+	return ""
+}
+
 func TestClusterOverviewRendersEverySection(t *testing.T) {
 	forceColor(t)
 	cluster, overview := clusterFixture()
@@ -349,13 +361,17 @@ func TestClusterOverviewGaugeReportsNoDataRatherThanZero(t *testing.T) {
 func TestClusterOverviewCapacityFallsBackToTheServiceLaunchType(t *testing.T) {
 	forceColor(t)
 	cluster, overview := clusterFixture()
-	overview.Services = append(overview.Services, aws.ECSService{Name: "kicker-batch", LaunchType: "EC2"})
+	// A second FARGATE service, so the line can only read once if it deduplicates; and EC2 listed after it, so it can only read in order if it sorts.
+	overview.Services = append(overview.Services,
+		aws.ECSService{Name: "kicker-batch", LaunchType: "FARGATE"},
+		aws.ECSService{Name: "kicker-cron", LaunchType: "EC2"},
+	)
 
 	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
 
-	// Sorted and deduplicated, so the line does not reshuffle between two-second refreshes.
-	if !strings.Contains(got, "none, services launch on EC2, FARGATE") {
-		t.Errorf("capacity must name the launch types the services really use\n%s", got)
+	// Asserted as the WHOLE line, not as a substring: "EC2, FARGATE, FARGATE" contains "EC2, FARGATE" too, so a Contains check cannot see a lost deduplication.
+	if line := lineContaining(got, "services launch on"); line != "  none, services launch on EC2, FARGATE" {
+		t.Errorf("capacity line = %q, want each launch type named once in a stable order\n%s", line, got)
 	}
 
 	// With providers configured the strategy is what places a task, and the fallback must not be shown alongside it.
@@ -499,6 +515,29 @@ func TestClusterOverviewSectionsFailIndependently(t *testing.T) {
 	// The sections that did not depend on that fetch still render.
 	if !strings.Contains(got, "a1b2c3d4e5f6") || !strings.Contains(got, "26.2%") {
 		t.Errorf("one failed section must not blank the sections that succeeded\n%s", got)
+	}
+}
+
+// The pane re-renders every couple of seconds and neither ListServices nor DescribeTasks promises an order, so rows that followed the response would reshuffle under the cursor between refreshes.
+func TestClusterOverviewRowsAreSortedRatherThanInResponseOrder(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Services = []aws.ECSService{
+		{Name: "zebra", RunningCount: 1, DesiredCount: 1},
+		{Name: "alpha", RunningCount: 1, DesiredCount: 1},
+	}
+	overview.Tasks = []aws.ECSTask{
+		{ID: "ffff2222", Status: "RUNNING", Containers: []aws.ECSContainer{{Name: "app", ImageURI: "kicker:v1", Essential: true}}},
+		{ID: "0000aaaa", Status: "RUNNING", Containers: []aws.ECSContainer{{Name: "app", ImageURI: "kicker:v1", Essential: true}}},
+	}
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	if strings.Index(got, "alpha") > strings.Index(got, "zebra") {
+		t.Errorf("services must render in name order, not the order ListServices answered in\n%s", got)
+	}
+	if strings.Index(got, "0000aaaa") > strings.Index(got, "ffff2222") {
+		t.Errorf("tasks must render in id order, not the order DescribeTasks answered in\n%s", got)
 	}
 }
 

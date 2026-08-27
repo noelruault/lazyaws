@@ -377,7 +377,7 @@ func clusterTasksBlock(o *aws.ECSClusterOverview, width int) string {
 			{Text: ecsTaskImageText(t)},
 		}
 	}
-	// The image is the column with no natural width and the one this pane exists for, so it takes the slack rather than being squeezed by a task id.
+	// The image is the column with no natural width, so it carries the weight. Being last, it renders identically to a content-sized column at every width measured, and the weight is what keeps that true if a column is ever added after it.
 	table, _ := utils.RenderTableFit(rows, width, []int{0, 0, 1})
 
 	lines := []string{title, table}

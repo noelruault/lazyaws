@@ -90,6 +90,27 @@ func TestMapECSDeploymentCarriesTheRolloutState(t *testing.T) {
 	}
 }
 
+// The cluster overview lists every task in the cluster, which is the ServiceName filter being absent rather than matching "".
+// Nothing else can catch this: ListTasks needs a concrete SDK client, and an empty ServiceName is a request AWS rejects rather than one that answers with everything.
+func TestListTasksInputOmitsAnEmptyServiceName(t *testing.T) {
+	clusterWide := listTasksInput("batch-cluster", "", nil)
+	if clusterWide.ServiceName != nil {
+		t.Errorf("ServiceName = %q, want it absent so the request means every task in the cluster", *clusterWide.ServiceName)
+	}
+	if getString(clusterWide.Cluster) != "batch-cluster" {
+		t.Errorf("Cluster = %q, want the requested cluster", getString(clusterWide.Cluster))
+	}
+
+	token := "next"
+	filtered := listTasksInput("batch-cluster", "kicker-web", &token)
+	if getString(filtered.ServiceName) != "kicker-web" {
+		t.Errorf("ServiceName = %q, want the service the drill level asked for", getString(filtered.ServiceName))
+	}
+	if getString(filtered.NextToken) != token {
+		t.Errorf("NextToken = %q, want it carried through so paging works", getString(filtered.NextToken))
+	}
+}
+
 // A per-task row names its own task's image, where runningECSServiceImage picks one task out of a service first; conflating the two makes every row show the newest task's image.
 func TestECSTaskImageNamesTheEssentialContainerOfThatTask(t *testing.T) {
 	task := ECSTask{Containers: []ECSContainer{

@@ -485,6 +485,17 @@ func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECS
 	return services, nil
 }
 
+// listTasksInput is a named function rather than a literal at the call site because it carries a decision no test could otherwise reach: ListTasks itself needs a concrete SDK client.
+// An empty service name means every task in the cluster, which is the filter being ABSENT; sending the empty string asks ECS to match a service literally named "", so the cluster-wide listing has to omit the field entirely.
+func listTasksInput(clusterName, serviceName string, nextToken *string) *ecs.ListTasksInput {
+	input := &ecs.ListTasksInput{Cluster: &clusterName, NextToken: nextToken}
+	if serviceName != "" {
+		input.ServiceName = &serviceName
+	}
+
+	return input
+}
+
 func (c *Client) ListECSTasks(ctx context.Context, clusterName, serviceName string) ([]ECSTask, error) {
 	if c.ECS == nil {
 		return nil, fmt.Errorf("ECS client not initialized")
@@ -496,13 +507,7 @@ func (c *Client) ListECSTasks(ctx context.Context, clusterName, serviceName stri
 	var taskArns []string
 	var nextToken *string
 	for {
-		input := &ecs.ListTasksInput{Cluster: &clusterName, NextToken: nextToken}
-		// An empty service name means every task in the cluster, which is the filter being ABSENT rather than a filter matching "".
-		// Sending the empty string asks ECS to match a service by that name, so the cluster-wide listing has to omit the field.
-		if serviceName != "" {
-			input.ServiceName = &serviceName
-		}
-		listOut, err := c.ECS.ListTasks(timeoutCtx, input)
+		listOut, err := c.ECS.ListTasks(timeoutCtx, listTasksInput(clusterName, serviceName, nextToken))
 		if err != nil {
 			return nil, fmt.Errorf("failed to list ECS tasks: %w", err)
 		}
