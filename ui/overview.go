@@ -15,32 +15,30 @@ import (
 // overviewTabKey is the tab's half of ContextState.GetCurrentContextKey, so it also decides when an open overview counts as unchanged.
 const overviewTabKey = "overview"
 
-// overviewTab is the Overview tab a resource panel opens on.
-// render is handed main's inner width because an overview sizes its own columns and wrapping is off; the width is read HERE rather than inside the task, because Render runs on the UI loop and the task does not, and a gocui view read off the loop races the render.
+// overviewTab is the Overview tab a resource panel opens on, refreshing on the configured interval.
 func overviewTab[T any](gui *Gui, render func(ctx context.Context, item T, width int) string) panels.MainTab[T] {
-	return panels.MainTab[T]{
-		Key:   overviewTabKey,
-		Title: "Overview",
-		Render: func(item T) tasks.TaskFunc {
-			width := gui.Views.Main.InnerWidth()
-
-			return gui.newOverviewTask(overviewInterval(gui.Config.User.Refresh.OverviewSeconds), func(ctx context.Context) string {
-				return render(ctx, item, width)
-			})
-		},
-	}
+	return overviewTabEvery(gui, func() time.Duration {
+		return overviewInterval(gui.Config.User.Refresh.OverviewSeconds)
+	}, render)
 }
 
-// staticOverviewTab is overviewTab for a resource whose overview is configuration rather than state: it renders once per selection instead of on the refresh interval.
+// staticOverviewTab is the Overview tab for a resource whose overview is configuration rather than state: it renders once per selection.
 // A bucket costs eleven S3 calls and a repository pages its whole image list, so a two-second ticker would spend unbounded calls redrawing an unchanged pane; selection, profile switch and resize each still rebuild the task.
 func staticOverviewTab[T any](gui *Gui, render func(ctx context.Context, item T, width int) string) panels.MainTab[T] {
+	return overviewTabEvery(gui, func() time.Duration { return 0 }, render)
+}
+
+// overviewTabEvery builds the Overview tab both variants share, so neither can drift from the other's key or title.
+// render is handed main's inner width because an overview sizes its own columns and wrapping is off; the width is read HERE rather than inside the task, because Render runs on the UI loop and the task does not, and a gocui view read off the loop races the render.
+// interval is a function for the same reason: it is resolved per render, so a session that changes the refresh setting does not keep the interval its first render was built with.
+func overviewTabEvery[T any](gui *Gui, interval func() time.Duration, render func(ctx context.Context, item T, width int) string) panels.MainTab[T] {
 	return panels.MainTab[T]{
 		Key:   overviewTabKey,
 		Title: "Overview",
 		Render: func(item T) tasks.TaskFunc {
 			width := gui.Views.Main.InnerWidth()
 
-			return gui.newOverviewTask(0, func(ctx context.Context) string {
+			return gui.newOverviewTask(interval(), func(ctx context.Context) string {
 				return render(ctx, item, width)
 			})
 		},
