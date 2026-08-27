@@ -155,3 +155,34 @@ func TestEachOverviewAggregateAnswersItsMetricsSectionFromTheMemo(t *testing.T) 
 		}
 	})
 }
+
+// Every EC2 metrics pane has to share ONE memo, which is the whole of why the tier saves anything: the Metrics tab redraws on EC2StatusSeconds (10s by default) while instanceMetricQueries asks for a 300-second period, so an unmemoized tab re-pays a per-metric bill thirty times for one datapoint.
+// Driven through the overview because it is the reader a test can reach with a nil SDK client: a filled Metrics field can only have come from the memo the tab wrote.
+func TestInstanceMetricsMemoIsSharedByEveryPane(t *testing.T) {
+	client := &Client{}
+	kept := &InstanceMetrics{InstanceID: "i-1"}
+	client.instanceMetrics.keep("i-1", kept, time.Now())
+
+	// The tab's entry point answers from the memo rather than reaching a CloudWatch client it does not have.
+	got, err := client.GetInstanceMetricsAged(context.Background(), "i-1", time.Minute)
+	if err != nil {
+		t.Fatalf("GetInstanceMetricsAged() = %v, want the memoized reading", err)
+	}
+	if got != kept {
+		t.Errorf("the tab fetched instead of reading the memo: got %v", got)
+	}
+
+	// The overview reads the same memo, so opening both panes on one instance costs one fetch, not two.
+	overview := client.GetInstanceOverview(context.Background(), "i-1", time.Minute)
+	if overview.Metrics != kept {
+		t.Errorf("the overview got %v, want the reading the tab memoized: the panes are on separate memos", overview.Metrics)
+	}
+	if err := overview.Err(SectionMetrics); err != nil {
+		t.Errorf("the memoized metrics section reported %v, want no error", err)
+	}
+
+	// Past maxAge both must fetch again, which with no CloudWatch client can only fail: that is what proves the reading was not simply pinned forever.
+	if _, err := client.GetInstanceMetricsAged(context.Background(), "i-1", time.Nanosecond); err == nil {
+		t.Error("a stale reading was served: GetInstanceMetricsAged answered without a CloudWatch client")
+	}
+}

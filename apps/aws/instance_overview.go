@@ -53,9 +53,7 @@ func (c *Client) GetInstanceOverview(ctx context.Context, instanceID string, met
 		return err
 	})
 	sections.fetch(SectionMetrics, func() (err error) {
-		overview.Metrics, err = memoized(&c.instanceMetrics, instanceID, metricsMaxAge, func() (*InstanceMetrics, error) {
-			return c.GetInstanceMetrics(ctx, instanceID)
-		})
+		overview.Metrics, err = c.GetInstanceMetricsAged(ctx, instanceID, metricsMaxAge)
 		return err
 	})
 

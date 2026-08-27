@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -42,6 +43,14 @@ func (m *metricsMemo[T]) keep(key string, value T, now time.Time) {
 	defer m.mu.Unlock()
 
 	m.key, m.at, m.value = key, now, value
+}
+
+// GetInstanceMetricsAged answers from the instance metrics memo while its reading is still current, and otherwise fetches one.
+// Every pane showing EC2 metrics goes through here rather than through GetInstanceMetrics: instanceMetricQueries asks for a 300-second period because that is what basic monitoring publishes, so a pane redrawing on its own faster interval re-pays a per-metric bill for a number that cannot have changed. maxAge of 0 means the reading stays the answer for as long as the instance is selected.
+func (c *Client) GetInstanceMetricsAged(ctx context.Context, instanceID string, maxAge time.Duration) (*InstanceMetrics, error) {
+	return memoized(&c.instanceMetrics, instanceID, maxAge, func() (*InstanceMetrics, error) {
+		return c.GetInstanceMetrics(ctx, instanceID)
+	})
 }
 
 // memoized answers from the memo while its reading for key is current, and otherwise fetches one and records it.

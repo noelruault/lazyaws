@@ -320,7 +320,7 @@ func (gui *Gui) renderEC2Metrics(inst *aws.Instance) tasks.TaskFunc {
 			fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 
-			metrics, err := gui.Client.GetInstanceMetrics(fetchCtx, id)
+			metrics, err := gui.Client.GetInstanceMetricsAged(fetchCtx, id, gui.metricsMaxAge())
 			if gen != gui.Gen {
 				return
 			}
