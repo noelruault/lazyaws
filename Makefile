@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release clean
+.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release clean ui-test
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -31,6 +31,9 @@ install: ## Install lazyaws into GOBIN (or GOPATH/bin) so it runs anywhere
 
 test: ## Run the test suite
 	go test ./...
+
+ui-test: ## Drive the built TUI in ttyd against a seeded fake AWS with Playwright (needs docker, ttyd, aws, bun; one-off: cd test/ui && bun install && bunx playwright install chromium)
+	bash test/ui/run.sh $(JOURNEYS)
 
 lint: ## Vet the code and fail on unformatted files
 	go vet ./...

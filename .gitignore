@@ -34,6 +34,13 @@ lazyaws
 main
 .loopctl/
 
+# The UI harness's run artifacts: node_modules, the binary under test, the seed it wrote and what it captured.
+test/ui/node_modules/
+test/ui/.lazyaws
+test/ui/.seed.json
+test/ui/.screenshots/
+test/ui/.ttyd.log
+
 __debug_bin
 .zed/
 .vscode/
