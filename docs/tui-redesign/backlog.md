@@ -44,9 +44,9 @@ Every group is reviewed and repaired inside the cycle that built it (spec.md), s
 
 ## Stage 7 — remaining inspectors (reuse existing fetches, zero new AWS calls)
 
-- [ ] `s7-s3-overview` [d3] (needs: `s4-overview-machinery`) — bucket Overview re-laying the existing config-tab data: Security (public access block, encryption, policy present), Data management (versioning, lifecycle, replication, object lock), Access (logging, notifications), Tags. Bucket size stays on-demand only. Formatter tests.
-- [ ] `s7-ecr-overview` [d2] (needs: `s4-overview-machinery`) — repository Overview: mutability badge, scan-on-push, encryption, created, latest images table from the existing DescribeImages data. Formatter tests.
-- [ ] `s7-vpc-overview` [d3] (needs: `s4-overview-machinery`) — VPC Overview: CIDR, default flag, DNS attributes, subnet counts public/private, IGW/NAT presence, endpoint count, from existing per-tab loaders. Formatter tests.
+- [x] `s7-s3-overview` [d3] (needs: `s4-overview-machinery`) — bucket Overview re-laying the existing config-tab data: Security (public access block, encryption, policy present), Data management (versioning, lifecycle, replication, object lock), Access (logging, notifications), Tags. Bucket size stays on-demand only. Formatter tests.
+- [x] `s7-ecr-overview` [d2] (needs: `s4-overview-machinery`) — repository Overview: mutability badge, scan-on-push, encryption, created, latest images table from the existing DescribeImages data. Formatter tests.
+- [x] `s7-vpc-overview` [d3] (needs: `s4-overview-machinery`) — VPC Overview: CIDR, default flag, DNS attributes, subnet counts public/private, IGW/NAT presence, endpoint count, from existing per-tab loaders. Formatter tests.
 - [ ] `s7-eks-overview` [d2] (needs: `s4-overview-machinery`) — EKS Overview assembled from the existing details fetch (version, status, endpoint, node groups, addons); formatter-tested only (no live clusters expected), empty state already handled in-panel.
 
 ## Stage 8 — auto-refresh engine

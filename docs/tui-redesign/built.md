@@ -22,3 +22,6 @@ One line per closed ticket, appended by the builder: `- <id> <sha> — summary`.
 - s6-ecs-image ff71d1d — the running image comes off DescribeTasks' newest running task with its sidecars counted, falling back to the PRIMARY deployment's memoized task definition labelled desired
 - s6-ecs-cluster-overview 5dc0f7b — cluster Overview: health header, Configuration, Capacity falling back to the service launch type, Metrics gauges from one GetMetricData, a Service Summary carrying rollout stability, and a Tasks table with the running image
 - s6-ecs-service-overview fa48f80 — service Overview tab: stability badge with desired/running/pending, Deployment (rollout state+reason, circuit breaker, taskdef revision, running image), awsvpc networking, CPU/Memory gauges and recent events
+- s7-s3-overview d8fc7ae — bucket Overview from the Config tab's eleven calls: public-access posture as the header badge, per-fetch failure isolation, size left on demand; renders once per selection
+- s7-ecr-overview 643c89b — repository Overview off the list row plus one DescribeImages: mutability badge, policies with the lifecycle's last evaluation, and a latest-images table the formatter sorts itself
+- s7-vpc-overview 6acb327 — VPC Overview consolidating Config/Subnets/Gateways/Endpoints: public split by routing not by auto-assign, DNS as three answers, endpoints counted by type
