@@ -135,6 +135,45 @@ func TestOverviewIsPartOfTheTabCycle(t *testing.T) {
 	}
 }
 
+// A profile switch resets the ECS drill level without touching the tab index, so the services level's last tab has to survive landing on the shorter cluster-level set.
+// Prepending Overview widened the gap by one tab, which is why it is pinned here.
+func TestECSTabIndexSurvivesAProfileSwitch(t *testing.T) {
+	gui := newTestGui(t)
+	state := gui.Panels.ECS.ContextState
+
+	gui.ecsDrill.level = ecsLevelServices
+	state.SetMainTabIndex(len(state.GetMainTabs()) - 1)
+
+	gui.resetDependentPanelState()
+
+	if got := state.GetCurrentMainTab().Key; got != overviewTabKey {
+		t.Errorf("current tab = %q, want %q after the drill level reset", got, overviewTabKey)
+	}
+}
+
+// The header must agree with the tab being rendered. renderContext reads mainTabIdx straight into main's TabIndex, so this is the user-visible end of the same clamp: without it the read is what panics.
+func TestMainTabHeaderCannotPointPastTheTabsItShows(t *testing.T) {
+	gui, g := newHeadlessGuiWithConfig(t, overviewFirstConfig())
+	resizeView(t, g, "main", 80, 20)
+
+	gui.ecsDrill.level = ecsLevelServices
+	gui.Panels.ECS.ContextState.SetMainTabIndex(len(gui.Panels.ECS.ContextState.GetMainTabs()) - 1)
+
+	gui.ecsDrill = ecsDrillState{}
+	gui.Panels.ECS.SetItems([]*ecsRow{{Kind: ecsRowKindCluster, Cluster: &aws.ECSCluster{Name: "c1"}}})
+
+	run(t, g, gui.Panels.ECS.HandleSelect)
+
+	tabs := ask(g, func() []string { return gui.Views.Main.Tabs })
+	index := ask(g, func() int { return gui.Views.Main.TabIndex })
+	if index < 0 || index >= len(tabs) {
+		t.Fatalf("main TabIndex = %d with %d tabs %v, want an index that exists", index, len(tabs), tabs)
+	}
+	if tabs[index] != "Overview" {
+		t.Errorf("main highlights %q, want the %q tab that was actually rendered", tabs[index], "Overview")
+	}
+}
+
 func TestOverviewUnavailableNamesTheResourceAndIsMuted(t *testing.T) {
 	forceColor(t)
 

@@ -152,6 +152,7 @@ confirmOnQuit: false
 refresh:
   ecsLogsSeconds: 5
   ec2StatusSeconds: 10
+  overviewSeconds: 2                        # the Overview tab's auto-refresh; 0 turns it off
 chat:
   enabled: false                            # the chat screen, off unless you ask for it
   provider: bedrock                         # bedrock|kiro

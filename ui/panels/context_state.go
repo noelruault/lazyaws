@@ -35,8 +35,15 @@ func (self *ContextState[T]) GetCurrentContextKey(item T) string {
 	return self.GetItemContextCacheKey(item) + "-" + self.GetCurrentMainTab().Key
 }
 
+// GetCurrentMainTab falls back to the first tab when the set has shrunk under the index.
+// A panel's tab set can change while an index is held (the ECS panel's differs per drill level), and not every path that changes it resets the index, so the previous set's last tab reads past the end of the new one.
 func (self *ContextState[T]) GetCurrentMainTab() MainTab[T] {
-	return self.GetMainTabs()[self.mainTabIdx]
+	tabs := self.GetMainTabs()
+	if self.mainTabIdx >= len(tabs) {
+		self.mainTabIdx = 0
+	}
+
+	return tabs[self.mainTabIdx]
 }
 
 func (self *ContextState[T]) HandleNextMainTab() {

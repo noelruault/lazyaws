@@ -101,6 +101,42 @@ func TestOverviewTaskRepeatsOnItsInterval(t *testing.T) {
 	}
 }
 
+// An overview is laid out for a known width, so main must have wrapping off however the task was built.
+// Main arrives here wrapped, because Gui.WrapMainPanel defaults to true and resetMainView puts it back on every time focus moves between side panels.
+func TestOverviewTurnsWrappingOff(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval time.Duration
+	}{
+		{name: "one-shot", interval: 0},
+		{name: "ticking", interval: 15 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gui, g := newHeadlessGui(t)
+			run(t, g, func() error { gui.Views.Main.Wrap = true; return nil })
+
+			var calls counter
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			go gui.newOverviewTask(tt.interval, calls.render)(ctx)
+			calls.atLeast(1, time.Second)
+
+			wrapped := true
+			for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+				wrapped = ask(g, func() bool { return gui.Views.Main.Wrap })
+				if !wrapped {
+					break
+				}
+			}
+			if wrapped {
+				t.Error("main is still wrapping, want wrap off so the overview's columns survive")
+			}
+		})
+	}
+}
+
 // A profile switch invalidates whatever the previous profile's credentials were fetching, so a render that lands afterwards must not reach the screen.
 func TestOverviewDropsAResultFromASupersededProfile(t *testing.T) {
 	gui, g := newHeadlessGui(t)
@@ -205,6 +241,28 @@ func TestRerenderCurrentMainTabClearsTheObjectKey(t *testing.T) {
 	}
 
 	t.Error("ObjectKey still holds the pre-resize key, so ShouldRefresh will skip the re-render")
+}
+
+// The chat screen owns main while it is up and rewraps itself from syncQWidth, so a resize must not make a side panel redraw over the transcript.
+func TestRerenderCurrentMainTabLeavesTheChatScreenAlone(t *testing.T) {
+	fakeQOnPath(t, "exit 0")
+	gui, g := newHeadlessGui(t)
+
+	run(t, g, gui.handleToggleQ)
+	if !ask(g, gui.qScreenActive) {
+		t.Fatal("the chat screen is not up, so this test would pass for the wrong reason")
+	}
+
+	gui.State.ViewStack = append(gui.State.ViewStack, "ec2")
+	gui.State.Panels.Main.ObjectKey = "chat"
+
+	gui.rerenderCurrentMainTab()
+
+	for deadline := time.Now().Add(150 * time.Millisecond); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if got := ask(g, func() string { return gui.State.Panels.Main.ObjectKey }); got != "chat" {
+			t.Fatalf("ObjectKey = %q, want the chat screen left holding main", got)
+		}
+	}
 }
 
 func mainBufferWithin(g *gocui.Gui, gui *Gui, want string, within time.Duration) string {
