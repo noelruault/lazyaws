@@ -1,8 +1,11 @@
 package presentation
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
@@ -221,5 +224,364 @@ func TestECSImageLabel(t *testing.T) {
 	}
 	if got := ECSImageLabel(aws.ECSServiceImage{Image: "web:1", Desired: true}); got != "Desired image" {
 		t.Errorf("ECSImageLabel() = %q, want %q so a task-definition image is never read as live", got, "Desired image")
+	}
+}
+
+// clusterFixture is a healthy three-service cluster the overview tests vary one thing at a time from.
+func clusterFixture() (*aws.ECSCluster, *aws.ECSClusterOverview) {
+	at := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	point := func(v float64) aws.MetricPoint { return aws.MetricPoint{Value: v, At: at, OK: true} }
+
+	cluster := &aws.ECSCluster{
+		Name:                  "batch-cluster",
+		Arn:                   "arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
+		Status:                "ACTIVE",
+		RunningTasksCount:     12,
+		ActiveServicesCount:   3,
+		ContainerInsights:     "enabled",
+		ExecuteCommandLogging: "DEFAULT",
+		Region:                "eu-west-1",
+	}
+	overview := &aws.ECSClusterOverview{
+		Errs: map[string]error{},
+		Services: []aws.ECSService{
+			{Name: "kicker-web", RunningCount: 3, DesiredCount: 3, LaunchType: "FARGATE",
+				Deployments: []aws.ECSDeployment{{Status: "PRIMARY", RolloutState: "COMPLETED"}}},
+		},
+		Tasks: []aws.ECSTask{
+			{ID: "a1b2c3d4e5f6", Status: "RUNNING", Containers: []aws.ECSContainer{
+				{Name: "app", ImageURI: "123456789012.dkr.ecr.eu-west-1.amazonaws.com/kicker-web:v1.42.0", Essential: true},
+				{Name: "fluentbit", ImageURI: "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable"},
+			}},
+		},
+		Metrics: &aws.ECSClusterMetrics{
+			CPUUsed: point(268), CPUReserved: point(1024),
+			MemUsed: point(1433), MemReserved: point(2048),
+		},
+	}
+
+	return cluster, overview
+}
+
+// The overview is rendered below minTwoColWidth so each block is laid out whole; above it Columns interleaves the two blocks line by line and cuts each to its own column.
+const overviewTestWidth = 100
+
+func TestClusterOverviewRendersEverySection(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	for _, want := range []string{
+		"batch-cluster",
+		"eu-west-1",
+		"1/1 services steady",
+		"12 running / 0 pending",
+		"arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
+		"Container Insights: enabled",
+		"DEFAULT (task awslogs driver)",
+		"kicker-web",
+		"3/3 running",
+		"● steady",
+		"a1b2c3d4e5f6",
+		// The image is the hard requirement this pane exists for, with the registry host dropped and the sidecar counted rather than listed.
+		"kicker-web:v1.42.0 (+1 sidecar)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("overview does not contain %q\n%s", want, got)
+		}
+	}
+}
+
+// Both gauges have to carry the absolute readings behind them: a percentage alone cannot tell a small busy cluster from a large idle one.
+func TestClusterOverviewMetricsGaugesCarryTheirReadings(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	for _, want := range []string{"26.2%", "268 / 1024 units", "70.0%", "1433 / 2048 MiB", "█", "░"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("metrics section does not contain %q\n%s", want, got)
+		}
+	}
+}
+
+// A cluster with Insights switched off is one setting away from having numbers; a cluster CloudWatch failed to answer for is not, and rendering both as "no data" hides the difference.
+func TestClusterOverviewSeparatesInsightsOffFromAFailedFetch(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Metrics, overview.InsightsOff = nil, true
+
+	off := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+	if !strings.Contains(off, "Container Insights off, no metrics") {
+		t.Errorf("Insights off must say so rather than reading as missing data\n%s", off)
+	}
+	if strings.Contains(off, "unavailable:") {
+		t.Errorf("Insights off is not a failed fetch and must not be reported as one\n%s", off)
+	}
+
+	overview.InsightsOff = false
+	overview.Errs[aws.SectionMetrics] = errors.New("AccessDenied: cloudwatch:GetMetricData")
+	failed := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+	if !strings.Contains(failed, "unavailable: AccessDenied: cloudwatch:GetMetricData") {
+		t.Errorf("a failed metrics fetch must keep its reason on screen: the pane retries on a ticker, so a throttle and a denial otherwise look identical\n%s", failed)
+	}
+}
+
+// A reservation CloudWatch never answered for and a cluster reserving nothing both compute to 0.0%, and a gauge sitting at zero is the more believable of the two lies.
+func TestClusterOverviewGaugeReportsNoDataRatherThanZero(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Metrics = &aws.ECSClusterMetrics{CPUUsed: aws.MetricPoint{Value: 268, At: time.Now(), OK: true}}
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	if !strings.Contains(got, "CPU:    no data") {
+		t.Errorf("an absent reservation must render no data, never a 0.0%% bar\n%s", got)
+	}
+	if strings.Contains(got, "0.0%") {
+		t.Errorf("no gauge may be drawn from an absent reading\n%s", got)
+	}
+}
+
+// The ticket's own case: a cluster with no capacity providers still places tasks, and "none" on its own reads as broken rather than as configured differently.
+func TestClusterOverviewCapacityFallsBackToTheServiceLaunchType(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Services = append(overview.Services, aws.ECSService{Name: "kicker-batch", LaunchType: "EC2"})
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	// Sorted and deduplicated, so the line does not reshuffle between two-second refreshes.
+	if !strings.Contains(got, "none, services launch on EC2, FARGATE") {
+		t.Errorf("capacity must name the launch types the services really use\n%s", got)
+	}
+
+	// With providers configured the strategy is what places a task, and the fallback must not be shown alongside it.
+	cluster.DefaultCapacityProviderStrat = []aws.ECSCapacityProviderStrategy{{CapacityProvider: "FARGATE_SPOT", Base: 2, Weight: 4}}
+	withProviders := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+	if !strings.Contains(withProviders, "FARGATE_SPOT (base 2, weight 4)") {
+		t.Errorf("capacity must show the default strategy's base and weight\n%s", withProviders)
+	}
+	if strings.Contains(withProviders, "services launch on") {
+		t.Errorf("the launch-type fallback is for a cluster with no providers, not an extra line beside them\n%s", withProviders)
+	}
+
+	// Providers attached with no default strategy is its own state: a service must then name one itself.
+	cluster.DefaultCapacityProviderStrat = nil
+	cluster.CapacityProviders = []string{"FARGATE", "FARGATE_SPOT"}
+	noStrategy := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+	if !strings.Contains(noStrategy, "FARGATE, FARGATE_SPOT") || !strings.Contains(noStrategy, "no default strategy") {
+		t.Errorf("providers without a default strategy must say so\n%s", noStrategy)
+	}
+}
+
+// The ticket's own case: any rollout that is not COMPLETED is deploying, and failed tasks outrank it because ECS retries them, so a stuck rollout stays IN_PROGRESS forever.
+func TestClusterOverviewServiceStability(t *testing.T) {
+	cases := []struct {
+		name    string
+		service aws.ECSService
+		want    utils.Cell
+	}{
+		{
+			name: "rollout in progress",
+			service: aws.ECSService{RunningCount: 3, DesiredCount: 3,
+				Deployments: []aws.ECSDeployment{{RolloutState: "IN_PROGRESS"}}},
+			want: utils.Cell{Text: "● deploying", Color: color.FgYellow},
+		},
+		{
+			name: "failed tasks outrank a rollout still in progress",
+			service: aws.ECSService{RunningCount: 1, DesiredCount: 3,
+				Deployments: []aws.ECSDeployment{{RolloutState: "IN_PROGRESS", FailedTasks: 4}}},
+			want: utils.Cell{Text: "● 4 failed", Color: color.FgRed},
+		},
+		{
+			name: "a failed rollout that lost no tasks is still red",
+			service: aws.ECSService{RunningCount: 3, DesiredCount: 3,
+				Deployments: []aws.ECSDeployment{{RolloutState: "FAILED"}}},
+			want: utils.Cell{Text: "● failed", Color: color.FgRed},
+		},
+		{
+			// A CODE_DEPLOY or EXTERNAL controller reports no rolloutState at all, and reading absent as "not COMPLETED" leaves every blue/green service permanently amber.
+			name: "an absent rollout state is settled, not deploying",
+			service: aws.ECSService{RunningCount: 3, DesiredCount: 3,
+				Deployments: []aws.ECSDeployment{{Status: "PRIMARY"}}},
+			want: utils.Cell{Text: "● steady", Color: color.FgGreen},
+		},
+		{
+			name: "short of its desired count with the rollout done",
+			service: aws.ECSService{RunningCount: 1, DesiredCount: 3,
+				Deployments: []aws.ECSDeployment{{RolloutState: "COMPLETED"}}},
+			want: utils.Cell{Text: "● scaling", Color: color.FgYellow},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ecsServiceStabilityCell(&tc.service); got != tc.want {
+				t.Errorf("ecsServiceStabilityCell() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The reason is the only thing on the pane that says WHY a rollout went wrong, and it is a sentence: in a table cell it would be cut to its least specific few words.
+func TestClusterOverviewShowsTheRolloutReasonOnItsOwnLine(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	reason := "ECS deployment circuit breaker: task failed to start."
+	overview.Services = []aws.ECSService{{
+		Name: "kicker-worker", RunningCount: 0, DesiredCount: 2, LaunchType: "FARGATE",
+		Deployments: []aws.ECSDeployment{{Status: "PRIMARY", RolloutState: "FAILED", FailedTasks: 4, RolloutStateReason: reason}},
+	}}
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	if !strings.Contains(got, "kicker-worker: "+reason) {
+		t.Errorf("a failed rollout must name the service and its reason\n%s", got)
+	}
+	if !strings.Contains(got, "0/1 services steady") {
+		t.Errorf("a service that lost every task is not steady\n%s", got)
+	}
+
+	// A healthy service has a reason field ECS fills with its success text, and putting that on the pane buries the failures.
+	overview.Services[0].Deployments = []aws.ECSDeployment{{Status: "PRIMARY", RolloutState: "COMPLETED", RolloutStateReason: "ECS deployment ecs-svc/123 completed."}}
+	healthy := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+	if strings.Contains(healthy, "completed.") {
+		t.Errorf("a completed rollout's reason is noise and must not be given a line\n%s", healthy)
+	}
+}
+
+// The ticket's own case, and the one every empty state has to survive: the pane must still identify the cluster rather than rendering blank blocks.
+func TestClusterOverviewEmptyStates(t *testing.T) {
+	forceColor(t)
+	cluster := &aws.ECSCluster{Name: "empty-cluster", Arn: "arn:aws:ecs:eu-west-1:123456789012:cluster/empty-cluster", Status: "ACTIVE", Region: "eu-west-1"}
+	overview := &aws.ECSClusterOverview{Errs: map[string]error{}, InsightsOff: true}
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	for _, want := range []string{
+		"empty-cluster",
+		"no services",
+		"no running tasks",
+		"none, no services to place",
+		// Empty is not disabled: it means the describe call did not ask, and the two call for different actions.
+		"Container Insights: unknown",
+		"Execute command:    not configured",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("empty overview does not contain %q\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "0/0 services steady") {
+		t.Errorf("a cluster with no services has nothing to be steady\n%s", got)
+	}
+}
+
+// Each fetch fails on its own, and the header is built from the LIST ROW so a cluster whose every section failed is still identified.
+func TestClusterOverviewSectionsFailIndependently(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Errs[aws.SectionServices] = errors.New("AccessDenied: ecs:ListServices")
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	if !strings.Contains(got, "unavailable: AccessDenied: ecs:ListServices") {
+		t.Errorf("a failed services fetch must state its reason\n%s", got)
+	}
+	// The header cannot count steady services without the list, and falls back to the count the cluster itself reported.
+	if !strings.Contains(got, "3 services") || strings.Contains(got, "services steady") {
+		t.Errorf("with the service list unavailable the header must fall back to the cluster's own count\n%s", got)
+	}
+	if !strings.Contains(got, "none, services unavailable") {
+		t.Errorf("capacity cannot name launch types it could not read, and must say so rather than assuming Fargate\n%s", got)
+	}
+	// The sections that did not depend on that fetch still render.
+	if !strings.Contains(got, "a1b2c3d4e5f6") || !strings.Contains(got, "26.2%") {
+		t.Errorf("one failed section must not blank the sections that succeeded\n%s", got)
+	}
+}
+
+// A busy cluster runs hundreds of tasks against a pane that shows a screenful, and a silent cap reads as the whole list.
+func TestClusterOverviewCapsTheTasksTable(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Tasks = make([]aws.ECSTask, ecsOverviewTasksShown+3)
+	for i := range overview.Tasks {
+		overview.Tasks[i] = aws.ECSTask{
+			ID:         fmt.Sprintf("task%02d", i),
+			Status:     "RUNNING",
+			Containers: []aws.ECSContainer{{Name: "app", ImageURI: "kicker:v1", Essential: true}},
+		}
+	}
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	if !strings.Contains(got, "(3 more)") {
+		t.Errorf("the hidden task count must be stated\n%s", got)
+	}
+	if strings.Contains(got, "task16") {
+		t.Errorf("the table must stop at the cap\n%s", got)
+	}
+	// Sorted, because the pane re-renders on a ticker and DescribeTasks promises no order.
+	if !strings.Contains(got, "task00") || !strings.Contains(got, "task14") {
+		t.Errorf("the first %d tasks in id order must be the ones shown\n%s", ecsOverviewTasksShown, got)
+	}
+}
+
+// A task whose containers could not be read has no image to name, and a blank column in the one place this pane exists for reads as a rendering bug.
+func TestClusterOverviewTaskWithoutContainersSaysUnavailable(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Tasks = []aws.ECSTask{{ID: "a1b2c3d4e5f6", Status: "PENDING"}}
+
+	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
+
+	if !strings.Contains(got, "a1b2c3d4e5f6 unavailable") {
+		t.Errorf("a task with no readable containers must say so in the image column\n%s", got)
+	}
+}
+
+// Measured, not assumed: content-sizing the service name renders tighter at every width but hands a long name the whole row, which deletes the counts and the stability badge outright.
+// The flexible name is what keeps them, so this pins the degradation rather than the happy path.
+func TestClusterOverviewNarrowServiceRowKeepsItsStabilityBadge(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Services = []aws.ECSService{{
+		Name: "a-very-long-service-name-nobody-should-have-but-someone-does", RunningCount: 1, DesiredCount: 3, PendingCount: 2,
+		Deployments: []aws.ECSDeployment{{RolloutState: "IN_PROGRESS"}},
+	}}
+
+	// Either side of minTwoColWidth, so both the stacked and the two-column layouts are covered.
+	for _, width := range []int{80, 110, 120, 160} {
+		got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, width))
+
+		for _, want := range []string{"1/3 running", "2 pending", "● deploying"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("at width %d the service row lost %q to a long name\n%s", width, want, got)
+			}
+		}
+		// A prefix short enough to survive the narrowest column here: the point is that the name is still identifiable, not how many of its cells were paid for.
+		if !strings.Contains(got, "a-very-long") {
+			t.Errorf("at width %d the service name was cut away entirely\n%s", width, got)
+		}
+	}
+}
+
+// Wrapping is off on an overview, so a line over its budget runs off the pane rather than folding.
+func TestClusterOverviewNeverExceedsTheWidth(t *testing.T) {
+	forceColor(t)
+	cluster, overview := clusterFixture()
+	overview.Services = append(overview.Services, aws.ECSService{
+		Name: "a-very-long-service-name-nobody-should-have-but-someone-does", RunningCount: 1, DesiredCount: 3,
+		Deployments: []aws.ECSDeployment{{RolloutState: "FAILED", FailedTasks: 2, RolloutStateReason: "ECS deployment circuit breaker: task failed to start and the reason ECS gives runs well past any column."}},
+	})
+
+	for width := 40; width <= 220; width++ {
+		for _, line := range strings.Split(FormatECSClusterOverview(cluster, overview, width), "\n") {
+			if got := runewidth.StringWidth(utils.Decolorise(line)); got > width {
+				t.Fatalf("at width %d a line is %d cells wide: %q", width, got, utils.Decolorise(line))
+			}
+		}
 	}
 }

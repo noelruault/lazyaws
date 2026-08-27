@@ -110,7 +110,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 					}
 				default:
 					return []panels.MainTab[*ecsRow]{
-						overviewTab(gui, func(context.Context, *ecsRow, int) string { return overviewUnavailable("cluster") }),
+						overviewTab(gui, gui.ecsClusterOverview),
 						{Key: "config", Title: "Config", Render: gui.renderECSClusterConfig},
 						{Key: "instances", Title: "Instances", Render: gui.renderECSClusterInstances},
 						{Key: "tags", Title: "Tags", Render: gui.renderECSClusterTags},
@@ -152,6 +152,18 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 			}
 		},
 	}
+}
+
+// ecsClusterOverview consolidates the cluster's detail tabs into one pane, refetching every section on each render.
+func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("cluster")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	return presentation.FormatECSClusterOverview(row.Cluster, gui.Client.GetECSClusterOverview(fetchCtx, row.Cluster), width)
 }
 
 func (gui *Gui) renderECSClusterConfig(row *ecsRow) tasks.TaskFunc {

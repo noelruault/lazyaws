@@ -49,7 +49,8 @@ func MetricReading(p aws.MetricPoint, stat string, format func(float64) string) 
 // FormatInstanceOverview lays an instance out for the Overview tab: a header that always renders, then the two-column body the six detail tabs are consolidated into.
 // The header is built from the list row rather than from the fetch, so an instance whose every section failed is still identified by name and id instead of leaving an anonymous pane of errors.
 func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width int, now time.Time) string {
-	header := ResourceHeader("Instance", instanceName(inst), Badge(inst.State), inst.ID, inst.InstanceType, inst.AZ)
+	// Cut to the pane: the header spans the full width rather than a column, so Columns never sees it, and with wrap off a long name plus its badge and id runs off the edge unmarked.
+	header := truncateBlock(ResourceHeader("Instance", instanceName(inst), Badge(inst.State), inst.ID, inst.InstanceType, inst.AZ), width)
 
 	column := ColumnWidth(width, overviewGap)
 	left := joinBlocks(

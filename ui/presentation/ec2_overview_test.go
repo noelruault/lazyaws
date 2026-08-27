@@ -376,17 +376,25 @@ func TestInstanceOverviewNeverExceedsTheWidth(t *testing.T) {
 	failed.Errs[aws.SectionDetails] = errors.New("AccessDenied: not authorized to perform ec2:DescribeInstances")
 	overviews["failed"] = failed
 
+	// The header spans the pane rather than a column, so Columns never measures it: a long Name tag beside the badge and the instance id is what pushes it over on a narrow terminal.
+	longName := overviewInstance()
+	longName.Name = "prod-web-server-eu-west-1a-blue-green-canary"
+
+	instances := map[string]*aws.Instance{"named": overviewInstance(), "long name": longName}
+
 	for name, o := range overviews {
-		t.Run(name, func(t *testing.T) {
-			for width := 40; width <= 240; width++ {
-				out := FormatInstanceOverview(overviewInstance(), o, width, overviewNow)
-				for _, line := range strings.Split(out, "\n") {
-					if got := runewidth.StringWidth(utils.Decolorise(line)); got > width {
-						t.Fatalf("width %d: line of %d cells: %q", width, got, utils.Decolorise(line))
+		for instName, inst := range instances {
+			t.Run(name+"/"+instName, func(t *testing.T) {
+				for width := 40; width <= 240; width++ {
+					out := FormatInstanceOverview(inst, o, width, overviewNow)
+					for _, line := range strings.Split(out, "\n") {
+						if got := runewidth.StringWidth(utils.Decolorise(line)); got > width {
+							t.Fatalf("width %d: line of %d cells: %q", width, got, utils.Decolorise(line))
+						}
 					}
 				}
-			}
-		})
+			})
+		}
 	}
 }
 
