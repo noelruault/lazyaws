@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +12,69 @@ import (
 
 func statistic(name, value string) ecsTypes.KeyValuePair {
 	return ecsTypes.KeyValuePair{Name: &name, Value: &value}
+}
+
+// Neither field is returned unless it is asked for, and both come back silently absent rather than as an error, so the request is the only place this can be caught.
+func TestClusterDescribeFieldsAsksForStatisticsAndSettings(t *testing.T) {
+	asked := map[ecsTypes.ClusterField]bool{}
+	for _, f := range clusterDescribeFields() {
+		asked[f] = true
+	}
+	// Pinned to the literals: comparing against the enum the code already uses agrees with whatever it is changed to.
+	for _, want := range []ecsTypes.ClusterField{"STATISTICS", "SETTINGS"} {
+		if !asked[want] {
+			t.Errorf("DescribeClusters does not ask for %s; without it the data reads as zero rather than as missing", want)
+		}
+	}
+}
+
+// The described page is where the Insights setting is read, and the service metrics gate is its only reader, so mapping without recording would lose the extras with nothing failing.
+func TestIngestECSClustersMapsAndRecordsTheInsightsSetting(t *testing.T) {
+	name, arn, status := "batch-cluster", "arn:aws:ecs:eu-west-1:123:cluster/batch-cluster", "ACTIVE"
+	insights := "enabled"
+	c := &Client{Region: "eu-west-1", AccountID: "123"}
+
+	got := c.ingestECSClusters([]ecsTypes.Cluster{{
+		ClusterName:         &name,
+		ClusterArn:          &arn,
+		Status:              &status,
+		RunningTasksCount:   1,
+		ActiveServicesCount: 1,
+		Statistics:          []ecsTypes.KeyValuePair{statistic("runningFargateTasksCount", "1")},
+		Settings:            []ecsTypes.ClusterSetting{{Name: ecsTypes.ClusterSettingNameContainerInsights, Value: &insights}},
+	}})
+
+	if len(got) != 1 {
+		t.Fatalf("ingestECSClusters() returned %d clusters, want 1", len(got))
+	}
+	if got[0].Name != name || got[0].Status != status || got[0].RunningTasksCount != 1 {
+		t.Errorf("ingestECSClusters() = %+v, want the described cluster's identity and counts", got[0])
+	}
+	if got[0].Statistics.RunningFargateTasks != 1 {
+		t.Errorf("Statistics = %+v, want the STATISTICS page carried onto the cluster", got[0].Statistics)
+	}
+	if got[0].ContainerInsights != "enabled" {
+		t.Errorf("ContainerInsights = %q, want the SETTINGS entry carried onto the cluster", got[0].ContainerInsights)
+	}
+	if !ContainerInsightsEnabled(c.clusterInsightsSetting(name)) {
+		t.Error("ingesting a cluster must record its Insights setting; nothing else reads it, so the metrics extras would be lost silently")
+	}
+	if !strings.Contains(got[0].ConsoleURL, name) {
+		t.Errorf("ConsoleURL = %q, want the cluster's console link", got[0].ConsoleURL)
+	}
+}
+
+// A cluster the caller cannot identify the account or region for has no console link, and an empty page is not a cluster.
+func TestIngestECSClustersWithoutAccountContext(t *testing.T) {
+	name := "prod"
+	got := (&Client{}).ingestECSClusters([]ecsTypes.Cluster{{ClusterName: &name}})
+
+	if len(got) != 1 || got[0].ConsoleURL != "" {
+		t.Errorf("ingestECSClusters() = %+v, want no console link without a region and account", got)
+	}
+	if len((&Client{}).ingestECSClusters(nil)) != 0 {
+		t.Error("ingestECSClusters(nil) returned clusters")
+	}
 }
 
 func TestMapClusterStatistics(t *testing.T) {
@@ -132,6 +196,151 @@ func TestExtractTaskDefRevision(t *testing.T) {
 		if got := extractTaskDefRevision(tt.arn); got != tt.want {
 			t.Errorf("extractTaskDefRevision(%q) = %d, want %d", tt.arn, got, tt.want)
 		}
+	}
+}
+
+// Essential is the whole basis for picking the container whose image identifies the task, and only the task definition carries it.
+func TestMapECSContainerTakesEssentialFromTheDefinition(t *testing.T) {
+	name, image, status := "app-auth", "123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-auth:v1.2.0-develop.0", "RUNNING"
+	described := ecsTypes.Container{Name: &name, Image: &image, LastStatus: &status}
+	essential := true
+	memory := int32(2048)
+	definition := ecsTypes.ContainerDefinition{Name: &name, Essential: &essential, Cpu: 1024, Memory: &memory}
+
+	got := mapECSContainer(described, &definition)
+	if !got.Essential {
+		t.Error("a container its definition marks essential must be mapped essential, or the primary container is picked by position instead")
+	}
+	if got.ImageURI != image || got.Name != name || got.LastStatus != status {
+		t.Errorf("mapECSContainer() = %+v, want the described container's identity, image and status", got)
+	}
+	if got.CPU != 1.0 || got.MemoryHardMB != 2048 {
+		t.Errorf("CPU/memory = %v/%d, want 1 vCPU and 2048 MiB off the definition", got.CPU, got.MemoryHardMB)
+	}
+
+	// A task whose definition failed to load still maps, and non-essential is the honest answer rather than a guess.
+	withoutDefinition := mapECSContainer(described, nil)
+	if withoutDefinition.Essential {
+		t.Error("a container with no definition must not be mapped essential")
+	}
+	if withoutDefinition.ImageURI != image {
+		t.Errorf("ImageURI = %q, want the image DescribeTasks carried even with no definition", withoutDefinition.ImageURI)
+	}
+
+	notEssential := false
+	if mapECSContainer(described, &ecsTypes.ContainerDefinition{Name: &name, Essential: &notEssential}).Essential {
+		t.Error("a sidecar its definition marks non-essential must not be mapped essential")
+	}
+}
+
+// buildECSTask is where a described task meets its definition, and it is the only place that pairs them; a container matched to the wrong definition, or to none, loses the essential flag with nothing failing.
+func TestBuildECSTaskPairsContainersWithTheirDefinitions(t *testing.T) {
+	app, sidecar := "app-auth", "grafana-alloy-sidecar"
+	appImage, sidecarImage := "123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-auth:v1.2.0-develop.0", "grafana/alloy:v1.10.0"
+	arn, status := "arn:aws:ecs:eu-west-1:123:task/app-cluster/abc123", "RUNNING"
+	tdArn := "arn:aws:ecs:eu-west-1:123:task-definition/app-auth-stage-task:63"
+	essential, notEssential := true, false
+
+	// The sidecar is listed first so a mapper keyed on position rather than on name would pick the wrong definition.
+	described := ecsTypes.Task{
+		TaskArn: &arn, LastStatus: &status, TaskDefinitionArn: &tdArn,
+		Containers: []ecsTypes.Container{
+			{Name: &sidecar, Image: &sidecarImage},
+			{Name: &app, Image: &appImage},
+		},
+	}
+	definition := &ecsTypes.TaskDefinition{ContainerDefinitions: []ecsTypes.ContainerDefinition{
+		{Name: &app, Essential: &essential},
+		{Name: &sidecar, Essential: &notEssential},
+	}}
+
+	task := (&Client{}).buildECSTask(described, "app-cluster", "app-auth", func(string) (*ecsTypes.TaskDefinition, error) {
+		return definition, nil
+	})
+
+	byName := map[string]ECSContainer{}
+	for _, ctn := range task.Containers {
+		byName[ctn.Name] = ctn
+	}
+	if len(byName) != 2 {
+		t.Fatalf("built %d containers, want both the app and the sidecar", len(byName))
+	}
+	if !byName[app].Essential {
+		t.Error("the app container's definition marks it essential and the built task lost that")
+	}
+	if byName[sidecar].Essential {
+		t.Error("the sidecar was built essential; its definition says otherwise, and the primary-container pick depends on the difference")
+	}
+
+	// Resolving through the real entry point, so the flag reaching the image is what is asserted, not just the field.
+	image, ok := runningECSServiceImage([]ECSTask{task})
+	if !ok || image.Image != "app-auth:v1.2.0-develop.0" || image.Sidecars != 1 {
+		t.Errorf("runningECSServiceImage() = %+v (ok=%v), want the essential container's image with one sidecar", image, ok)
+	}
+}
+
+// A task whose definition cannot be read must still build with its images; the failure costs the essential flag, not the container.
+func TestBuildECSTaskSurvivesAnUnreadableDefinition(t *testing.T) {
+	app := "app-auth"
+	appImage := "123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-auth:v1.2.0-develop.0"
+	arn, status := "arn:aws:ecs:eu-west-1:123:task/app-cluster/abc123", "RUNNING"
+
+	task := (&Client{}).buildECSTask(
+		ecsTypes.Task{TaskArn: &arn, LastStatus: &status, Containers: []ecsTypes.Container{{Name: &app, Image: &appImage}}},
+		"app-cluster", "app-auth",
+		func(string) (*ecsTypes.TaskDefinition, error) { return nil, errors.New("access denied") },
+	)
+
+	if len(task.Containers) != 1 || task.Containers[0].ImageURI != appImage {
+		t.Fatalf("built %+v, want the container and its image despite the definition failing", task.Containers)
+	}
+	if task.Containers[0].Essential {
+		t.Error("a container built without its definition must not claim to be essential")
+	}
+	if image, ok := runningECSServiceImage([]ECSTask{task}); !ok || image.Image != "app-auth:v1.2.0-develop.0" {
+		t.Errorf("runningECSServiceImage() = %+v (ok=%v), want the first container as the fallback primary", image, ok)
+	}
+}
+
+// The PRIMARY deployment's revision is what the desired-image fallback reads, and nothing else carries it.
+func TestMapECSDeploymentCarriesItsTaskDefinition(t *testing.T) {
+	status, taskDef := "PRIMARY", "arn:aws:ecs:eu-west-1:123:task-definition/web:8"
+	created := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+
+	got := mapECSDeployment(ecsTypes.Deployment{
+		Status: &status, TaskDefinition: &taskDef, DesiredCount: 2, RunningCount: 1, PendingCount: 1, CreatedAt: &created,
+	})
+
+	if got.TaskDefinition != taskDef {
+		t.Errorf("TaskDefinition = %q, want %q; without it the desired-image fallback silently reads the service's own revision", got.TaskDefinition, taskDef)
+	}
+	if got.Status != "PRIMARY" || got.Desired != 2 || got.Running != 1 || got.Pending != 1 {
+		t.Errorf("mapECSDeployment() = %+v, want the described counts and status", got)
+	}
+}
+
+func TestMapTaskDefinitionContainerCarriesEssentialAndImage(t *testing.T) {
+	name, image := "app-auth", "123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-auth:v1.2.0-develop.0"
+	essential := true
+	envName, envValue := "STAGE", "staging"
+
+	got := mapTaskDefinitionContainer(ecsTypes.ContainerDefinition{
+		Name:        &name,
+		Image:       &image,
+		Essential:   &essential,
+		Environment: []ecsTypes.KeyValuePair{{Name: &envName, Value: &envValue}},
+	})
+
+	if !got.Essential {
+		t.Error("an essential container definition must map essential, or the desired image is picked by position instead")
+	}
+	if got.Image != image || got.Name != name || got.Environment["STAGE"] != "staging" {
+		t.Errorf("mapTaskDefinitionContainer() = %+v, want the definition's name, image and environment", got)
+	}
+
+	notEssential := false
+	if mapTaskDefinitionContainer(ecsTypes.ContainerDefinition{Name: &name, Essential: &notEssential}).Essential {
+		t.Error("a non-essential container definition must not map essential")
 	}
 }
 

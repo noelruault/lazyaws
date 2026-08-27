@@ -235,6 +235,7 @@ func TestServiceMetricQueriesUseThePlainECSNamespace(t *testing.T) {
 		if ns := getString(q.MetricStat.Metric.Namespace); ns != "AWS/ECS" {
 			t.Errorf("query %q namespace = %q, want AWS/ECS; ECS/ContainerInsights only publishes where the setting is on", id, ns)
 		}
+		// The service panel captions these readings "1-min avg", so the period is what makes that caption true rather than a decoration.
 		if q.MetricStat.Period == nil || *q.MetricStat.Period != 60 {
 			t.Errorf("query %q period = %v, want 60 for the minute refresh tier", id, q.MetricStat.Period)
 		}

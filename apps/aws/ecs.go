@@ -235,40 +235,13 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 
 		descOut, err := c.ECS.DescribeClusters(timeoutCtx, &ecs.DescribeClustersInput{
 			Clusters: out.ClusterArns,
-			// Both fields ride the call that already runs; asking for them separately would be a second describe per page for data the same response can carry.
-			Include: []ecsTypes.ClusterField{ecsTypes.ClusterFieldStatistics, ecsTypes.ClusterFieldSettings},
+			Include:  clusterDescribeFields(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to describe ECS clusters: %w", err)
 		}
 
-		for _, cl := range descOut.Clusters {
-			cluster := ECSCluster{
-				Name:   getString(cl.ClusterName),
-				Arn:    getString(cl.ClusterArn),
-				Status: getString(cl.Status),
-			}
-			cluster.RunningTasksCount = cl.RunningTasksCount
-			cluster.PendingTasksCount = cl.PendingTasksCount
-			cluster.ActiveServicesCount = cl.ActiveServicesCount
-			cluster.RegisteredContainerCount = cl.RegisteredContainerInstancesCount
-			if c.Region != "" && c.AccountID != "" {
-				cluster.ConsoleURL = fmt.Sprintf("https://%s.console.aws.amazon.com/ecs/v2/clusters/%s?region=%s", c.Region, cluster.Name, c.Region)
-			}
-
-			cluster.CapacityProviders = cl.CapacityProviders
-			cluster.Statistics = mapClusterStatistics(cl.Statistics)
-			cluster.ContainerInsights = containerInsightsSetting(cl.Settings)
-			for _, s := range cl.DefaultCapacityProviderStrategy {
-				cluster.DefaultCapacityProviderStrat = append(cluster.DefaultCapacityProviderStrat, ECSCapacityProviderStrategy{
-					CapacityProvider: getString(s.CapacityProvider),
-					Weight:           s.Weight,
-					Base:             s.Base,
-				})
-			}
-
-			clusters = append(clusters, cluster)
-		}
+		clusters = append(clusters, c.ingestECSClusters(descOut.Clusters)...)
 
 		if out.NextToken == nil {
 			break
@@ -276,8 +249,50 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 		nextToken = out.NextToken
 	}
 
-	c.recordClusterInsights(clusters)
 	return clusters, nil
+}
+
+// clusterDescribeFields names the optional fields the cluster list depends on.
+// Both ride the describe call that already runs; asking for them separately would be a second call per page for data the same response can carry, and dropping either leaves its data silently zero rather than erroring.
+func clusterDescribeFields() []ecsTypes.ClusterField {
+	return []ecsTypes.ClusterField{ecsTypes.ClusterFieldStatistics, ecsTypes.ClusterFieldSettings}
+}
+
+// ingestECSClusters maps a DescribeClusters page and records what only that response can say.
+// The two are one step because the Insights setting has no other reader: a cluster mapped without being recorded would silently cost every later service metrics fetch its Insights extras, with nothing failing to say so.
+func (c *Client) ingestECSClusters(described []ecsTypes.Cluster) []ECSCluster {
+	clusters := make([]ECSCluster, 0, len(described))
+	for _, cl := range described {
+		clusters = append(clusters, c.mapECSCluster(cl))
+	}
+	c.recordClusterInsights(clusters)
+	return clusters
+}
+
+func (c *Client) mapECSCluster(cl ecsTypes.Cluster) ECSCluster {
+	cluster := ECSCluster{
+		Name:                     getString(cl.ClusterName),
+		Arn:                      getString(cl.ClusterArn),
+		Status:                   getString(cl.Status),
+		RunningTasksCount:        cl.RunningTasksCount,
+		PendingTasksCount:        cl.PendingTasksCount,
+		ActiveServicesCount:      cl.ActiveServicesCount,
+		RegisteredContainerCount: cl.RegisteredContainerInstancesCount,
+		CapacityProviders:        cl.CapacityProviders,
+		Statistics:               mapClusterStatistics(cl.Statistics),
+		ContainerInsights:        containerInsightsSetting(cl.Settings),
+	}
+	if c.Region != "" && c.AccountID != "" {
+		cluster.ConsoleURL = fmt.Sprintf("https://%s.console.aws.amazon.com/ecs/v2/clusters/%s?region=%s", c.Region, cluster.Name, c.Region)
+	}
+	for _, s := range cl.DefaultCapacityProviderStrategy {
+		cluster.DefaultCapacityProviderStrat = append(cluster.DefaultCapacityProviderStrat, ECSCapacityProviderStrategy{
+			CapacityProvider: getString(s.CapacityProvider),
+			Weight:           s.Weight,
+			Base:             s.Base,
+		})
+	}
+	return cluster
 }
 
 // mapClusterStatistics reads the STATISTICS key-value list into named fields.
@@ -395,14 +410,7 @@ func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECS
 			}
 
 			for _, dep := range svc.Deployments {
-				service.Deployments = append(service.Deployments, ECSDeployment{
-					Status:         getString(dep.Status),
-					TaskDefinition: getString(dep.TaskDefinition),
-					Desired:        dep.DesiredCount,
-					Running:        dep.RunningCount,
-					Pending:        dep.PendingCount,
-					Created:        dep.CreatedAt,
-				})
+				service.Deployments = append(service.Deployments, mapECSDeployment(dep))
 			}
 
 			for _, lb := range svc.LoadBalancers {
@@ -589,59 +597,16 @@ func (c *Client) buildECSTask(t ecsTypes.Task, clusterName, serviceName string, 
 		}
 
 		for _, ctn := range t.Containers {
-			container := ECSContainer{
-				Name:         getString(ctn.Name),
-				LastStatus:   getString(ctn.LastStatus),
-				HealthStatus: string(ctn.HealthStatus),
-				ImageURI:     getString(ctn.Image),
-				ImageDigest:  getString(ctn.ImageDigest),
-				RuntimeID:    getString(ctn.RuntimeId),
+			cd, ok := cdByName[getString(ctn.Name)]
+			if !ok {
+				task.Containers = append(task.Containers, mapECSContainer(ctn, nil))
+				continue
 			}
-			if cd, ok := cdByName[getString(ctn.Name)]; ok {
-				if cd.Cpu > 0 {
-					container.CPU = float64(cd.Cpu) / 1024.0
-				}
-				container.MemoryHardMB = getInt32Value(cd.Memory)
-				container.MemorySoftMB = getInt32Value(cd.MemoryReservation)
-				container.Essential = cd.Essential != nil && *cd.Essential
-			}
-			for _, binding := range ctn.NetworkBindings {
-				container.Ports = append(container.Ports, ECSPortMapping{
-					ContainerPort: getInt32Value(binding.ContainerPort),
-					HostPort:      getInt32Value(binding.HostPort),
-					Protocol:      string(binding.Protocol),
-				})
-			}
-			for _, iface := range ctn.NetworkInterfaces {
-				if iface.PrivateIpv4Address != nil {
-					container.PrivateIPs = append(container.PrivateIPs, *iface.PrivateIpv4Address)
-				}
-			}
-			task.Containers = append(task.Containers, container)
+			task.Containers = append(task.Containers, mapECSContainer(ctn, &cd))
 		}
 	} else {
 		for _, ctn := range t.Containers {
-			container := ECSContainer{
-				Name:         getString(ctn.Name),
-				LastStatus:   getString(ctn.LastStatus),
-				HealthStatus: string(ctn.HealthStatus),
-				ImageURI:     getString(ctn.Image),
-				ImageDigest:  getString(ctn.ImageDigest),
-				RuntimeID:    getString(ctn.RuntimeId),
-			}
-			for _, binding := range ctn.NetworkBindings {
-				container.Ports = append(container.Ports, ECSPortMapping{
-					ContainerPort: getInt32Value(binding.ContainerPort),
-					HostPort:      getInt32Value(binding.HostPort),
-					Protocol:      string(binding.Protocol),
-				})
-			}
-			for _, iface := range ctn.NetworkInterfaces {
-				if iface.PrivateIpv4Address != nil {
-					container.PrivateIPs = append(container.PrivateIPs, *iface.PrivateIpv4Address)
-				}
-			}
-			task.Containers = append(task.Containers, container)
+			task.Containers = append(task.Containers, mapECSContainer(ctn, nil))
 		}
 	}
 
@@ -659,6 +624,66 @@ func (c *Client) buildECSTask(t ecsTypes.Task, clusterName, serviceName string, 
 	}
 
 	return task
+}
+
+// mapECSContainer reads a running container, taking the fields DescribeTasks answers with and, where the task definition could be read, the reservations and the essential flag it alone carries.
+// A nil definition is the ordinary case for a task whose definition failed to load, and it leaves the container non-essential rather than guessing.
+func mapECSContainer(ctn ecsTypes.Container, cd *ecsTypes.ContainerDefinition) ECSContainer {
+	container := ECSContainer{
+		Name:         getString(ctn.Name),
+		LastStatus:   getString(ctn.LastStatus),
+		HealthStatus: string(ctn.HealthStatus),
+		ImageURI:     getString(ctn.Image),
+		ImageDigest:  getString(ctn.ImageDigest),
+		RuntimeID:    getString(ctn.RuntimeId),
+	}
+	if cd != nil {
+		if cd.Cpu > 0 {
+			container.CPU = float64(cd.Cpu) / 1024.0
+		}
+		container.MemoryHardMB = getInt32Value(cd.Memory)
+		container.MemorySoftMB = getInt32Value(cd.MemoryReservation)
+		container.Essential = cd.Essential != nil && *cd.Essential
+	}
+	for _, binding := range ctn.NetworkBindings {
+		container.Ports = append(container.Ports, ECSPortMapping{
+			ContainerPort: getInt32Value(binding.ContainerPort),
+			HostPort:      getInt32Value(binding.HostPort),
+			Protocol:      string(binding.Protocol),
+		})
+	}
+	for _, iface := range ctn.NetworkInterfaces {
+		if iface.PrivateIpv4Address != nil {
+			container.PrivateIPs = append(container.PrivateIPs, *iface.PrivateIpv4Address)
+		}
+	}
+	return container
+}
+
+func mapECSDeployment(dep ecsTypes.Deployment) ECSDeployment {
+	return ECSDeployment{
+		Status:         getString(dep.Status),
+		TaskDefinition: getString(dep.TaskDefinition),
+		Desired:        dep.DesiredCount,
+		Running:        dep.RunningCount,
+		Pending:        dep.PendingCount,
+		Created:        dep.CreatedAt,
+	}
+}
+
+func mapTaskDefinitionContainer(cd ecsTypes.ContainerDefinition) ECSTaskDefinitionContainer {
+	env := make(map[string]string, len(cd.Environment))
+	for _, kv := range cd.Environment {
+		env[getString(kv.Name)] = getString(kv.Value)
+	}
+	return ECSTaskDefinitionContainer{
+		Name:        getString(cd.Name),
+		Image:       getString(cd.Image),
+		CPU:         cd.Cpu,
+		Memory:      getInt32Value(cd.Memory),
+		Essential:   cd.Essential != nil && *cd.Essential,
+		Environment: env,
+	}
 }
 
 // ExecECSTask returns an unstarted command so the caller can attach stdio while the TUI is suspended.
@@ -954,18 +979,7 @@ func (c *Client) DescribeTaskDefinitionDetail(ctx context.Context, taskDefArn st
 		Memory:   getString(td.Memory),
 	}
 	for _, cd := range td.ContainerDefinitions {
-		env := make(map[string]string, len(cd.Environment))
-		for _, kv := range cd.Environment {
-			env[getString(kv.Name)] = getString(kv.Value)
-		}
-		detail.Containers = append(detail.Containers, ECSTaskDefinitionContainer{
-			Name:        getString(cd.Name),
-			Image:       getString(cd.Image),
-			CPU:         cd.Cpu,
-			Memory:      getInt32Value(cd.Memory),
-			Essential:   cd.Essential != nil && *cd.Essential,
-			Environment: env,
-		})
+		detail.Containers = append(detail.Containers, mapTaskDefinitionContainer(cd))
 	}
 	c.cacheTaskDef(taskDefArn, detail)
 	return detail, nil
