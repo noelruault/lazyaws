@@ -28,8 +28,8 @@ func TestOverviewInterval(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := overviewInterval(tt.seconds); got != tt.want {
-				t.Errorf("overviewInterval(%d) = %v, want %v", tt.seconds, got, tt.want)
+			if got := tickInterval(tt.seconds); got != tt.want {
+				t.Errorf("tickInterval(%d) = %v, want %v", tt.seconds, got, tt.want)
 			}
 		})
 	}

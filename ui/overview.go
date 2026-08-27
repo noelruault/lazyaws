@@ -18,7 +18,7 @@ const overviewTabKey = "overview"
 // overviewTab is the Overview tab a resource panel opens on, refreshing on the configured interval.
 func overviewTab[T any](gui *Gui, render func(ctx context.Context, item T, width int) string) panels.MainTab[T] {
 	return overviewTabEvery(gui, func() time.Duration {
-		return overviewInterval(gui.Config.User.Refresh.OverviewSeconds)
+		return tickInterval(gui.Config.User.Refresh.OverviewSeconds)
 	}, render)
 }
 
@@ -43,16 +43,6 @@ func overviewTabEvery[T any](gui *Gui, interval func() time.Duration, render fun
 			})
 		},
 	}
-}
-
-// overviewInterval maps the configured seconds onto a duration, where 0 means no auto-refresh at all.
-// time.NewTicker panics on a non-positive duration, so a negative value is folded into the off state rather than passed on.
-func overviewInterval(seconds int) time.Duration {
-	if seconds <= 0 {
-		return 0
-	}
-
-	return time.Duration(seconds) * time.Second
 }
 
 // newOverviewTask re-renders every interval, or exactly once when interval is 0.
