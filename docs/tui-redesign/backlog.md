@@ -57,9 +57,9 @@ Every group is reviewed and repaired inside the cycle that built it (spec.md), s
 
 ## Stage 9 — polish
 
-- [ ] `s9-copy-key` [d2] — new named key `y` ("copy id/arn") bound per side panel and on main, opening the existing confirmation popup with the full untruncated ID/ARN of the selected item (no clipboard dependency). Keymap conflict tests stay green; regenerate the README key table.
-- [ ] `s9-footer-labels` [d1] — align per-panel options-bar labels with the redesign vocabulary (navigate/inspect/copy/refresh/filter/actions/quit), labels only, no key behavior changes.
-- [ ] `s9-benchmarks` [d2] — benchmarks with the benchForceColor helper: RenderTableFit (100 rows x 5 cells, width 60), Columns (two 40-line blocks, width 140), each overview formatter with hand-built structs, list rerender with 100 instances. Record results in the handoff; budgets are review guidance, not failing assertions.
+- [x] `s9-copy-key` [d2] — new named key `y` ("copy id/arn") bound per side panel and on main, opening the existing confirmation popup with the full untruncated ID/ARN of the selected item (no clipboard dependency). Keymap conflict tests stay green; regenerate the README key table.
+- [x] `s9-footer-labels` [d1] — align per-panel options-bar labels with the redesign vocabulary (navigate/inspect/copy/refresh/filter/actions/quit), labels only, no key behavior changes.
+- [x] `s9-benchmarks` [d2] — benchmarks with the benchForceColor helper: RenderTableFit (100 rows x 5 cells, width 60), Columns (two 40-line blocks, width 140), each overview formatter with hand-built structs, list rerender with 100 instances. Record results in the handoff; budgets are review guidance, not failing assertions.
 
 ## Stage 10 — autonomous UI validation (Playwright over ttyd)
 
