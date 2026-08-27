@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,8 +175,9 @@ func TestInstanceMetricQueriesAskForEveryMetricOnce(t *testing.T) {
 		if ns := getString(q.MetricStat.Metric.Namespace); ns != "AWS/EC2" {
 			t.Errorf("query %q namespace = %q, want AWS/EC2", id, ns)
 		}
-		if q.MetricStat.Period == nil || *q.MetricStat.Period != metricPeriod {
-			t.Errorf("query %q period = %v, want %d to match basic monitoring's publish interval", id, q.MetricStat.Period, metricPeriod)
+		// Pinned to the literal, not to metricPeriod: comparing the constant against itself passes whatever it is changed to.
+		if q.MetricStat.Period == nil || *q.MetricStat.Period != 300 {
+			t.Errorf("query %q period = %v, want 300 to match basic monitoring's publish interval", id, q.MetricStat.Period)
 		}
 		dims := q.MetricStat.Metric.Dimensions
 		if len(dims) != 1 || getString(dims[0].Name) != "InstanceId" || getString(dims[0].Value) != "i-1234567890" {
@@ -184,12 +186,29 @@ func TestInstanceMetricQueriesAskForEveryMetricOnce(t *testing.T) {
 	}
 }
 
-func TestGetInstanceMetricsGuards(t *testing.T) {
-	if _, err := (&Client{}).GetInstanceMetrics(context.Background(), "i-1234567890"); err == nil {
-		t.Error("GetInstanceMetrics() with nil CloudWatch client should error")
+// The window has to span several publish periods or a live metric can answer empty: basic monitoring publishes one datapoint per period, and the freshest is already minutes old when it arrives.
+func TestMetricWindowCoversSeveralPublishPeriods(t *testing.T) {
+	if min := 4 * metricPeriod * time.Second; metricWindow < min {
+		t.Errorf("metricWindow = %v, want at least %v (%d publish periods)", metricWindow, min, 4)
 	}
-	if _, err := (&Client{CloudWatch: &cloudwatch.Client{}}).GetInstanceMetrics(context.Background(), ""); err == nil {
-		t.Error("GetInstanceMetrics() with empty instance id should error")
+}
+
+func TestGetInstanceMetricsGuards(t *testing.T) {
+	_, err := (&Client{}).GetInstanceMetrics(context.Background(), "i-1234567890")
+	if err == nil {
+		t.Fatal("GetInstanceMetrics() with nil CloudWatch client should error")
+	}
+	if !strings.Contains(err.Error(), "CloudWatch client") {
+		t.Errorf("GetInstanceMetrics() nil-client error = %v, want the client guard to be what fired", err)
+	}
+
+	// A non-nil client, so only the id guard can answer: with nil the client guard fires first and hides it.
+	_, err = (&Client{CloudWatch: &cloudwatch.Client{}}).GetInstanceMetrics(context.Background(), "")
+	if err == nil {
+		t.Fatal("GetInstanceMetrics() with empty instance id should error")
+	}
+	if !strings.Contains(err.Error(), "instance id required") {
+		t.Errorf("GetInstanceMetrics() empty-id error = %v, want the id guard to be what fired", err)
 	}
 }
 

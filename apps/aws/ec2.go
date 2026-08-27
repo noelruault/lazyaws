@@ -545,10 +545,17 @@ func (c *Client) GetInstanceTypeInfo(ctx context.Context, instanceType string) (
 		return nil, fmt.Errorf("instance type %s not found", instanceType)
 	}
 
-	info := mapInstanceTypeInfo(result.InstanceTypes[0])
-	c.cacheInstanceType(instanceType, info)
+	info := c.rememberInstanceType(instanceType, result.InstanceTypes[0])
 
 	return &info, nil
+}
+
+// rememberInstanceType maps a response and caches it as one step.
+// Mapping and storing as two statements let either be dropped on its own, and with no seam to serve DescribeInstanceTypes nothing here can notice.
+func (c *Client) rememberInstanceType(instanceType string, typeInfo types.InstanceTypeInfo) InstanceTypeInfo {
+	info := mapInstanceTypeInfo(typeInfo)
+	c.cacheInstanceType(instanceType, info)
+	return info
 }
 
 // The cache stores and returns values rather than the pointer callers hold, so a caller editing its copy cannot rewrite what the next one reads.

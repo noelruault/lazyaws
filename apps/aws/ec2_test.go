@@ -2,6 +2,8 @@ package aws
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -144,18 +146,20 @@ func TestApplyVolumesMatchesByIDNotPosition(t *testing.T) {
 	}
 }
 
+// The devices carry values a bare zero-value device would not, or "left as it was" and "overwritten with zeroes" look identical.
 func TestApplyVolumesLeavesUnansweredDevicesAlone(t *testing.T) {
 	devices := []BlockDevice{
-		{DeviceName: "/dev/sda1", VolumeID: "vol-0fedcba9876543210"},
-		{DeviceName: "/dev/sdb"},
+		{DeviceName: "/dev/sda1", VolumeID: "vol-0fedcba9876543210", VolumeSize: 8, VolumeType: "gp2", Iops: 100, Encrypted: true},
+		{DeviceName: "/dev/sdb", VolumeSize: 4, VolumeType: "gp3", Throughput: 125},
 	}
-	id, size := "vol-0000000000000cafe", int32(8)
+	want := append([]BlockDevice(nil), devices...)
+	id, size := "vol-0000000000000cafe", int32(500)
 
-	applyVolumes(devices, []types.Volume{{VolumeId: &id, Size: &size, VolumeType: types.VolumeTypeGp3}})
+	applyVolumes(devices, []types.Volume{{VolumeId: &id, Size: &size, VolumeType: types.VolumeTypeIo2}})
 
-	for _, d := range devices {
-		if d.VolumeType != "" || d.VolumeSize != 0 {
-			t.Errorf("%s = %+v, want untouched when the response carried no volume for it", d.DeviceName, d)
+	for i, d := range devices {
+		if d != want[i] {
+			t.Errorf("%s = %+v, want %+v untouched when the response carried no volume for it", d.DeviceName, d, want[i])
 		}
 	}
 }
@@ -242,12 +246,44 @@ func TestGetInstanceTypeInfoAnswersFromCache(t *testing.T) {
 	}
 }
 
-func TestGetInstanceTypeInfoGuards(t *testing.T) {
-	if _, err := (&Client{}).GetInstanceTypeInfo(context.Background(), ""); err == nil {
-		t.Error("GetInstanceTypeInfo() with an empty instance type should error")
+// The fetch path's last step: what it maps, it must also store, or every selection re-asks for data that cannot change.
+func TestRememberInstanceTypeCachesWhatItMapped(t *testing.T) {
+	c := &Client{}
+	vcpus := int32(2)
+
+	got := c.rememberInstanceType("t3a.micro", types.InstanceTypeInfo{
+		InstanceType: types.InstanceTypeT3aMicro,
+		VCpuInfo:     &types.VCpuInfo{DefaultVCpus: &vcpus},
+	})
+	if got.VCpus != 2 {
+		t.Errorf("rememberInstanceType() = %+v, want the mapped 2 vCPUs", got)
 	}
-	if _, err := (&Client{}).GetInstanceTypeInfo(context.Background(), "t3a.micro"); err == nil {
-		t.Error("GetInstanceTypeInfo() with nil EC2 client and a cold cache should error")
+
+	cached, ok := c.cachedInstanceType("t3a.micro")
+	if !ok {
+		t.Fatal("rememberInstanceType() mapped a response without caching it")
+	}
+	if !reflect.DeepEqual(cached, got) {
+		t.Errorf("cached %+v, want the value it returned %+v", cached, got)
+	}
+}
+
+func TestGetInstanceTypeInfoGuards(t *testing.T) {
+	// Both guards are checked by the message they carry: with a nil client, an unguarded empty type still errors on the client, so "it errored" alone cannot tell which guard fired.
+	_, err := (&Client{}).GetInstanceTypeInfo(context.Background(), "")
+	if err == nil {
+		t.Fatal("GetInstanceTypeInfo() with an empty instance type should error")
+	}
+	if !strings.Contains(err.Error(), "instance type required") {
+		t.Errorf("GetInstanceTypeInfo(\"\") error = %v, want the empty-type guard to be what fired", err)
+	}
+
+	_, err = (&Client{}).GetInstanceTypeInfo(context.Background(), "t3a.micro")
+	if err == nil {
+		t.Fatal("GetInstanceTypeInfo() with nil EC2 client and a cold cache should error")
+	}
+	if !strings.Contains(err.Error(), "EC2 client") {
+		t.Errorf("GetInstanceTypeInfo() nil-client error = %v, want the client guard to be what fired", err)
 	}
 }
 
