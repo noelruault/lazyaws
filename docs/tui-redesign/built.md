@@ -13,3 +13,4 @@ One line per closed ticket, appended by the builder: `- <id> <sha> — summary`.
 - s2-left-vpc 8ce1d70 — VPC rows on RenderTableFit with a bold CIDR and a muted, content-sized vpc id that stops being cut once the panel has room
 - s3-selection-identity 88b0aac — SetItemsKeepSelection re-finds the selected resource by identity after a reload; all 8 side panels wired, and the profile panel's jump to the connected profile is now first-load only
 - s3-selection-theme 88b0aac — VOID, nothing built: this gocui's highlighted-line draw never reads View.SelFgColor (forces bright+bold, ORs SelBgColor), measured fg=default with SelFgColor=ColorRed, so the config key and Settings row would have changed nothing
+- s4-overview-machinery 74fbfe3 — Overview tab plumbing: a width-aware task built on the UI loop, wrap off, generation-guarded, re-rendered when main resizes; refresh.overviewSeconds (default 2, 0 off); prepended to the seven resource registries
