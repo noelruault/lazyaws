@@ -72,6 +72,28 @@ func GetECSServiceDisplayStrings(s *aws.ECSService) []string {
 	return texts
 }
 
+// ECSImageSummary names the image a service identifies with and says how many containers ride alongside it, without listing them: the sidecar images are on the task drill level, and repeating them here would push the one that matters out of the pane.
+func ECSImageSummary(image aws.ECSServiceImage) string {
+	if image.Image == "" {
+		return "unavailable"
+	}
+	if image.Sidecars <= 0 {
+		return image.Image
+	}
+	if image.Sidecars == 1 {
+		return image.Image + " (+1 sidecar)"
+	}
+	return fmt.Sprintf("%s (+%d sidecars)", image.Image, image.Sidecars)
+}
+
+// ECSImageLabel distinguishes an image read off a running container from one read off a task definition, because a service with nothing running still has an intended image and reporting it as running would be a lie the pane cannot walk back.
+func ECSImageLabel(image aws.ECSServiceImage) string {
+	if image.Desired {
+		return "Desired image"
+	}
+	return "Running image"
+}
+
 func GetECSTaskDisplayCells(t *aws.ECSTask) []utils.Cell {
 	return []utils.Cell{
 		StatusCellFit(t.Status, StatusStyleIcon),

@@ -52,11 +52,12 @@ type ECSCluster struct {
 }
 
 type ECSDeployment struct {
-	Status  string
-	Desired int32
-	Running int32
-	Pending int32
-	Created *time.Time
+	Status         string
+	TaskDefinition string
+	Desired        int32
+	Running        int32
+	Pending        int32
+	Created        *time.Time
 }
 
 type ECSEvent struct {
@@ -104,6 +105,8 @@ type ECSContainer struct {
 	MemorySoftMB int32
 	PrivateIPs   []string
 	Ports        []ECSPortMapping
+	// Essential comes from the task definition, so it is false for a task whose definition could not be read as well as for a genuine sidecar.
+	Essential bool
 }
 
 type ECSAttachment struct {
@@ -197,6 +200,7 @@ type ECSTaskDefinitionContainer struct {
 	Image       string
 	CPU         int32
 	Memory      int32
+	Essential   bool
 	Environment map[string]string
 }
 
@@ -392,11 +396,12 @@ func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECS
 
 			for _, dep := range svc.Deployments {
 				service.Deployments = append(service.Deployments, ECSDeployment{
-					Status:  getString(dep.Status),
-					Desired: dep.DesiredCount,
-					Running: dep.RunningCount,
-					Pending: dep.PendingCount,
-					Created: dep.CreatedAt,
+					Status:         getString(dep.Status),
+					TaskDefinition: getString(dep.TaskDefinition),
+					Desired:        dep.DesiredCount,
+					Running:        dep.RunningCount,
+					Pending:        dep.PendingCount,
+					Created:        dep.CreatedAt,
 				})
 			}
 
@@ -598,6 +603,7 @@ func (c *Client) buildECSTask(t ecsTypes.Task, clusterName, serviceName string, 
 				}
 				container.MemoryHardMB = getInt32Value(cd.Memory)
 				container.MemorySoftMB = getInt32Value(cd.MemoryReservation)
+				container.Essential = cd.Essential != nil && *cd.Essential
 			}
 			for _, binding := range ctn.NetworkBindings {
 				container.Ports = append(container.Ports, ECSPortMapping{
@@ -898,9 +904,39 @@ func (c *Client) ListTaskDefinitions(ctx context.Context, family string) ([]ECST
 	return revisions, nil
 }
 
+// taskDefIsImmutable reports whether a reference pins one revision.
+// A family name or a revisionless ARN resolves to whatever is latest at the time of the call, so caching one would keep serving a revision that has since been superseded.
+func taskDefIsImmutable(taskDefArn string) bool {
+	return extractTaskDefRevision(taskDefArn) > 0
+}
+
+// The cached detail is shared by pointer and describes an immutable revision, so callers must read it without editing it.
+func (c *Client) cachedTaskDef(taskDefArn string) (*ECSTaskDefinitionDetail, bool) {
+	c.taskDefsMu.Lock()
+	defer c.taskDefsMu.Unlock()
+	detail, ok := c.taskDefs[taskDefArn]
+	return detail, ok
+}
+
+func (c *Client) cacheTaskDef(taskDefArn string, detail *ECSTaskDefinitionDetail) {
+	if !taskDefIsImmutable(taskDefArn) {
+		return
+	}
+	c.taskDefsMu.Lock()
+	defer c.taskDefsMu.Unlock()
+	if c.taskDefs == nil {
+		c.taskDefs = map[string]*ECSTaskDefinitionDetail{}
+	}
+	c.taskDefs[taskDefArn] = detail
+}
+
+// DescribeTaskDefinitionDetail memoizes pinned revisions because a revision never changes, and the overview refresh tier would otherwise re-ask for the same one every couple of seconds.
 func (c *Client) DescribeTaskDefinitionDetail(ctx context.Context, taskDefArn string) (*ECSTaskDefinitionDetail, error) {
 	if c.ECS == nil {
 		return nil, fmt.Errorf("ECS client not initialized")
+	}
+	if detail, ok := c.cachedTaskDef(taskDefArn); ok {
+		return detail, nil
 	}
 	timeoutCtx, cancel := withDefaultTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -927,10 +963,143 @@ func (c *Client) DescribeTaskDefinitionDetail(ctx context.Context, taskDefArn st
 			Image:       getString(cd.Image),
 			CPU:         cd.Cpu,
 			Memory:      getInt32Value(cd.Memory),
+			Essential:   cd.Essential != nil && *cd.Essential,
 			Environment: env,
 		})
 	}
+	c.cacheTaskDef(taskDefArn, detail)
 	return detail, nil
+}
+
+// ECSServiceImage is the image a service identifies with: the one it is running, or the one it intends to run when nothing is.
+type ECSServiceImage struct {
+	// Image is the primary container's reference with the registry host dropped, or empty when nothing could be resolved.
+	Image string
+	// Sidecars counts the other containers alongside the primary one, whose images are on the task drill level rather than here.
+	Sidecars int
+	// Desired marks an image read from a task definition rather than from a running container, so it is never mistaken for what is actually live.
+	Desired bool
+}
+
+// ShortImageRef drops the registry host so the repository and tag, the part that says what is running, survive a narrow column.
+// The host is told from the first path segment by Docker's own rule: a segment carrying a dot or a port, or the literal localhost, is a registry and anything else is part of the repository name.
+func ShortImageRef(image string) string {
+	slash := strings.Index(image, "/")
+	if slash == -1 {
+		return image
+	}
+	if host := image[:slash]; strings.ContainsAny(host, ".:") || host == "localhost" {
+		return image[slash+1:]
+	}
+	return image
+}
+
+// primaryECSContainer picks the container whose image identifies the task.
+// A task definition marks its application container essential and its sidecars not, so essential is the signal; the first container is the fallback for a task whose definition could not be read, which leaves every container non-essential.
+func primaryECSContainer(containers []ECSContainer) (ECSContainer, bool) {
+	if len(containers) == 0 {
+		return ECSContainer{}, false
+	}
+	for _, ctn := range containers {
+		if ctn.Essential {
+			return ctn, true
+		}
+	}
+	return containers[0], true
+}
+
+// newestECSTask picks which running task speaks for the service.
+// Mid-rollout a service runs two images at once, and the newest task is the one rolling out; taking it is also deterministic, where trusting the order DescribeTasks answered in is not.
+func newestECSTask(tasks []ECSTask) (ECSTask, bool) {
+	var newest ECSTask
+	var found bool
+	for _, t := range tasks {
+		if t.Status != "RUNNING" {
+			continue
+		}
+		if !found || ecsTaskStart(t).After(ecsTaskStart(newest)) {
+			newest, found = t, true
+		}
+	}
+	return newest, found
+}
+
+// ecsTaskStart prefers when the task actually started over when it was created, because a task stuck in provisioning has a creation time and no runtime.
+func ecsTaskStart(t ECSTask) time.Time {
+	if t.StartedAt != nil {
+		return *t.StartedAt
+	}
+	if t.CreatedAt != nil {
+		return *t.CreatedAt
+	}
+	return time.Time{}
+}
+
+// runningECSServiceImage resolves what a service is running from the tasks DescribeTasks already returned, which carry the image per container and need no task definition call.
+func runningECSServiceImage(tasks []ECSTask) (ECSServiceImage, bool) {
+	task, ok := newestECSTask(tasks)
+	if !ok {
+		return ECSServiceImage{}, false
+	}
+	primary, ok := primaryECSContainer(task.Containers)
+	if !ok {
+		return ECSServiceImage{}, false
+	}
+	return ECSServiceImage{Image: ShortImageRef(primary.ImageURI), Sidecars: len(task.Containers) - 1}, true
+}
+
+// desiredECSServiceImage reads the intended image off a task definition, for a service with nothing running to read it from.
+func desiredECSServiceImage(detail *ECSTaskDefinitionDetail) (ECSServiceImage, bool) {
+	if detail == nil || len(detail.Containers) == 0 {
+		return ECSServiceImage{}, false
+	}
+	primary := detail.Containers[0]
+	for _, ctn := range detail.Containers {
+		if ctn.Essential {
+			primary = ctn
+			break
+		}
+	}
+	return ECSServiceImage{Image: ShortImageRef(primary.Image), Sidecars: len(detail.Containers) - 1, Desired: true}, true
+}
+
+// serviceTaskDefinition prefers the PRIMARY deployment's task definition over the service's own, because during a rollout the service field has already moved to the revision the deployment is still bringing up.
+func serviceTaskDefinition(s *ECSService) string {
+	for _, dep := range s.Deployments {
+		if dep.Status == "PRIMARY" && dep.TaskDefinition != "" {
+			return dep.TaskDefinition
+		}
+	}
+	return s.TaskDefinition
+}
+
+// ResolveECSServiceImage answers what a service is running, falling back to what it intends to run when no task is up.
+// The running answer costs nothing beyond the task list the panel already loads: DescribeTasks carries the image per container, so no task definition is described for it.
+func (c *Client) ResolveECSServiceImage(ctx context.Context, s *ECSService) (ECSServiceImage, error) {
+	if s == nil {
+		return ECSServiceImage{}, fmt.Errorf("service required")
+	}
+	tasks, err := c.ListECSTasks(ctx, s.Cluster, s.Name)
+	if err != nil {
+		return ECSServiceImage{}, err
+	}
+	if image, ok := runningECSServiceImage(tasks); ok {
+		return image, nil
+	}
+
+	taskDefArn := serviceTaskDefinition(s)
+	if taskDefArn == "" {
+		return ECSServiceImage{}, fmt.Errorf("service %s has no running task and no task definition to fall back on", s.Name)
+	}
+	detail, err := c.DescribeTaskDefinitionDetail(ctx, taskDefArn)
+	if err != nil {
+		return ECSServiceImage{}, err
+	}
+	image, ok := desiredECSServiceImage(detail)
+	if !ok {
+		return ECSServiceImage{}, fmt.Errorf("task definition %s defines no containers", taskDefArn)
+	}
+	return image, nil
 }
 
 func TaskDefinitionFamily(taskDefArn string) string {

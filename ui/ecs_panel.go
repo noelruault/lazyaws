@@ -316,8 +316,9 @@ func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
-		// Best-effort: a service whose metrics fail to load still has load balancers and target health worth rendering.
+		// Best-effort: a service whose metrics or image fail to load still has load balancers and target health worth rendering.
 		metrics, _ := gui.Client.GetECSServiceMetrics(fetchCtx, s.Cluster, s.Name)
+		image, _ := gui.Client.ResolveECSServiceImage(fetchCtx, s)
 
 		health := make(map[string][]aws.ECSTargetHealth, len(s.LoadBalancers))
 		for _, lb := range s.LoadBalancers {
@@ -332,22 +333,24 @@ func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 		if gen != gui.Gen {
 			return
 		}
-		gui.RenderStringMain(formatECSServiceConfig(s, metrics, health))
+		gui.RenderStringMain(formatECSServiceConfig(s, metrics, image, health))
 	}})
 }
 
-func formatECSServiceConfig(s *aws.ECSService, metrics *aws.ECSServiceMetrics, health map[string][]aws.ECSTargetHealth) string {
+func formatECSServiceConfig(s *aws.ECSService, metrics *aws.ECSServiceMetrics, image aws.ECSServiceImage, health map[string][]aws.ECSTargetHealth) string {
 	fields := map[string]string{
-		"Name":            s.Name,
-		"Status":          s.Status,
-		"Task definition": s.TaskDefinition,
-		"Launch type":     s.LaunchType,
-		"Desired":         strconv.Itoa(int(s.DesiredCount)),
-		"Running":         strconv.Itoa(int(s.RunningCount)),
-		"Pending":         strconv.Itoa(int(s.PendingCount)),
-		"CPU utilization": formatServiceMetric(metrics, func(m *aws.ECSServiceMetrics) aws.MetricPoint { return m.CPUUtilization }),
-		"Mem utilization": formatServiceMetric(metrics, func(m *aws.ECSServiceMetrics) aws.MetricPoint { return m.MemoryUtilization }),
-		"Console":         s.ConsoleURL,
+		"Name":   s.Name,
+		"Status": s.Status,
+		// The image is labelled running or desired rather than shown under one heading, so a service with nothing up cannot read as one that is serving this image.
+		presentation.ECSImageLabel(image): presentation.ECSImageSummary(image),
+		"Task definition":                 s.TaskDefinition,
+		"Launch type":                     s.LaunchType,
+		"Desired":                         strconv.Itoa(int(s.DesiredCount)),
+		"Running":                         strconv.Itoa(int(s.RunningCount)),
+		"Pending":                         strconv.Itoa(int(s.PendingCount)),
+		"CPU utilization":                 formatServiceMetric(metrics, func(m *aws.ECSServiceMetrics) aws.MetricPoint { return m.CPUUtilization }),
+		"Mem utilization":                 formatServiceMetric(metrics, func(m *aws.ECSServiceMetrics) aws.MetricPoint { return m.MemoryUtilization }),
+		"Console":                         s.ConsoleURL,
 	}
 	// The reservations exist only where Container Insights is on, so they are added rather than shown empty everywhere else.
 	if metrics != nil && metrics.InsightsCPUTotal.OK {

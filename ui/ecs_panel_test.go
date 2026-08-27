@@ -101,7 +101,7 @@ func TestFormatECSServiceConfigWithTargetHealth(t *testing.T) {
 		},
 	}
 
-	out := formatECSServiceConfig(s, nil, health)
+	out := formatECSServiceConfig(s, nil, aws.ECSServiceImage{}, health)
 
 	for _, want := range []string{"web-tg", "10.0.0.1", "Target.Timeout"} {
 		if !strings.Contains(out, want) {
@@ -113,7 +113,7 @@ func TestFormatECSServiceConfigWithTargetHealth(t *testing.T) {
 func TestFormatECSServiceConfigNoLoadBalancers(t *testing.T) {
 	s := &aws.ECSService{Name: "web"}
 
-	out := formatECSServiceConfig(s, nil, nil)
+	out := formatECSServiceConfig(s, nil, aws.ECSServiceImage{}, nil)
 
 	if !strings.Contains(out, "none") {
 		t.Errorf("formatECSServiceConfig() with no load balancers should mention \"none\", got:\n%s", out)
@@ -127,7 +127,7 @@ func TestFormatECSServiceConfigSeparatesAnIdleServiceFromAnUnmeasuredOne(t *test
 
 	out := formatECSServiceConfig(s, &aws.ECSServiceMetrics{
 		CPUUtilization: aws.MetricPoint{Value: 0, At: at, OK: true},
-	}, nil)
+	}, aws.ECSServiceImage{}, nil)
 
 	if !strings.Contains(out, "0.0% (1-min avg @ 17:43Z)") {
 		t.Errorf("formatECSServiceConfig() should stamp a measured zero with its publish time, got:\n%s", out)
@@ -142,7 +142,7 @@ func TestFormatECSServiceConfigAddsInsightsRowsOnlyWhenPresent(t *testing.T) {
 	s := &aws.ECSService{Name: "web"}
 	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
 
-	without := formatECSServiceConfig(s, &aws.ECSServiceMetrics{CPUUtilization: aws.MetricPoint{Value: 1.12, At: at, OK: true}}, nil)
+	without := formatECSServiceConfig(s, &aws.ECSServiceMetrics{CPUUtilization: aws.MetricPoint{Value: 1.12, At: at, OK: true}}, aws.ECSServiceImage{}, nil)
 	for _, absent := range []string{"CPU reserved", "Mem reserved", "vCPU", "MiB"} {
 		if strings.Contains(without, absent) {
 			t.Errorf("formatECSServiceConfig() shows %q with no Insights data, got:\n%s", absent, without)
@@ -155,7 +155,7 @@ func TestFormatECSServiceConfigAddsInsightsRowsOnlyWhenPresent(t *testing.T) {
 		InsightsCPUTotal: aws.MetricPoint{Value: 1024, At: at, OK: true},
 		InsightsMemUsed:  aws.MetricPoint{Value: 285, At: at, OK: true},
 		InsightsMemTotal: aws.MetricPoint{Value: 2048, At: at, OK: true},
-	}, nil)
+	}, aws.ECSServiceImage{}, nil)
 	for _, want := range []string{"1024 (1.00 vCPU)", "12 (0.01 vCPU)", "2048 MiB", "285 MiB"} {
 		if !strings.Contains(with, want) {
 			t.Errorf("formatECSServiceConfig() missing %q with Insights data, got:\n%s", want, with)
@@ -163,8 +163,29 @@ func TestFormatECSServiceConfigAddsInsightsRowsOnlyWhenPresent(t *testing.T) {
 	}
 }
 
+// The pane must never let an intended image read as a live one, and the label is the only thing that says which it is.
+func TestFormatECSServiceConfigLabelsTheImageRunningOrDesired(t *testing.T) {
+	s := &aws.ECSService{Name: "web"}
+
+	running := formatECSServiceConfig(s, nil, aws.ECSServiceImage{Image: "app-auth:v1.2.0-develop.0", Sidecars: 1}, nil)
+	if !strings.Contains(running, "Running image") || !strings.Contains(running, "app-auth:v1.2.0-develop.0 (+1 sidecar)") {
+		t.Errorf("formatECSServiceConfig() should label a live image as running and summarize its sidecar, got:\n%s", running)
+	}
+	if strings.Contains(running, "Desired image") {
+		t.Errorf("formatECSServiceConfig() labelled a running image as desired, got:\n%s", running)
+	}
+
+	desired := formatECSServiceConfig(s, nil, aws.ECSServiceImage{Image: "app-auth:v1.2.0-develop.0", Desired: true}, nil)
+	if !strings.Contains(desired, "Desired image") {
+		t.Errorf("formatECSServiceConfig() should label a task-definition image as desired, got:\n%s", desired)
+	}
+	if strings.Contains(desired, "Running image") {
+		t.Errorf("formatECSServiceConfig() labelled a desired image as running; a service with nothing up is not serving it, got:\n%s", desired)
+	}
+}
+
 func TestFormatECSServiceConfigWithoutMetrics(t *testing.T) {
-	out := formatECSServiceConfig(&aws.ECSService{Name: "web"}, nil, nil)
+	out := formatECSServiceConfig(&aws.ECSService{Name: "web"}, nil, aws.ECSServiceImage{}, nil)
 
 	if !strings.Contains(out, "n/a") {
 		t.Errorf("formatECSServiceConfig() with a failed metrics fetch should show \"n/a\", got:\n%s", out)

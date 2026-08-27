@@ -192,3 +192,34 @@ func TestClusterRowKeepsTheNameInANarrowPanel(t *testing.T) {
 		}
 	}
 }
+
+func TestECSImageSummary(t *testing.T) {
+	tests := []struct {
+		name  string
+		image aws.ECSServiceImage
+		want  string
+	}{
+		{"no sidecars", aws.ECSServiceImage{Image: "app-auth:v1.2.0-develop.0"}, "app-auth:v1.2.0-develop.0"},
+		{"one sidecar reads singular", aws.ECSServiceImage{Image: "app-auth:v1.2.0-develop.0", Sidecars: 1}, "app-auth:v1.2.0-develop.0 (+1 sidecar)"},
+		{"several sidecars read plural", aws.ECSServiceImage{Image: "web:1", Sidecars: 3}, "web:1 (+3 sidecars)"},
+		{"nothing resolved is stated, not blank", aws.ECSServiceImage{}, "unavailable"},
+		// A count that somehow went negative is a bug in the caller, not a reason to render "(+-1 sidecar)".
+		{"negative count is dropped", aws.ECSServiceImage{Image: "web:1", Sidecars: -1}, "web:1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ECSImageSummary(tt.image); got != tt.want {
+				t.Errorf("ECSImageSummary(%+v) = %q, want %q", tt.image, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestECSImageLabel(t *testing.T) {
+	if got := ECSImageLabel(aws.ECSServiceImage{Image: "web:1"}); got != "Running image" {
+		t.Errorf("ECSImageLabel() = %q, want %q for an image read off a running container", got, "Running image")
+	}
+	if got := ECSImageLabel(aws.ECSServiceImage{Image: "web:1", Desired: true}); got != "Desired image" {
+		t.Errorf("ECSImageLabel() = %q, want %q so a task-definition image is never read as live", got, "Desired image")
+	}
+}

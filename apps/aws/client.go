@@ -62,6 +62,9 @@ type Client struct {
 	// It is a record, not a cache: nothing reads it to skip an API call, so a setting changed since the last list costs at most one refresh of an additive extra.
 	clusterInsightsMu sync.Mutex
 	clusterInsights   map[string]string
+	// taskDefs caches task definition revisions (see DescribeTaskDefinitionDetail), which are immutable once registered, so the overview refresh tier does not re-describe the same revision every tick.
+	taskDefsMu sync.Mutex
+	taskDefs   map[string]*ECSTaskDefinitionDetail
 	// identityErr is why the STS caller-identity probe last failed, kept so the bootstrap can refuse to start rather than let every panel discover the same expired token on its own.
 	identityErr error
 	Region      string
