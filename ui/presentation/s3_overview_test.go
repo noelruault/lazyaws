@@ -218,10 +218,11 @@ func TestBucketExposureBadge(t *testing.T) {
 // Go randomizes map iteration, so an unsorted tag block reorders itself on every re-render of the same bucket.
 func TestBucketOverviewSortsTags(t *testing.T) {
 	o := emptyBucketOverview()
-	o.Tags = map[string]string{"zeta": "3", "alpha": "1", "mu": "2"}
+	// Six keys, not three: with three, a dropped sort still lands in order once every six runs, and a mutant that survives one run in six is a test nobody can trust.
+	o.Tags = map[string]string{"zeta": "6", "mu": "4", "alpha": "1", "tau": "5", "beta": "2", "kappa": "3"}
 
 	got := plainBucket(overviewBucket(), o, stackedWidth)
-	if want := "alpha: 1\nmu: 2\nzeta: 3"; !strings.Contains(got, want) {
+	if want := "alpha: 1\nbeta: 2\nkappa: 3\nmu: 4\ntau: 5\nzeta: 6"; !strings.Contains(got, want) {
 		t.Errorf("tags are not sorted, want %q\n%s", want, got)
 	}
 }
