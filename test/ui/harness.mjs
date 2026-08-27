@@ -22,7 +22,20 @@ export async function openTerminal ({ url, screenshotDir, viewport = defaultView
     const lines = []
     // viewportY..+rows is what is ON SCREEN; buffer.length includes scrollback, which no journey asserts on.
     for (let i = 0; i < window.term.rows; i++) {
-      lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? '')
+      const line = buf.getLine(buf.viewportY + i)
+      if (!line) { lines.push(''); continue }
+      // Read exactly cols cells rather than translating the whole line: xterm REFLOWS on shrink, so after a resize the buffer line still carries the wide render's cells and translateToString hands back a row hundreds of columns past the terminal's own edge.
+      // Reading by cell index is also what makes "wrap off" assertable — output the app pushed past the edge lands on the next row here, exactly as a user would see it, instead of being hidden inside one long logical line.
+      let text = ''
+      for (let x = 0; x < window.term.cols; x++) {
+        const cell = line.getCell(x)
+        if (!cell) { text += ' '; continue }
+        // A wide rune occupies two cells and reports the second as width 0 with no chars; skipping it keeps every row exactly as many columns as the terminal has.
+        if (cell.getWidth() === 0) continue
+        const chars = cell.getChars()
+        text += chars === '' ? ' ' : chars
+      }
+      lines.push(text.replace(/\s+$/, ''))
     }
     return lines.join('\n')
   })
@@ -104,9 +117,25 @@ export async function openTerminal ({ url, screenshotDir, viewport = defaultView
     },
 
     async resize (width, height) {
+      const before = await page.evaluate(() => window.term.cols)
       await page.setViewportSize({ width, height })
-      // The fit addon resizes the pty on its own tick, and the app redraws when the pty tells it to.
-      await page.waitForTimeout(500)
+      // The fit addon resizes the pty on its own tick and the app redraws when the pty tells it to, so a journey that reads straight after a resize reads the OLD width and its old layout.
+      // A viewport change that lands on the same column count leaves cols alone and times out here; the caller's own layout assertion is what answers for that, since a resize this ignores would fail it.
+      await page.waitForFunction(cols => window.term.cols !== cols, before, { timeout: 5000 }).catch(() => {})
+      await term.settle()
+    },
+
+    // Waits for the app to stop drawing, for the assertions that have no single string to wait on (a layout that stacked, a pane that emptied).
+    async settle ({ timeout = 5000, quiet = 250 } = {}) {
+      const deadline = Date.now() + timeout
+      let previous = null
+      while (Date.now() < deadline) {
+        const screen = await readScreen()
+        if (screen === previous) return screen
+        previous = screen
+        await page.waitForTimeout(quiet)
+      }
+      throw new Error(`the screen was still changing after ${timeout}ms`)
     },
 
     async screenshot (name) {
