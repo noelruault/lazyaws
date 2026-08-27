@@ -146,6 +146,22 @@ func getString(s *string) string {
 }
 
 func (c *Client) GetInstanceDetails(ctx context.Context, instanceID string) (*InstanceDetails, error) {
+	details, err := c.describeInstance(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Best effort, as before: an unreadable address list costs the Elastic IP section rather than the instance.
+	if eips, err := c.DescribeInstanceAddresses(ctx, instanceID); err == nil {
+		details.ElasticIPs = eips
+	}
+
+	return details, nil
+}
+
+// describeInstance is GetInstanceDetails without the DescribeAddresses call that fills ElasticIPs.
+// The overview refetches this on a ticker and an instance's Elastic IP associations are a selection-time lookup, so the two are separable; every other caller wants them together and goes through GetInstanceDetails.
+func (c *Client) describeInstance(ctx context.Context, instanceID string) (*InstanceDetails, error) {
 	// The overview fans this out into its own goroutine, where a nil-client dereference inside the SDK is an unrecoverable panic rather than a failed tab.
 	if c.EC2 == nil {
 		return nil, fmt.Errorf("EC2 client not initialized")
@@ -255,11 +271,6 @@ func (c *Client) GetInstanceDetails(ctx context.Context, instanceID string) (*In
 	typeInfo, err := c.GetInstanceTypeInfo(ctx, details.InstanceType)
 	if err == nil {
 		details.InstanceTypeInfo = typeInfo
-	}
-
-	eips, err := c.DescribeInstanceAddresses(ctx, instanceID)
-	if err == nil {
-		details.ElasticIPs = eips
 	}
 
 	return details, nil
@@ -663,6 +674,14 @@ func (c *Client) CreateVolumeSnapshot(ctx context.Context, volumeID, description
 }
 
 func (c *Client) DescribeInstanceAddresses(ctx context.Context, instanceID string) ([]ElasticIP, error) {
+	// The overview calls this outside GetInstanceDetails, so it no longer inherits that function's guards.
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance id required")
+	}
+
 	result, err := c.EC2.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{
 		Filters: []types.Filter{
 			{Name: &[]string{"instance-id"}[0], Values: []string{instanceID}},

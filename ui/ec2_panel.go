@@ -111,6 +111,7 @@ type ec2OverviewExtras struct {
 	instanceID string
 	asg        *aws.ASGMembership
 	alarms     []aws.InstanceAlarm
+	eips       []aws.ElasticIP
 	errs       map[string]error
 }
 
@@ -136,9 +137,19 @@ func (e *ec2OverviewExtras) fill(ctx context.Context, client *aws.Client, gen in
 		if err != nil {
 			e.errs[aws.SectionAlarms] = err
 		}
+
+		eips, err := client.DescribeInstanceAddresses(ctx, instanceID)
+		e.eips = eips
+		if err != nil {
+			e.errs[aws.SectionEIP] = err
+		}
 	}
 
 	overview.ASG, overview.Alarms = e.asg, e.alarms
+	// The Elastic IPs belong to the details the formatter reads, but they are fetched on this schedule rather than with the rest of them.
+	if overview.Details != nil {
+		overview.Details.ElasticIPs = e.eips
+	}
 	maps.Copy(overview.Errs, e.errs)
 }
 

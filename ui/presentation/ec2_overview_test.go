@@ -330,3 +330,21 @@ func TestInstanceOverviewNeverExceedsTheWidth(t *testing.T) {
 		})
 	}
 }
+
+// The Elastic IP list is fetched separately from the rest of the details, so a failed address lookup has to say so: rendering it as "none" would report an instance with no Elastic IP, which is a different fact.
+func TestInstanceOverviewSeparatesNoElasticIPFromAFailedLookup(t *testing.T) {
+	absent := utils.Decolorise(FormatInstanceOverview(overviewInstance(), emptyOverview(), stackedWidth, overviewNow))
+	if !strings.Contains(absent, "Elastic IPs:\n  none") {
+		t.Errorf("an instance with no Elastic IP should read none\n%s", absent)
+	}
+
+	o := emptyOverview()
+	o.Errs[aws.SectionEIP] = errors.New("AccessDenied")
+	failed := utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, stackedWidth, overviewNow))
+	if !strings.Contains(failed, "Elastic IPs: unavailable") {
+		t.Errorf("a failed address lookup should say so\n%s", failed)
+	}
+	if strings.Contains(failed, "Elastic IPs:\n  none") {
+		t.Errorf("a failed address lookup must not read as an absence\n%s", failed)
+	}
+}

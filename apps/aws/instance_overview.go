@@ -12,6 +12,7 @@ const (
 	SectionMetrics = "metrics"
 	SectionASG     = "asg"
 	SectionAlarms  = "alarms"
+	SectionEIP     = "eip"
 )
 
 // InstanceOverview aggregates what the Config, Status, Metrics, Storage, Security and Tags tabs each fetch separately today.
@@ -21,8 +22,8 @@ type InstanceOverview struct {
 	Status  *InstanceStatus
 	Metrics *InstanceMetrics
 
-	// ASG and Alarms are filled by the caller, not by GetInstanceOverview, because they are the two sections whose refresh frequency is a cost decision rather than a display one.
-	// DescribeAlarms cannot filter by dimension server-side, so it pages every alarm in the account against the tightest quota this app touches; it belongs to a selection, never to a ticker.
+	// ASG, Alarms and the Details.ElasticIPs list are filled by the caller, not by GetInstanceOverview, because their refresh frequency is a cost decision rather than a display one.
+	// DescribeAlarms cannot filter by dimension server-side, so it pages every alarm in the account against the tightest quota this app touches; all three belong to a selection, never to a ticker.
 	ASG    *ASGMembership
 	Alarms []InstanceAlarm
 
@@ -55,8 +56,9 @@ func (c *Client) GetInstanceOverview(ctx context.Context, instanceID string) *In
 		}()
 	}
 
+	// describeInstance rather than GetInstanceDetails: the Elastic IP list it would add costs its own DescribeAddresses call, and this runs on a refresh ticker.
 	fetch(SectionDetails, func() (err error) {
-		overview.Details, err = c.GetInstanceDetails(ctx, instanceID)
+		overview.Details, err = c.describeInstance(ctx, instanceID)
 		return err
 	})
 	fetch(SectionStatus, func() (err error) {

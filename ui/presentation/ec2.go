@@ -163,6 +163,11 @@ func instanceNetworkBlock(o *aws.InstanceOverview) string {
 		lines = append(lines, "  "+ni.ID+" "+utils.ColoredString(orNone(ni.PrivateIP), color.Faint))
 	}
 
+	// An unreadable address list is not an instance with no Elastic IP: the fetch is separate from the rest of the details, so its failure is stated rather than rendered as an absence.
+	if err := o.Err(aws.SectionEIP); err != nil {
+		return strings.Join(append(lines, "Elastic IPs: "+utils.ColoredString("unavailable", color.FgRed)), "\n")
+	}
+
 	lines = append(lines, "Elastic IPs:")
 	if len(d.ElasticIPs) == 0 {
 		lines = append(lines, "  none")
