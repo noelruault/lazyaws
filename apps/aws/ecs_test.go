@@ -633,13 +633,13 @@ func TestServiceTaskDefinitionPrefersThePrimaryDeployment(t *testing.T) {
 			{Status: "PRIMARY", TaskDefinition: "arn:aws:ecs:eu-west-1:123:task-definition/web:8"},
 		},
 	}
-	if got := serviceTaskDefinition(s); got != "arn:aws:ecs:eu-west-1:123:task-definition/web:8" {
-		t.Errorf("serviceTaskDefinition() = %q, want the PRIMARY deployment's revision", got)
+	if got := ServiceTaskDefinition(s); got != "arn:aws:ecs:eu-west-1:123:task-definition/web:8" {
+		t.Errorf("ServiceTaskDefinition() = %q, want the PRIMARY deployment's revision", got)
 	}
 
 	noDeployments := &ECSService{TaskDefinition: "arn:aws:ecs:eu-west-1:123:task-definition/web:7"}
-	if got := serviceTaskDefinition(noDeployments); got != noDeployments.TaskDefinition {
-		t.Errorf("serviceTaskDefinition() = %q, want the service's own revision when no deployment names one", got)
+	if got := ServiceTaskDefinition(noDeployments); got != noDeployments.TaskDefinition {
+		t.Errorf("ServiceTaskDefinition() = %q, want the service's own revision when no deployment names one", got)
 	}
 }
 
@@ -684,5 +684,36 @@ func TestChunkStrings(t *testing.T) {
 				t.Errorf("chunkStrings(%v, %d) = %v, want %v", tt.items, tt.size, got, tt.want)
 			}
 		})
+	}
+}
+
+// A service with no awsvpc configuration is not a service whose networking failed to load: ECS omits the block entirely for bridge, host and none network modes.
+// Both levels of nil arrive in practice, because the wrapper and the configuration inside it are separate optional fields.
+func TestAwsVpcConfigDistinguishesAbsentFromEmpty(t *testing.T) {
+	if got := awsVpcConfig(nil); got != nil {
+		t.Errorf("awsVpcConfig(nil) = %+v, want nil so a non-awsvpc service is not reported as one with no subnets", got)
+	}
+	if got := awsVpcConfig(&ecsTypes.NetworkConfiguration{}); got != nil {
+		t.Errorf("awsVpcConfig(empty) = %+v, want nil", got)
+	}
+
+	got := awsVpcConfig(&ecsTypes.NetworkConfiguration{AwsvpcConfiguration: &ecsTypes.AwsVpcConfiguration{
+		Subnets:        []string{"subnet-0a1b2c3d4e5f60718", "subnet-1a2b3c4d5e6f70819"},
+		SecurityGroups: []string{"sg-0a1b2c3d4e5f60718"},
+		AssignPublicIp: ecsTypes.AssignPublicIpDisabled,
+	}})
+	want := &ECSAwsVpcConfig{
+		Subnets:        []string{"subnet-0a1b2c3d4e5f60718", "subnet-1a2b3c4d5e6f70819"},
+		SecurityGroups: []string{"sg-0a1b2c3d4e5f60718"},
+		AssignPublicIP: "DISABLED",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("awsVpcConfig() = %+v, want %+v", got, want)
+	}
+
+	// An unset AssignPublicIp is the empty string rather than DISABLED: the default depends on how the service was created, and reporting one would be a claim about reachability.
+	bare := awsVpcConfig(&ecsTypes.NetworkConfiguration{AwsvpcConfiguration: &ecsTypes.AwsVpcConfiguration{Subnets: []string{"subnet-1"}}})
+	if bare.AssignPublicIP != "" {
+		t.Errorf("AssignPublicIP = %q, want empty so an unanswered field is never rendered as DISABLED", bare.AssignPublicIP)
 	}
 }

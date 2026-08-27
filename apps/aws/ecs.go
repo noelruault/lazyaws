@@ -103,6 +103,17 @@ type ECSService struct {
 	DeploymentController       string // ECS, CODE_DEPLOY, or EXTERNAL
 	CircuitBreakerEnabled      bool
 	CircuitBreakerRollback     bool
+	// Network is nil for a service whose task definition does not use awsvpc networking, which is a different answer from a service whose subnets could not be read.
+	// ECS requires the configuration for awsvpc and rejects it for every other network mode, so its absence identifies the mode rather than losing the data.
+	Network *ECSAwsVpcConfig
+}
+
+// ECSAwsVpcConfig is the ENI a service's tasks are launched with, under awsvpc networking.
+type ECSAwsVpcConfig struct {
+	Subnets        []string
+	SecurityGroups []string
+	// AssignPublicIP is ENABLED or DISABLED verbatim, and empty when ECS answered with neither: the default depends on how the service was created, so guessing one would be a claim about reachability.
+	AssignPublicIP string
 }
 
 type ECSPortMapping struct {
@@ -435,6 +446,8 @@ func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECS
 				HealthCheckGracePeriodSecs: getInt32Value(svc.HealthCheckGracePeriodSeconds),
 			}
 
+			service.Network = awsVpcConfig(svc.NetworkConfiguration)
+
 			if svc.DeploymentController != nil {
 				service.DeploymentController = string(svc.DeploymentController.Type)
 			}
@@ -699,6 +712,19 @@ func mapECSContainer(ctn ecsTypes.Container, cd *ecsTypes.ContainerDefinition) E
 		}
 	}
 	return container
+}
+
+// awsVpcConfig is nil-safe at both levels because ECS omits the wrapper and the configuration independently: a non-awsvpc service carries no NetworkConfiguration at all, and the wrapper exists to leave room for a second networking shape that does not exist yet.
+func awsVpcConfig(nc *ecsTypes.NetworkConfiguration) *ECSAwsVpcConfig {
+	if nc == nil || nc.AwsvpcConfiguration == nil {
+		return nil
+	}
+
+	return &ECSAwsVpcConfig{
+		Subnets:        nc.AwsvpcConfiguration.Subnets,
+		SecurityGroups: nc.AwsvpcConfiguration.SecurityGroups,
+		AssignPublicIP: string(nc.AwsvpcConfiguration.AssignPublicIp),
+	}
 }
 
 func mapECSDeployment(dep ecsTypes.Deployment) ECSDeployment {
@@ -1128,8 +1154,8 @@ func desiredECSServiceImage(detail *ECSTaskDefinitionDetail) (ECSServiceImage, b
 	return ECSServiceImage{Image: ShortImageRef(primary.Image), Sidecars: len(detail.Containers) - 1, Desired: true}, true
 }
 
-// serviceTaskDefinition prefers the PRIMARY deployment's task definition over the service's own, because during a rollout the service field has already moved to the revision the deployment is still bringing up.
-func serviceTaskDefinition(s *ECSService) string {
+// ServiceTaskDefinition prefers the PRIMARY deployment's task definition over the service's own, because during a rollout the service field has already moved to the revision the deployment is still bringing up.
+func ServiceTaskDefinition(s *ECSService) string {
 	for _, dep := range s.Deployments {
 		if dep.Status == "PRIMARY" && dep.TaskDefinition != "" {
 			return dep.TaskDefinition
@@ -1152,7 +1178,7 @@ func (c *Client) ResolveECSServiceImage(ctx context.Context, s *ECSService) (ECS
 		return image, nil
 	}
 
-	taskDefArn := serviceTaskDefinition(s)
+	taskDefArn := ServiceTaskDefinition(s)
 	if taskDefArn == "" {
 		return ECSServiceImage{}, fmt.Errorf("service %s has no running task and no task definition to fall back on", s.Name)
 	}
