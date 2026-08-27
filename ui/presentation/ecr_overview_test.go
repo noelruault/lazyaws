@@ -239,6 +239,8 @@ func TestRepositoryOverviewNeverExceedsTheWidth(t *testing.T) {
 	repo := overviewRepository()
 	// A long name in the header, which Columns never measures because it spans the full width, and a tag list that runs past any column.
 	repo.Name = "a-very-long-repository-name-nobody-should-have-but-someone-in-eu-west-1-does"
+	// A failed policy read puts the SDK's own error text on a kv row, and a real one is longer than anything else this pane holds: measured at 195 cells, it is the only line over budget from width 66 up, so without it the sweep never covers the state this stage added.
+	repo.PolicyErr = errors.New("operation error ECR: GetRepositoryPolicy, https response error StatusCode: 400, RequestID: 8f2c1d94-0b7a-4e51-9c3f-2a6d5b8e1f00, ThrottlingException: Rate exceeded")
 	images := overviewImages()
 	images[0].Tags = []string{"1.4.0", "latest", "release-candidate-2026-08-27-build-1841", "deployed-to-production"}
 
