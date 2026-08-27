@@ -65,6 +65,9 @@ type ThemeConfig struct {
 type RefreshConfig struct {
 	ECSLogsSeconds   int `yaml:"ecsLogsSeconds"`
 	EC2StatusSeconds int `yaml:"ec2StatusSeconds"`
+
+	// OverviewSeconds turns the overview's auto-refresh OFF at 0, so it must not go through RefreshInterval, which substitutes a fallback for every non-positive value.
+	OverviewSeconds int `yaml:"overviewSeconds"`
 }
 
 // DefaultUserConfig starts complete so partial or missing configuration remains usable.
@@ -88,6 +91,7 @@ func DefaultUserConfig() UserConfig {
 		Refresh: RefreshConfig{
 			ECSLogsSeconds:   5,
 			EC2StatusSeconds: 10,
+			OverviewSeconds:  2,
 		},
 		// Chat is opt-in because Kiro can act on AWS; Bedrock is the default because it needs no second installation or login.
 		Chat: ChatConfig{

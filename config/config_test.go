@@ -66,6 +66,41 @@ func TestLoadUserConfigPartialFileMergesOverDefaults(t *testing.T) {
 	}
 }
 
+// An omitted overviewSeconds must keep the 2s default, while an explicit 0 must survive as 0, because 0 is how a user turns the overview's auto-refresh off.
+func TestOverviewSecondsDefaultsToTwoAndZeroSurvives(t *testing.T) {
+	if got := DefaultUserConfig().Refresh.OverviewSeconds; got != 2 {
+		t.Errorf("DefaultUserConfig().Refresh.OverviewSeconds = %d, want 2", got)
+	}
+
+	t.Run("key absent from the file", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", dir)
+		writeFile(t, filepath.Join(dir, "lazyaws", "config.yml"), "refresh:\n  ecsLogsSeconds: 9\n")
+
+		got, err := LoadUserConfig()
+		if err != nil {
+			t.Fatalf("LoadUserConfig() error = %v", err)
+		}
+		if got.Refresh.OverviewSeconds != 2 {
+			t.Errorf("Refresh.OverviewSeconds = %d, want 2 (untouched key)", got.Refresh.OverviewSeconds)
+		}
+	})
+
+	t.Run("explicitly zero", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", dir)
+		writeFile(t, filepath.Join(dir, "lazyaws", "config.yml"), "refresh:\n  overviewSeconds: 0\n")
+
+		got, err := LoadUserConfig()
+		if err != nil {
+			t.Fatalf("LoadUserConfig() error = %v", err)
+		}
+		if got.Refresh.OverviewSeconds != 0 {
+			t.Errorf("Refresh.OverviewSeconds = %d, want 0 (auto-refresh off)", got.Refresh.OverviewSeconds)
+		}
+	})
+}
+
 func TestReadOnlyIsOffByDefault(t *testing.T) {
 	if DefaultUserConfig().ReadOnly {
 		t.Error("DefaultUserConfig() turns read-only mode on, want every action offered by default")
