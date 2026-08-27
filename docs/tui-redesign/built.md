@@ -25,3 +25,6 @@ One line per closed ticket, appended by the builder: `- <id> <sha> — summary`.
 - s7-s3-overview d8fc7ae — bucket Overview from the Config tab's eleven calls: public-access posture as the header badge, per-fetch failure isolation, size left on demand; renders once per selection
 - s7-ecr-overview 643c89b — repository Overview off the list row plus one DescribeImages: mutability badge, policies with the lifecycle's last evaluation, and a latest-images table the formatter sorts itself
 - s7-vpc-overview 6acb327 — VPC Overview consolidating Config/Subnets/Gateways/Endpoints: public split by routing not by auto-assign, DNS as three answers, endpoints counted by type
+- s7-eks-overview d3e11d0 — EKS cluster Overview from the three loaders its tabs already call; Configuration reads the list row so version/status/endpoint survive a denied describe, node-group version drift is marked, and public CIDRs are withheld while the public endpoint is off
+- s8-adaptive-retry f3d33c5 — every client on retry.NewAdaptiveMode: set in baseLoadOptions AND in newClientFromConfig, because the cached-credentials path never calls LoadDefaultConfig and is the path normal operation takes
+- s8-refresh-config d2f3c3a — RefreshConfig gains PanelSeconds (2) and MetricsSeconds (60, floor applied on read); Settings grows an interval row kind writing !!int, with rows for all three tiers

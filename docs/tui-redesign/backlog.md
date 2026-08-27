@@ -47,12 +47,12 @@ Every group is reviewed and repaired inside the cycle that built it (spec.md), s
 - [x] `s7-s3-overview` [d3] (needs: `s4-overview-machinery`) — bucket Overview re-laying the existing config-tab data: Security (public access block, encryption, policy present), Data management (versioning, lifecycle, replication, object lock), Access (logging, notifications), Tags. Bucket size stays on-demand only. Formatter tests.
 - [x] `s7-ecr-overview` [d2] (needs: `s4-overview-machinery`) — repository Overview: mutability badge, scan-on-push, encryption, created, latest images table from the existing DescribeImages data. Formatter tests.
 - [x] `s7-vpc-overview` [d3] (needs: `s4-overview-machinery`) — VPC Overview: CIDR, default flag, DNS attributes, subnet counts public/private, IGW/NAT presence, endpoint count, from existing per-tab loaders. Formatter tests.
-- [ ] `s7-eks-overview` [d2] (needs: `s4-overview-machinery`) — EKS Overview assembled from the existing details fetch (version, status, endpoint, node groups, addons); formatter-tested only (no live clusters expected), empty state already handled in-panel.
+- [x] `s7-eks-overview` [d2] (needs: `s4-overview-machinery`) — EKS Overview assembled from the existing details fetch (version, status, endpoint, node groups, addons); formatter-tested only (no live clusters expected), empty state already handled in-panel.
 
 ## Stage 8 — auto-refresh engine
 
-- [ ] `s8-adaptive-retry` [d2] — add `awsconfig.WithRetryMode(aws.RetryModeAdaptive)` to baseLoadOptions (client-side rate limiting after throttle responses); keep the logger tests green.
-- [ ] `s8-refresh-config` [d2] — add `PanelSeconds` (default 2) and `MetricsSeconds` (default 60, floor 10) to RefreshConfig with Settings screen rows next to OverviewSeconds; defaults test.
+- [x] `s8-adaptive-retry` [d2] — add `awsconfig.WithRetryMode(aws.RetryModeAdaptive)` to baseLoadOptions (client-side rate limiting after throttle responses); keep the logger tests green.
+- [x] `s8-refresh-config` [d2] — add `PanelSeconds` (default 2) and `MetricsSeconds` (default 60, floor 10) to RefreshConfig with Settings screen rows next to OverviewSeconds; defaults test.
 - [ ] `s8-refresh-engine` [d4] HUGE (needs: `s3-selection-identity`) — goEvery loop triggering the focused side panel's throttle every PanelSeconds; single-flight per reloader (atomic.Bool, a tick finding the previous reload running is dropped, never queued); overview tickers refetch metrics only when MetricsSeconds elapsed (closure timestamp; GetMetricData is billed per metric requested); on ThrottlingException/RequestLimitExceeded (via smithy.APIError) double that ticker's effective interval up to 60s, decay on success. Tests: single-flight drop, backoff double/decay table, PauseBackgroundThreads respected.
 
 ## Stage 9 — polish
