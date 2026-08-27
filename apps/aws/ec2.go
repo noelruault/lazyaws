@@ -212,25 +212,13 @@ func (c *Client) GetInstanceDetails(ctx context.Context, instanceID string) (*In
 		if bd.Ebs != nil {
 			device.VolumeID = getString(bd.Ebs.VolumeId)
 			device.DeleteOnTermination = bd.Ebs.DeleteOnTermination != nil && *bd.Ebs.DeleteOnTermination
-
-			if device.VolumeID != "" {
-				volInput := &ec2.DescribeVolumesInput{
-					VolumeIds: []string{device.VolumeID},
-				}
-				volResult, err := c.EC2.DescribeVolumes(ctx, volInput)
-				if err == nil && len(volResult.Volumes) > 0 {
-					vol := volResult.Volumes[0]
-					if vol.Size != nil {
-						device.VolumeSize = *vol.Size
-					}
-					device.VolumeType = string(vol.VolumeType)
-					device.Iops = getInt32Value(vol.Iops)
-					device.Throughput = getInt32Value(vol.Throughput)
-					device.Encrypted = vol.Encrypted != nil && *vol.Encrypted
-				}
-			}
 		}
 		details.BlockDevices = append(details.BlockDevices, device)
+	}
+
+	// Volume detail stays best effort: a volume the caller cannot read must not cost the whole instance view.
+	if volumes, err := c.DescribeVolumes(ctx, volumeIDs(details.BlockDevices)); err == nil {
+		applyVolumes(details.BlockDevices, volumes)
 	}
 
 	for _, ni := range inst.NetworkInterfaces {
@@ -431,23 +419,58 @@ func (c *Client) GetInstanceStatus(ctx context.Context, instanceID string) (*Ins
 	return instanceStatus, nil
 }
 
-func (c *Client) GetInstanceTypeInfo(ctx context.Context, instanceType string) (*InstanceTypeInfo, error) {
-	input := &ec2.DescribeInstanceTypesInput{
-		InstanceTypes: []types.InstanceType{types.InstanceType(instanceType)},
+// volumeIDs collects the EBS volumes worth asking about; a device backed by instance store has none.
+func volumeIDs(devices []BlockDevice) []string {
+	var ids []string
+	for _, d := range devices {
+		if d.VolumeID != "" {
+			ids = append(ids, d.VolumeID)
+		}
+	}
+	return ids
+}
+
+// applyVolumes fills each block device from its volume, matched by id.
+// DescribeVolumes does not answer in request order, so position carries no meaning and a volume missing from the answer leaves its device as it was.
+func applyVolumes(devices []BlockDevice, volumes []types.Volume) {
+	byID := make(map[string]types.Volume, len(volumes))
+	for _, v := range volumes {
+		byID[getString(v.VolumeId)] = v
+	}
+	for i := range devices {
+		vol, ok := byID[devices[i].VolumeID]
+		if !ok {
+			continue
+		}
+		if vol.Size != nil {
+			devices[i].VolumeSize = *vol.Size
+		}
+		devices[i].VolumeType = string(vol.VolumeType)
+		devices[i].Iops = getInt32Value(vol.Iops)
+		devices[i].Throughput = getInt32Value(vol.Throughput)
+		devices[i].Encrypted = vol.Encrypted != nil && *vol.Encrypted
+	}
+}
+
+// DescribeVolumes reads every requested volume in one call.
+// The API takes the whole id list, and one call per device spent a round trip each against the smaller bucket EC2 meters unfiltered Describe calls under.
+func (c *Client) DescribeVolumes(ctx context.Context, volumeIDs []string) ([]types.Volume, error) {
+	if len(volumeIDs) == 0 {
+		return nil, nil
+	}
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
 	}
 
-	result, err := c.EC2.DescribeInstanceTypes(ctx, input)
+	result, err := c.EC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: volumeIDs})
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe instance type: %w", err)
+		return nil, fmt.Errorf("failed to describe volumes: %w", err)
 	}
+	return result.Volumes, nil
+}
 
-	if len(result.InstanceTypes) == 0 {
-		return nil, fmt.Errorf("instance type %s not found", instanceType)
-	}
-
-	typeInfo := result.InstanceTypes[0]
-
-	info := &InstanceTypeInfo{
+func mapInstanceTypeInfo(typeInfo types.InstanceTypeInfo) InstanceTypeInfo {
+	info := InstanceTypeInfo{
 		InstanceType: string(typeInfo.InstanceType),
 	}
 
@@ -485,11 +508,64 @@ func (c *Client) GetInstanceTypeInfo(ctx context.Context, instanceType string) (
 		info.StorageType = "EBS Only"
 	}
 
-	for _, arch := range typeInfo.ProcessorInfo.SupportedArchitectures {
-		info.SupportedArchitectures = append(info.SupportedArchitectures, string(arch))
+	if typeInfo.ProcessorInfo != nil {
+		for _, arch := range typeInfo.ProcessorInfo.SupportedArchitectures {
+			info.SupportedArchitectures = append(info.SupportedArchitectures, string(arch))
+		}
 	}
 
-	return info, nil
+	return info
+}
+
+// GetInstanceTypeInfo answers from the Client's cache when it can.
+// A type's vCPU count, memory and network performance are properties of the type itself, so the first answer stays true for the life of the process.
+func (c *Client) GetInstanceTypeInfo(ctx context.Context, instanceType string) (*InstanceTypeInfo, error) {
+	if instanceType == "" {
+		return nil, fmt.Errorf("instance type required")
+	}
+
+	if cached, ok := c.cachedInstanceType(instanceType); ok {
+		return &cached, nil
+	}
+
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
+
+	input := &ec2.DescribeInstanceTypesInput{
+		InstanceTypes: []types.InstanceType{types.InstanceType(instanceType)},
+	}
+
+	result, err := c.EC2.DescribeInstanceTypes(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe instance type: %w", err)
+	}
+
+	if len(result.InstanceTypes) == 0 {
+		return nil, fmt.Errorf("instance type %s not found", instanceType)
+	}
+
+	info := mapInstanceTypeInfo(result.InstanceTypes[0])
+	c.cacheInstanceType(instanceType, info)
+
+	return &info, nil
+}
+
+// The cache stores and returns values rather than the pointer callers hold, so a caller editing its copy cannot rewrite what the next one reads.
+func (c *Client) cachedInstanceType(instanceType string) (InstanceTypeInfo, bool) {
+	c.instanceTypesMu.Lock()
+	defer c.instanceTypesMu.Unlock()
+	info, ok := c.instanceTypes[instanceType]
+	return info, ok
+}
+
+func (c *Client) cacheInstanceType(instanceType string, info InstanceTypeInfo) {
+	c.instanceTypesMu.Lock()
+	defer c.instanceTypesMu.Unlock()
+	if c.instanceTypes == nil {
+		c.instanceTypes = map[string]InstanceTypeInfo{}
+	}
+	c.instanceTypes[instanceType] = info
 }
 
 func (c *Client) CreateImageFromInstance(ctx context.Context, instanceID, imageName string) (string, error) {

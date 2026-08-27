@@ -55,6 +55,9 @@ type Client struct {
 	// chatModelIDs caches configured-model to invocable-id resolutions (see resolveChatModel), so a question doesn't re-list inference profiles every time.
 	chatModelsMu sync.Mutex
 	chatModelIDs map[string]string
+	// instanceTypes caches DescribeInstanceTypes answers (see GetInstanceTypeInfo): a type's vCPU, memory and network performance are properties of the type, not of any instance, so re-asking can only return what is already held.
+	instanceTypesMu sync.Mutex
+	instanceTypes   map[string]InstanceTypeInfo
 	// identityErr is why the STS caller-identity probe last failed, kept so the bootstrap can refuse to start rather than let every panel discover the same expired token on its own.
 	identityErr error
 	Region      string
