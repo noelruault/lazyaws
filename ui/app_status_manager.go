@@ -120,6 +120,16 @@ func (gui *Gui) dashboardOptions(viewName string) []option {
 	panel, isList := gui.sidePanelNamed(viewName)
 	onMain := viewName == "main"
 
+	// The chat screen hands focus to main, and there the dashboard's keys do nothing: the lists are hidden, so there is no selection to inspect, copy or act on, and main holds a conversation rather than tabs.
+	if onMain && gui.mainBelongsToQ() {
+		return []option{
+			{key: "←→↑↓", label: "scroll"},
+			{key: "tab", label: "next pane"},
+			{key: "esc", label: "dashboard"},
+			named(KeyQuit, "quit"),
+		}
+	}
+
 	options := []option{{key: "←→↑↓", label: "navigate"}}
 	if onMain {
 		options = []option{{key: "←→↑↓", label: "scroll"}, {key: "[ ]", label: "tabs"}}

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -122,14 +123,35 @@ func TestCopyKeyIsBoundOnEveryListAndOnMain(t *testing.T) {
 		t.Error("copy-id is bound globally, so it would fire in the chat input and the filter prompt")
 	}
 
-	want := resourceViewNames(gui.allSidePanels())
-	for _, name := range want {
+	// The expectation is built here rather than read back from resourceViewNames: asking the function under test what to expect makes dropping "main" from it invisible, and main is where the key matters most, because that is where the truncated value is being read.
+	for _, name := range sidePanelViewNames(gui.allSidePanels()) {
 		if !bound[name] {
 			t.Errorf("copy-id is not bound in the %q view", name)
 		}
 	}
-	if len(bound) != len(want) {
-		t.Errorf("copy-id is bound in %d views, want the %d that address a selected resource", len(bound), len(want))
+	if !bound["main"] {
+		t.Error("copy-id is not bound in the main view, so it does nothing once focus moves into the detail pane")
+	}
+	if len(bound) != 9 {
+		t.Errorf("copy-id is bound in %d views, want the 8 lists and main", len(bound))
+	}
+}
+
+// resourceViewNames decides where every selection key is registered and what the footer advertises, and both of its callers' tests would otherwise take their expectation from it.
+func TestResourceViewNamesCoverEveryListAndMain(t *testing.T) {
+	gui, _ := newHeadlessGui(t)
+
+	got := resourceViewNames(gui.allSidePanels())
+	if len(got) != 9 {
+		t.Errorf("resourceViewNames returned %d views (%v), want the 8 lists and main", len(got), got)
+	}
+	if !slices.Contains(got, "main") {
+		t.Errorf("resourceViewNames omits main: %v", got)
+	}
+	for _, name := range sidePanelViewNames(gui.allSidePanels()) {
+		if !slices.Contains(got, name) {
+			t.Errorf("resourceViewNames omits the %q list: %v", name, got)
+		}
 	}
 }
 
@@ -154,6 +176,32 @@ func TestCopyShowsTheFullIdentifierInAPopup(t *testing.T) {
 	}
 	if title := ask(g, func() string { return gui.Views.Confirmation.Title }); title != copyPopupTitle {
 		t.Errorf("popup title = %q, want %q", title, copyPopupTitle)
+	}
+}
+
+// The chat screen hands focus to main (qChats → main), where the copy key is bound, while the eight lists are hidden behind it.
+// Without the guard the popup would report the identifier of whatever the dashboard had selected before the user left it, which is an answer about something not on screen.
+func TestCopyIsInertOnTheChatScreen(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+
+	run(t, g, func() error {
+		gui.Panels.EC2.SetItems([]*aws.Instance{{ID: "i-0abcdef1234567890", Name: "web-1"}})
+		return nil
+	})
+	gui.State.ViewStack = []string{"ec2", "main"}
+
+	// Proof the same state DOES copy on the dashboard, so the assertion below cannot pass for an unrelated reason.
+	run(t, g, gui.handleCopySelected)
+	waitForView(t, g, gui.Views.Confirmation, "i-0abcdef1234567890")
+	run(t, g, gui.closeConfirmationPrompt)
+
+	gui.setQScreenActive(true)
+	t.Cleanup(func() { gui.setQScreenActive(false) })
+
+	run(t, g, gui.handleCopySelected)
+
+	if visible := ask(g, func() bool { return gui.Views.Confirmation.Visible }); visible {
+		t.Error("the copy key opened a popup on the chat screen, about a resource no longer on screen")
 	}
 }
 

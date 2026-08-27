@@ -50,7 +50,8 @@ func TestDashboardOptionsAreContextualPerPanel(t *testing.T) {
 func TestEveryResourceViewAdvertisesTheSharedVocabulary(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 
-	for _, name := range resourceViewNames(gui.allSidePanels()) {
+	// The view list is built here, not read back from resourceViewNames: taking the expectation from the function that decides the answer cannot see that function losing a view.
+	for _, name := range append(sidePanelViewNames(gui.allSidePanels()), "main") {
 		line := optionsToString(gui.dashboardOptions(name))
 		for _, want := range []string{"y copy", "r refresh", "a actions", "q quit"} {
 			if !strings.Contains(line, want) {
@@ -146,6 +147,29 @@ func TestTheFooterRendersTheFocusedPanelsLine(t *testing.T) {
 	}
 }
 
+// main is shared between the dashboard's detail pane and the chat's conversation, so the one view name has two footers.
+// Advertising copy, tabs, select or actions in the chat names keys that do nothing there, which is worse than the generic line this replaced.
+func TestTheMainFooterChangesOnTheChatScreen(t *testing.T) {
+	gui, _ := newHeadlessGui(t)
+
+	if line := optionsToString(gui.dashboardOptions("main")); !strings.Contains(line, "y copy") {
+		t.Fatalf("the dashboard's main line does not offer copy, so this test cannot see the difference: %s", line)
+	}
+
+	gui.setQScreenActive(true)
+	t.Cleanup(func() { gui.setQScreenActive(false) })
+
+	line := optionsToString(gui.dashboardOptions("main"))
+	if !strings.Contains(line, "esc dashboard") || !strings.Contains(line, "tab next pane") {
+		t.Errorf("the chat's main line does not say how to get out or move on: %s", line)
+	}
+	for _, absent := range []string{"y copy", "[ ] tabs", "enter select", "a actions"} {
+		if strings.Contains(line, absent) {
+			t.Errorf("the chat's main line offers %q, which does nothing there: %s", absent, line)
+		}
+	}
+}
+
 // The footer shares one terminal row with the app status and the version, and gocui cuts what does not fit rather than wrapping.
 // This is a budget, not an exact-width assertion: it fails when a future entry pushes the longest line past what a normal terminal shows, which is the point at which items start disappearing silently.
 func TestNoDashboardOptionsLineOutgrowsTheFooter(t *testing.T) {
@@ -153,7 +177,7 @@ func TestNoDashboardOptionsLineOutgrowsTheFooter(t *testing.T) {
 
 	const budget = 90
 
-	for _, name := range resourceViewNames(gui.allSidePanels()) {
+	for _, name := range append(sidePanelViewNames(gui.allSidePanels()), "main") {
 		line := optionsToString(gui.dashboardOptions(name))
 		if width := runewidth.StringWidth(utils.Decolorise(line)); width > budget {
 			t.Errorf("the %s options line is %d cells, over the %d-cell budget: %s", name, width, budget, line)
