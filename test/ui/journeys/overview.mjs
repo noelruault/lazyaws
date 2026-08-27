@@ -33,15 +33,20 @@ function paneCells (screen) {
 
 // The header and the section titles are both whole pane lines, and both are asserted as whole cells.
 // A substring check would pass on text the Overview did not draw: "VPC" is also the side panel's own frame title, and "Instance" sits inside the ECS pane's "Instances" tab.
-async function assertSections (term, resource) {
-  const screen = await term.readScreen()
-  const cells = paneCells(screen)
-  for (const title of [resource.header, ...resource.sections]) {
-    if (!cells.includes(title)) {
-      throw new Error(`${resource.name} Overview: no "${title}" line in the pane\n--- screen ---\n${screen}`)
-    }
+// It WAITS rather than reading once: the tab bar is drawn from the registry the moment the panel takes focus, while the body arrives with the fetches behind it (the bucket overview alone makes eleven calls), so a single read asserts against whichever sections happened to have landed.
+async function assertSections (term, resource, { timeout = 20000 } = {}) {
+  const want = [resource.header, ...resource.sections]
+  const deadline = Date.now() + timeout
+  let screen = ''
+  let missing = want
+  while (Date.now() < deadline) {
+    screen = await term.readScreen()
+    const cells = paneCells(screen)
+    missing = want.filter(title => !cells.includes(title))
+    if (missing.length === 0) return screen
+    await term.page.waitForTimeout(250)
   }
-  return screen
+  throw new Error(`${resource.name} Overview: no ${missing.map(t => JSON.stringify(t)).join(', ')} line in the pane after ${timeout}ms\n--- screen ---\n${screen}`)
 }
 
 export async function run ({ term, seed }) {

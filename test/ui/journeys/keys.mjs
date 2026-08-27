@@ -10,6 +10,19 @@ function footerKeys (footer) {
   }))
 }
 
+// The options line shares the bottom row with the app status and the version, and gocui cuts whatever does not fit.
+// So a footer read while a load is in flight can arrive prefixed ("loading s3 / ←→↑↓ navigate, …") and short of its tail, which silently removes keys from the very list this journey checks. Waiting for a line that still has BOTH ends is what makes the snapshot trustworthy.
+async function cleanFooter (term, { timeout = 15000 } = {}) {
+  const deadline = Date.now() + timeout
+  let footer = ''
+  while (Date.now() < deadline) {
+    footer = await term.footer()
+    if (footer.startsWith('←→↑↓') && footer.endsWith('quit')) return footer
+    await term.page.waitForTimeout(150)
+  }
+  throw new Error(`the options line never came back clean; last read ${JSON.stringify(footer)}`)
+}
+
 function assertAdvertises (footer, key, label) {
   const advertised = footerKeys(footer).get(key)
   if (advertised !== label) {
@@ -51,7 +64,7 @@ export async function run ({ term, seed, endpoint }) {
   await term.sendKeys('3')
   // Sorted by name, so the instance with no Name tag leads and is what every assertion below is about.
   const first = await term.waitForSelectedRow(/^▶ \(no name\)/)
-  const footer = await term.footer()
+  const footer = await cleanFooter(term)
 
   // --- y copy popup ---------------------------------------------------------------------------
   assertAdvertises(footer, 'y', 'copy')
@@ -74,9 +87,10 @@ export async function run ({ term, seed, endpoint }) {
   await term.waitForText('EC2 Instances actions')
   await assertClosed(term, 'EC2 Instances actions', 'a')
 
-  // --- x options menu ------------------------------------------------------------------------- x is the full keybinding list, and it is also the cross-check on the footer: a keycap the footer advertises for this view that the menu does not bind is a label with nothing behind it.
+  // --- x options menu -------------------------------------------------------------------------
   await term.sendKeys('x')
   await term.waitForText('╭─Menu')
+  // x lists every binding, which makes it the cross-check on the footer: a keycap the footer advertises for this view that the menu does not bind is a label with nothing behind it.
   const menu = await term.readScreen()
   for (const [key, label] of footerKeys(footer)) {
     // Only the single-character keycaps: the arrow and enter keys are literals no config can move, and the menu lists those under their own names rather than as a keycap.
