@@ -75,6 +75,7 @@ curl -fsS "http://127.0.0.1:$ttyd_port" >/dev/null || { echo "ttyd did not come 
 
 # The endpoint reaches the journeys too: proving a refresh key reached AWS means changing what AWS answers, which only the fake one may be asked to do.
 # The dummy credentials go with it. Without them the CLI a journey shells out to has none of its own — HOME here is the operator's — and the call fails, or worse, signs with whatever profile the operator happens to have.
+# DRIVER swaps the journey runner for another script over the same live stack; demo.mjs records the README GIF's frames this way.
 TTYD_URL="http://127.0.0.1:$ttyd_port" AWS_ENDPOINT_URL="$endpoint" AWS_REGION="$region" \
 	AWS_ACCESS_KEY_ID=lazyaws-ui-test AWS_SECRET_ACCESS_KEY=lazyaws-ui-test \
-	"$runtime" "$here/run.mjs" "$@"
+	"$runtime" "$here/${DRIVER:-run.mjs}" "$@"

@@ -35,6 +35,10 @@ test: ## Run the test suite
 ui-test: ## Drive the built TUI in ttyd against a seeded fake AWS with Playwright (needs docker, ttyd, aws, bun; one-off: cd test/ui && bun install && bunx playwright install chromium)
 	bash test/ui/run.sh $(JOURNEYS)
 
+ui-demo: ## Re-record docs/demo.gif against the seeded fake AWS, so the published media carries fabricated data only (needs ui-test's tools plus ffmpeg)
+	DRIVER=demo.mjs bash test/ui/run.sh
+	ffmpeg -y -f concat -i test/ui/.demo-frames/frames.txt -vf "scale=1010:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5" -loop 0 docs/demo.gif
+
 lint: ## Vet the code and fail on unformatted files
 	go vet ./...
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "$$out"; echo "gofmt: files need formatting"; exit 1; fi

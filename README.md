@@ -6,8 +6,8 @@ Drill from an ECS cluster to a service to live logs in a few keypresses. Switch 
 
 > Early development. Expect rough edges, missing services, and breaking changes.
 
-<!-- The checked-in GIF uses fabricated data so published media cannot disclose an AWS account; docs/demo.tape can replace it when run with a profile that is safe to show. -->
-<p align="center"><img src="docs/demo.gif" alt="lazyaws demo: ECS drill-down to live logs, the command bar, and the chat screen" width="900"></p>
+<!-- The checked-in GIF is recorded by test/ui/demo.mjs against the seeded moto harness, so published media cannot disclose an AWS account; regenerate it with `make ui-demo`. -->
+<p align="center"><img src="docs/demo.gif" alt="lazyaws demo: the eight resource panels, the EC2 and secret overviews, filtering with the pane following the selection, and the full-id copy popup" width="900"></p>
 
 ## Quickstart
 
