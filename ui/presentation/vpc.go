@@ -216,7 +216,7 @@ func vpcTagsBlock(v *aws.VPC) string {
 
 	lines := []string{title}
 	for _, tag := range v.Tags {
-		lines = append(lines, tag.Key+": "+orNone(tag.Value))
+		lines = append(lines, TagLine(tag.Key, tag.Value))
 	}
 
 	return strings.Join(lines, "\n")

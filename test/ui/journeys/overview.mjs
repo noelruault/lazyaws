@@ -7,13 +7,15 @@ const narrow = { width: 1000, height: 900 }
 
 // Per resource: the number key that focuses its panel, the tab list its detail pane must offer with Overview FIRST, the overview's header word, and sections that only the Overview tab renders.
 // Section names are deliberately not the tab names: "Configuration" is a section and "Config" is a tab, so a screen still showing the old tab cannot satisfy a section assertion.
+// The tab lists are the pruned sets: a tab that only repeated the Overview is gone, and what survives carries content the Overview only summarises.
+// Section titles carry the mockups' icons, and the ECS/EC2/Secret header kinds are the mockups' full names.
 const resources = [
-  { key: '2', name: 'ECS cluster', tabs: ['Overview', 'Config', 'Instances', 'Tags'], header: 'Cluster', sections: ['Configuration', 'Capacity', 'Metrics', 'Services', 'Tasks'] },
-  { key: '3', name: 'EC2 instance', tabs: ['Overview', 'Config', 'Status', 'Metrics', 'Storage', 'Security', 'Tags'], header: 'Instance', sections: ['Configuration', 'Network', 'Metrics', 'Status', 'Storage', 'Security', 'Tags'] },
-  { key: '4', name: 'S3 bucket', tabs: ['Overview', 'Config', 'Objects', 'Policy'], header: 'Bucket', sections: ['Access', 'Data management', 'Security', 'Tags'] },
-  { key: '6', name: 'ECR repository', tabs: ['Overview', 'Config', 'Images', 'Scan'], header: 'Repository', sections: ['Configuration', 'Images', 'Policies'] },
-  { key: '7', name: 'secret', tabs: ['Overview', 'Config', 'Value'], header: 'Secret', sections: ['Details', 'Versions', 'Replication', 'Resource policy', 'Tags'] },
-  { key: '8', name: 'VPC', tabs: ['Overview', 'Config', 'Subnets', 'Routes', 'Gateways', 'Endpoints', 'Transit'], header: 'VPC', sections: ['Configuration', 'Subnets', 'DNS', 'Gateways', 'Endpoints', 'Tags'] },
+  { key: '2', name: 'ECS cluster', tabs: ['Overview', 'Instances'], header: '⬡ ECS Cluster', sections: ['▤ Configuration', '⬡ Capacity', '◒ Metrics', '▦ Services', '≡ Tasks', '◇ Tags'] },
+  { key: '3', name: 'EC2 instance', tabs: ['Overview'], header: '◇ EC2 Instance', sections: ['▤ Configuration', '⇄ Network', '◒ Metrics', '♡ Status', '▣ Storage', '⌾ Security', '⌘ Console', '◇ Tags'] },
+  { key: '4', name: 'S3 bucket', tabs: ['Overview', 'Config', 'Objects', 'Policy'], header: '▣ Bucket', sections: ['⌾ Access', '▣ Data management', '⌾ Security', '◇ Tags'] },
+  { key: '6', name: 'ECR repository', tabs: ['Overview', 'Images', 'Scan', 'Policies'], header: '⬡ Repository', sections: ['▤ Configuration', '▣ Images', '⌾ Policies'] },
+  { key: '7', name: 'secret', tabs: ['Overview', 'Value', 'Versions', 'Policy'], header: '▣ Secret', sections: ['▤ Details', '≡ Versions', '⇄ Replication', '⌾ Resource policy', '◇ Tags'] },
+  { key: '8', name: 'VPC', tabs: ['Overview', 'Subnets', 'Routes', 'Gateways', 'Endpoints', 'Transit'], header: '⇄ VPC', sections: ['▤ Configuration', '▦ Subnets', '⇄ DNS', '⇄ Gateways', '◇ Endpoints', '◇ Tags'] },
 ]
 
 // The detail pane's own frame carries the tab list, so this is where a journey reads which tab is open.
@@ -84,7 +86,7 @@ export async function run ({ term, seed }) {
 
   // Where a section has no answer it must say so rather than render a zero: moto's CloudWatch cannot serve GetMetricData, which is the failure the EC2 pane has to survive section by section.
   await term.sendKeys('3')
-  await term.waitForText('╭─Overview - Config - Status')
+  await term.waitForText('╭─Overview')
   const ec2 = await assertSections(term, resources[1])
   assertScreen(ec2, /unavailable/, 'EC2 Metrics unavailable state')
   // A failing metrics fetch must not take the sections beside it down with it.
@@ -99,10 +101,10 @@ export async function run ({ term, seed }) {
 
   // Narrow it and the same two sections must be stacked instead of wrapped: each on its own line, both still present, nothing soft-wrapped into the panel beside it.
   await term.resize(narrow.width, narrow.height)
-  await term.waitForText('╭─Overview - Config - Status')
+  await term.waitForText('╭─Overview')
   const stacked = await term.readScreen()
   const cells = paneCells(stacked)
-  for (const section of ['Configuration', 'Status']) {
+  for (const section of ['▤ Configuration', '♡ Status']) {
     if (!cells.includes(section)) {
       throw new Error(`Overview lost the "${section}" section when narrow\n--- screen ---\n${stacked}`)
     }
@@ -113,19 +115,23 @@ export async function run ({ term, seed }) {
   await term.screenshot('overview-stacked')
 
   // Tabs cycle from the list itself and not only from the focused main pane, so ] must land on the tab after Overview and [ must come back to it.
-  // The tab BAR is not the assertion: gocui marks the open tab in the title's attributes and leaves the list of names alone, so only the pane's body says which tab is showing.
+  // EC2 is down to one tab, so ECS is where the cycle is observable; the tab BAR is not the assertion: gocui marks the open tab in the title's attributes and leaves the list of names alone, so only the pane's body says which tab is showing.
+  await term.sendKeys('2')
+  await term.waitForText('╭─Overview - Instances')
+  await assertSections(term, resources[0], { timeout: 20000 })
   await term.sendKeys(']')
-  const config = paneCells(await term.settle())
-  if (config.includes('Configuration')) {
+  const instances = paneCells(await term.settle())
+  if (instances.includes('▤ Configuration')) {
     throw new Error(`] left the Overview open: the pane still holds its Configuration section`)
   }
-  if (!config.some(cell => cell.startsWith(`ID: ${seed.instances.unnamed}`))) {
-    throw new Error(`] did not open the Config tab: no "ID:" line in the pane\n${config.filter(Boolean).slice(0, 12).join('\n')}`)
+  // The seeded cluster runs on Fargate, so the Instances tab's whole answer is its empty state.
+  if (!instances.some(cell => cell.startsWith('no container instances'))) {
+    throw new Error(`] did not open the Instances tab: no container-instance line in the pane\n${instances.filter(Boolean).slice(0, 12).join('\n')}`)
   }
 
   await term.sendKeys('[')
   const back = paneCells(await term.settle())
-  if (!back.includes('Configuration')) {
+  if (!back.includes('▤ Configuration')) {
     throw new Error(`[ did not come back to the Overview: no Configuration section in the pane`)
   }
 }

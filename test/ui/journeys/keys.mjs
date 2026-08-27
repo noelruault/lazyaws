@@ -111,8 +111,9 @@ export async function run ({ term, seed, endpoint }) {
   await term.sendKeys('Enter')
   // Filtering narrows the list to its one match AND moves the selection onto it, so the detail pane must describe that instance rather than the one selected before.
   await term.waitForSelectedRow(new RegExp(`^▶ ${seed.instanceNames.web}\\b`))
+  // The pane fetches before it paints, so the header is WAITED for rather than read: a read racing the fetch sees the previous pane.
+  await term.waitForText(`${seed.instanceNames.web}  ● running  ${seed.instances.web}`)
   const filtered = await term.readScreen()
-  assertScreen(filtered, `${seed.instanceNames.web}  ▶ running  ${seed.instances.web}`, 'detail pane follows the filtered selection')
   if (filtered.includes(seed.instanceNames.db)) {
     throw new Error(`the filter left ${seed.instanceNames.db} in the list`)
   }
