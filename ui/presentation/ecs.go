@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 
@@ -396,6 +397,230 @@ func ecsTaskImageText(t aws.ECSTask) string {
 	}
 
 	return ECSImageSummary(image)
+}
+
+// ecsServiceEventsShown caps the events list. ECS keeps the last hundred, the pane has room for a handful, and the ones worth a glance are the newest.
+const ecsServiceEventsShown = 5
+
+// ecsEventAgeWidth pads the relative time so the messages line up in a column the eye can run down; "just now" is the longest RelTime can render at this scale.
+const ecsEventAgeWidth = 8
+
+// ecsServiceMetricStat captions a service reading with the window it was averaged over, matching the period the ECS metric queries ask for.
+const ecsServiceMetricStat = "1-min avg"
+
+// FormatECSServiceOverview lays a service out for the Overview tab: a header that always renders, then the two-column body its Config, Deployments and Events tabs are consolidated into.
+// The header is built from the LIST ROW rather than from the fetch, because everything in it arrives with DescribeServices: a service whose metrics and image both failed is still identified and still carries its stability badge.
+func FormatECSServiceOverview(s *aws.ECSService, o *aws.ECSServiceOverview, width int, now time.Time) string {
+	// Cut to the pane: the header spans the full width rather than a column, so Columns never sees it, and with wrap off a long name plus its badge and counts runs off the edge unmarked.
+	header := truncateBlock(ResourceHeader("Service", s.Name, ecsServiceStabilityCell(s).Rendered(), "",
+		s.Cluster,
+		s.LaunchType,
+		fmt.Sprintf("%d desired / %d running / %d pending", s.DesiredCount, s.RunningCount, s.PendingCount),
+	), width)
+
+	left := joinBlocks(
+		serviceDeploymentBlock(s, o, now),
+		serviceNetworkBlock(s),
+	)
+	right := joinBlocks(
+		serviceMetricsBlock(o),
+		serviceEventsBlock(s, now),
+	)
+
+	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+// primaryECSDeployment is the deployment the service is trying to reach; the others are ones it is draining away from, and reporting their rollout state would describe a deployment already being replaced.
+// A service between deployments has none at all, and the zero value renders as a rollout no controller reported rather than as one that failed.
+func primaryECSDeployment(s *aws.ECSService) aws.ECSDeployment {
+	for _, d := range s.Deployments {
+		if d.Status == aws.ECSDeploymentPrimary {
+			return d
+		}
+	}
+	if len(s.Deployments) > 0 {
+		return s.Deployments[0]
+	}
+
+	return aws.ECSDeployment{}
+}
+
+func serviceDeploymentBlock(s *aws.ECSService, o *aws.ECSServiceOverview, now time.Time) string {
+	primary := primaryECSDeployment(s)
+
+	lines := []string{SectionTitle("Deployment"), kvBlock([]kv{
+		{"Controller", orNone(s.DeploymentController)},
+		{"Rollout", ecsRolloutValue(primary)},
+		{"Started", deploymentStarted(primary, now)},
+		{"Circuit breaker", circuitBreakerValue(s)},
+		{"Task definition", orNone(taskDefRef(aws.ServiceTaskDefinition(s)))},
+		serviceImageRow(o),
+	})}
+
+	// The reason is a sentence, so it gets a line of its own: in a value cell it would be cut to its first few words, which are the least specific part of it.
+	if primary.RolloutStateReason != "" {
+		lines = append(lines, utils.ColoredString(primary.RolloutStateReason, color.FgRed))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// ecsRolloutValue reports the rollout as a badge, and counts the tasks it lost alongside it: ECS retries a failed task, so a deployment can sit at IN_PROGRESS indefinitely and the count is the difference between slow and stuck.
+// An EMPTY state is "not reported" rather than a failure, because ECS omits rolloutState entirely for a CODE_DEPLOY or EXTERNAL controller.
+func ecsRolloutValue(d aws.ECSDeployment) string {
+	if d.RolloutState == "" {
+		return "not reported"
+	}
+	if d.FailedTasks > 0 {
+		return Badge(d.RolloutState) + utils.ColoredString(fmt.Sprintf("  %d failed", d.FailedTasks), color.FgRed)
+	}
+
+	return Badge(d.RolloutState)
+}
+
+// deploymentStarted is how long the current deployment has been going, which is what turns an IN_PROGRESS rollout into either "still rolling" or "stuck".
+func deploymentStarted(d aws.ECSDeployment, now time.Time) string {
+	if d.Created == nil {
+		return "unknown"
+	}
+
+	return RelTime(*d.Created, now)
+}
+
+// circuitBreakerValue says whether a failed rollout is left standing or wound back, because "enabled" alone does not: the breaker stops a bad deployment either way, and only rollback restores the previous one.
+func circuitBreakerValue(s *aws.ECSService) string {
+	switch {
+	case !s.CircuitBreakerEnabled:
+		return "disabled"
+	case s.CircuitBreakerRollback:
+		return "enabled, rolls back"
+	default:
+		return "enabled, no rollback"
+	}
+}
+
+// taskDefRef keeps family:revision and drops the ARN prefix, which is the account and region the pane already states.
+func taskDefRef(taskDefArn string) string {
+	if idx := strings.LastIndex(taskDefArn, "/"); idx != -1 {
+		return taskDefArn[idx+1:]
+	}
+
+	return taskDefArn
+}
+
+// serviceImageRow labels the image running or desired, which is the distinction spec's ECS requirement turns on, and keeps a failed resolution on the pane with its reason rather than as a blank.
+// A failed fetch is labelled neutrally: with nothing resolved there is no telling which of the two it would have been.
+func serviceImageRow(o *aws.ECSServiceOverview) kv {
+	if err := o.Err(aws.SectionImage); err != nil {
+		return kv{"Image", utils.ColoredString("unavailable: "+err.Error(), color.FgRed)}
+	}
+
+	return kv{ECSImageLabel(o.Image), ECSImageSummary(o.Image)}
+}
+
+func serviceNetworkBlock(s *aws.ECSService) string {
+	title := SectionTitle("Networking")
+
+	// No configuration is not a service whose networking failed to load: ECS requires the block for awsvpc and rejects it for every other mode, so its absence says which mode the task definition uses.
+	if s.Network == nil {
+		return title + "\n" + utils.ColoredString("no awsvpc configuration", color.Faint)
+	}
+
+	lines := []string{title, kvBlock([]kv{{"Public IP", publicIPValue(s.Network.AssignPublicIP)}})}
+	lines = append(lines, idListBlock("Subnets", s.Network.Subnets)...)
+	lines = append(lines, idListBlock("Security groups", s.Network.SecurityGroups)...)
+
+	return strings.Join(lines, "\n")
+}
+
+// publicIPValue never fills in a missing flag: the default depends on how the service was created, and rendering DISABLED for an unanswered field is a claim about reachability.
+func publicIPValue(assign string) string {
+	if assign == "" {
+		return "not reported"
+	}
+
+	return assign
+}
+
+// idListBlock puts each identifier on its own line rather than joining them, because a column narrow enough to cut a joined list drops the ids at the end of it with only an ellipsis to show for them.
+func idListBlock(label string, ids []string) []string {
+	if len(ids) == 0 {
+		return []string{utils.ColoredString(label+":", color.FgYellow) + " none"}
+	}
+
+	lines := make([]string, 0, len(ids)+1)
+	lines = append(lines, utils.ColoredString(fmt.Sprintf("%s (%d):", label, len(ids)), color.FgYellow))
+	for _, id := range ids {
+		lines = append(lines, "  "+id)
+	}
+
+	return lines
+}
+
+func serviceMetricsBlock(o *aws.ECSServiceOverview) string {
+	if err := o.Err(aws.SectionMetrics); err != nil {
+		return sectionUnavailable("Metrics", err)
+	}
+
+	// Read through a zero value rather than guarded per row: a hand-built overview with no metrics and a fetch that answered with nothing published are the same thing on screen, and neither is an error.
+	var cpu, mem aws.MetricPoint
+	if o.Metrics != nil {
+		cpu, mem = o.Metrics.CPUUtilization, o.Metrics.MemoryUtilization
+	}
+
+	return SectionTitle("Metrics") + "\n" + kvBlock([]kv{
+		serviceGaugeRow("CPU", cpu),
+		serviceGaugeRow("Memory", mem),
+	})
+}
+
+// serviceGaugeRow draws a bar only from a reading CloudWatch published: an unpublished series and a genuinely idle service both compute to 0%, and a bar sitting at zero is the more believable of the two.
+func serviceGaugeRow(label string, p aws.MetricPoint) kv {
+	if !p.OK {
+		return kv{label, "no data"}
+	}
+
+	return kv{label, fmt.Sprintf("%s  (%s @ %s)", Gauge(ecsGaugeWidth, p.Value), ecsServiceMetricStat, p.At.UTC().Format("15:04Z"))}
+}
+
+// serviceEventsBlock is what says WHY a service is not where it wants to be, which no count on this pane can.
+func serviceEventsBlock(s *aws.ECSService, now time.Time) string {
+	title := SectionTitle("Recent events")
+	if len(s.Events) == 0 {
+		return title + "\nno recent events"
+	}
+
+	// Sorted newest first on a copy: DescribeServices answers most-recent-first in practice but promises no order, and this pane re-renders on a ticker where a reshuffle would be read as new events arriving.
+	events := slices.Clone(s.Events)
+	slices.SortStableFunc(events, func(a, b aws.ECSEvent) int { return eventTime(b).Compare(eventTime(a)) })
+
+	shown := min(len(events), ecsServiceEventsShown)
+	lines := make([]string, 0, shown+1)
+	lines = append(lines, title)
+	for _, ev := range events[:shown] {
+		age := utils.WithPadding(utils.ColoredString(eventAge(ev, now), color.Faint), ecsEventAgeWidth)
+		lines = append(lines, age+" "+ecsEventMessage(s.Name, ev.Message))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func eventTime(ev aws.ECSEvent) time.Time {
+	if ev.When == nil {
+		return time.Time{}
+	}
+
+	return *ev.When
+}
+
+func eventAge(ev aws.ECSEvent, now time.Time) string {
+	return RelTime(eventTime(ev), now)
+}
+
+// ecsEventMessage drops the "(service <name>) " ECS opens every message with, which repeats the pane's own header and costs a fifth of a narrow column.
+// The prefix is matched exactly, for THIS service, so a message in any other shape is left whole rather than cut on a guess about the format.
+func ecsEventMessage(serviceName, message string) string {
+	return strings.TrimPrefix(message, "(service "+serviceName+") ")
 }
 
 func GetECSTaskDisplayCells(t *aws.ECSTask) []utils.Cell {

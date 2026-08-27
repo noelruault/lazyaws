@@ -51,6 +51,8 @@ var stateAliases = map[string]statusKind{
 	"healthy":           statusRunning,
 	"insync":            statusRunning, // a Secrets Manager replica in step with its primary
 	"inprogress":        statusPending, // a Secrets Manager replica still being created
+	"completed":         statusRunning, // an ECS deployment that finished rolling out
+	"in_progress":       statusPending, // an ECS deployment still rolling out
 	"ok":                statusRunning, // CloudWatch alarm state
 	"stopped":           statusStopped,
 	"inactive":          statusStopped,

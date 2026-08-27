@@ -78,6 +78,9 @@ const (
 	ECSRolloutFailed    = "FAILED"
 )
 
+// ECSDeploymentPrimary is the status of the deployment a service is currently trying to reach; every other deployment on the service is one it is draining away from.
+const ECSDeploymentPrimary = "PRIMARY"
+
 type ECSEvent struct {
 	Message string
 	When    *time.Time
@@ -1157,7 +1160,7 @@ func desiredECSServiceImage(detail *ECSTaskDefinitionDetail) (ECSServiceImage, b
 // ServiceTaskDefinition prefers the PRIMARY deployment's task definition over the service's own, because during a rollout the service field has already moved to the revision the deployment is still bringing up.
 func ServiceTaskDefinition(s *ECSService) string {
 	for _, dep := range s.Deployments {
-		if dep.Status == "PRIMARY" && dep.TaskDefinition != "" {
+		if dep.Status == ECSDeploymentPrimary && dep.TaskDefinition != "" {
 			return dep.TaskDefinition
 		}
 	}

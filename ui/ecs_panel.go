@@ -91,7 +91,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 				switch gui.ecsDrill.level {
 				case ecsLevelServices:
 					return []panels.MainTab[*ecsRow]{
-						overviewTab(gui, func(context.Context, *ecsRow, int) string { return overviewUnavailable("service") }),
+						overviewTab(gui, gui.ecsServiceOverview),
 						{Key: "config", Title: "Config", Render: gui.renderECSServiceConfig},
 						{Key: "deployments", Title: "Deployments", Render: gui.renderECSServiceDeployments},
 						{Key: "events", Title: "Events", Render: gui.renderECSServiceEvents},
@@ -164,6 +164,18 @@ func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) 
 	defer cancel()
 
 	return presentation.FormatECSClusterOverview(row.Cluster, gui.Client.GetECSClusterOverview(fetchCtx, row.Cluster), width)
+}
+
+// ecsServiceOverview consolidates the service's detail tabs into one pane, refetching its metrics and its running image on each render.
+func (gui *Gui) ecsServiceOverview(ctx context.Context, row *ecsRow, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("service")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	return presentation.FormatECSServiceOverview(row.Service, gui.Client.GetECSServiceOverview(fetchCtx, row.Service), width, time.Now())
 }
 
 func (gui *Gui) renderECSClusterConfig(row *ecsRow) tasks.TaskFunc {
