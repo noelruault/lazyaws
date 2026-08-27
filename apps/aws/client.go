@@ -65,6 +65,10 @@ type Client struct {
 	// taskDefs caches task definition revisions (see DescribeTaskDefinitionDetail), which are immutable once registered, so the overview refresh tier does not re-describe the same revision every tick.
 	taskDefsMu sync.Mutex
 	taskDefs   map[string]*ECSTaskDefinitionDetail
+	// The metrics tier's memos, one per pane that reads CloudWatch (see metricsMemo): an overview redraws every couple of seconds and its metrics refetch on their own, much slower interval, because GetMetricData is the one call here that is billed per metric requested.
+	instanceMetrics metricsMemo[*InstanceMetrics]
+	clusterMetrics  metricsMemo[*ECSClusterMetrics]
+	serviceMetrics  metricsMemo[*ECSServiceMetrics]
 	// identityErr is why the STS caller-identity probe last failed, kept so the bootstrap can refuse to start rather than let every panel discover the same expired token on its own.
 	identityErr error
 	Region      string

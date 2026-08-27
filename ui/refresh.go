@@ -18,6 +18,12 @@ func tickInterval(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// metricsMaxAge is how long a CloudWatch reading stays the answer for the pane holding it.
+// Named rather than read inline at each overview, so the three panes that read metrics cannot end up on three different tiers: this is the interval with a price attached, since GetMetricData is billed per metric requested.
+func (gui *Gui) metricsMaxAge() time.Duration {
+	return gui.Config.User.Refresh.MetricsInterval()
+}
+
 // singleFlight wraps a panel reloader so a call that finds the previous one still running is DROPPED rather than queued.
 // Queueing is the wrong answer for a refresh: the caller wanted the current state and the reload already in flight is fetching exactly that, so a queue only converts a slow account into a backlog of identical list fetches that all land at once and each cost a full set of AWS calls.
 func singleFlight(reload func() error) func() error {

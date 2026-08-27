@@ -1,6 +1,9 @@
 package aws
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // The ECSClusterOverview.Errs keys. SectionMetrics is shared with the instance overview: the key names the fetch that failed, and both panes have exactly one metrics fetch.
 const (
@@ -29,7 +32,8 @@ func (o *ECSClusterOverview) Err(section string) error {
 
 // GetECSClusterOverview fetches the cluster's sections concurrently and always returns an overview, never an error.
 // A section that failed is reported through Errs so the sections that succeeded still render: one denied permission degrades one block instead of blanking the pane.
-func (c *Client) GetECSClusterOverview(ctx context.Context, cluster *ECSCluster) *ECSClusterOverview {
+// metricsMaxAge puts the metrics section on its own slower tier, for the reason GetInstanceOverview documents; 0 means the reading taken for this selection is reused for as long as it is selected.
+func (c *Client) GetECSClusterOverview(ctx context.Context, cluster *ECSCluster, metricsMaxAge time.Duration) *ECSClusterOverview {
 	overview := &ECSClusterOverview{Errs: map[string]error{}}
 	sections := newSectionFetcher(overview.Errs)
 
@@ -53,7 +57,9 @@ func (c *Client) GetECSClusterOverview(ctx context.Context, cluster *ECSCluster)
 	}
 
 	sections.fetch(SectionMetrics, func() (err error) {
-		overview.Metrics, err = c.GetECSClusterMetrics(ctx, cluster.Name)
+		overview.Metrics, err = memoized(&c.clusterMetrics, cluster.Name, metricsMaxAge, func() (*ECSClusterMetrics, error) {
+			return c.GetECSClusterMetrics(ctx, cluster.Name)
+		})
 		return err
 	})
 

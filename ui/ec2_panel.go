@@ -97,7 +97,7 @@ func (gui *Gui) instanceOverview(ctx context.Context, inst *aws.Instance, width 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	overview := gui.Client.GetInstanceOverview(fetchCtx, inst.ID)
+	overview := gui.Client.GetInstanceOverview(fetchCtx, inst.ID, gui.metricsMaxAge())
 	gui.ec2Extras.fill(fetchCtx, gui.Client, gui.Gen, inst.ID, overview)
 
 	return presentation.FormatInstanceOverview(inst, overview, width, time.Now())

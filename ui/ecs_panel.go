@@ -154,7 +154,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 	}
 }
 
-// ecsClusterOverview consolidates the cluster's detail tabs into one pane, refetching every section on each render.
+// ecsClusterOverview consolidates the cluster's detail tabs into one pane, refetching its services and tasks on each render and its metrics on the slower metrics tier.
 func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) string {
 	if gui.Client == nil {
 		return overviewUnavailable("cluster")
@@ -163,10 +163,10 @@ func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	return presentation.FormatECSClusterOverview(row.Cluster, gui.Client.GetECSClusterOverview(fetchCtx, row.Cluster), width)
+	return presentation.FormatECSClusterOverview(row.Cluster, gui.Client.GetECSClusterOverview(fetchCtx, row.Cluster, gui.metricsMaxAge()), width)
 }
 
-// ecsServiceOverview consolidates the service's detail tabs into one pane, refetching its metrics and its running image on each render.
+// ecsServiceOverview consolidates the service's detail tabs into one pane, refetching its running image on each render and its metrics on the slower metrics tier.
 // The row is checked as well as the client: a rerender queued before a drill level changed arrives with the tab set of one level and the row of another, and the formatter reads the service unguarded.
 func (gui *Gui) ecsServiceOverview(ctx context.Context, row *ecsRow, width int) string {
 	if gui.Client == nil || row.Service == nil {
@@ -176,7 +176,7 @@ func (gui *Gui) ecsServiceOverview(ctx context.Context, row *ecsRow, width int) 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	return presentation.FormatECSServiceOverview(row.Service, gui.Client.GetECSServiceOverview(fetchCtx, row.Service), width, time.Now())
+	return presentation.FormatECSServiceOverview(row.Service, gui.Client.GetECSServiceOverview(fetchCtx, row.Service, gui.metricsMaxAge()), width, time.Now())
 }
 
 func (gui *Gui) renderECSClusterConfig(row *ecsRow) tasks.TaskFunc {

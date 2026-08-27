@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // The InstanceOverview.Errs keys, one per fetch rather than one per rendered section: several sections read the same response, so a failed DescribeInstances has to be reportable once and rendered against each section that needed it.
@@ -37,7 +38,8 @@ func (o *InstanceOverview) Err(section string) error {
 
 // GetInstanceOverview fetches the three refreshable sections concurrently and always returns an overview, never an error.
 // A section that failed is reported through Errs so the sections that succeeded still render: the point of the fan-out is that one denied permission degrades one block instead of blanking the pane.
-func (c *Client) GetInstanceOverview(ctx context.Context, instanceID string) *InstanceOverview {
+// metricsMaxAge puts the metrics section on its own slower tier: the pane redraws on a couple of seconds, and re-paying a per-metric bill at that rate for numbers CloudWatch publishes once a minute is what the tier exists to stop. 0 means the reading taken for this selection is reused for as long as it is selected.
+func (c *Client) GetInstanceOverview(ctx context.Context, instanceID string, metricsMaxAge time.Duration) *InstanceOverview {
 	overview := &InstanceOverview{Errs: map[string]error{}}
 	sections := newSectionFetcher(overview.Errs)
 
@@ -51,7 +53,9 @@ func (c *Client) GetInstanceOverview(ctx context.Context, instanceID string) *In
 		return err
 	})
 	sections.fetch(SectionMetrics, func() (err error) {
-		overview.Metrics, err = c.GetInstanceMetrics(ctx, instanceID)
+		overview.Metrics, err = memoized(&c.instanceMetrics, instanceID, metricsMaxAge, func() (*InstanceMetrics, error) {
+			return c.GetInstanceMetrics(ctx, instanceID)
+		})
 		return err
 	})
 

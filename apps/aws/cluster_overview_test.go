@@ -22,7 +22,7 @@ func TestGetECSClusterOverviewSkipsMetricsWhenInsightsIsOff(t *testing.T) {
 			overview := (&Client{}).GetECSClusterOverview(context.Background(), &ECSCluster{
 				Name:              "app-cluster",
 				ContainerInsights: tc.insights,
-			})
+			}, 0)
 
 			if overview.InsightsOff != tc.wantInsightsOff {
 				t.Errorf("InsightsOff = %v, want %v", overview.InsightsOff, tc.wantInsightsOff)
@@ -42,7 +42,7 @@ func TestGetECSClusterOverviewReportsEachSectionSeparately(t *testing.T) {
 	overview := (&Client{}).GetECSClusterOverview(context.Background(), &ECSCluster{
 		Name:              "app-cluster",
 		ContainerInsights: "enabled",
-	})
+	}, 0)
 
 	if overview == nil {
 		t.Fatal("GetECSClusterOverview must always return an overview, never nil")

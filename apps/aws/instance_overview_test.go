@@ -10,7 +10,7 @@ import (
 
 // A client with no SDK clients is the one state a test can drive without an interface seam, and it is the state that proves the fan-out's contract: every section fails, every failure is reported, and none of them takes the pane down with it.
 func TestGetInstanceOverviewReportsEverySectionThatFailed(t *testing.T) {
-	overview := (&Client{}).GetInstanceOverview(context.Background(), "i-1234567890")
+	overview := (&Client{}).GetInstanceOverview(context.Background(), "i-1234567890", 0)
 
 	if overview == nil {
 		t.Fatal("GetInstanceOverview() = nil, want an overview even when every section failed")
@@ -29,7 +29,7 @@ func TestGetInstanceOverviewReportsEverySectionThatFailed(t *testing.T) {
 
 // The fan-out must not fill the two sections whose cost belongs to a selection: an overview re-renders on a ticker, and DescribeAlarms pages every alarm in the account.
 func TestGetInstanceOverviewLeavesTheSelectionTimeSectionsToTheCaller(t *testing.T) {
-	overview := (&Client{}).GetInstanceOverview(context.Background(), "i-1234567890")
+	overview := (&Client{}).GetInstanceOverview(context.Background(), "i-1234567890", 0)
 
 	if overview.Err(SectionASG) != nil || overview.Err(SectionAlarms) != nil {
 		t.Error("GetInstanceOverview() reported an ASG or alarm error, so it fetched sections that must stay off the refresh path")

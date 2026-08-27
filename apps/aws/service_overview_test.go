@@ -10,7 +10,7 @@ func TestGetECSServiceOverviewReportsEachSectionSeparately(t *testing.T) {
 	overview := (&Client{}).GetECSServiceOverview(context.Background(), &ECSService{
 		Cluster: "app-cluster",
 		Name:    "app-auth",
-	})
+	}, 0)
 
 	if overview == nil {
 		t.Fatal("GetECSServiceOverview must always return an overview, never nil")
@@ -27,7 +27,7 @@ func TestGetECSServiceOverviewReportsEachSectionSeparately(t *testing.T) {
 
 // The pane renders from the selected row, which can be nil while a panel is still loading; a fan-out that dereferenced it would take the whole app down rather than one tab.
 func TestGetECSServiceOverviewWithoutAServiceAttemptsNothing(t *testing.T) {
-	overview := (&Client{}).GetECSServiceOverview(context.Background(), nil)
+	overview := (&Client{}).GetECSServiceOverview(context.Background(), nil, 0)
 
 	if len(overview.Errs) != 0 {
 		t.Errorf("Errs = %v, want no fetch attempted without a service", overview.Errs)
