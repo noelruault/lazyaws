@@ -272,6 +272,7 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 		nextToken = out.NextToken
 	}
 
+	c.recordClusterInsights(clusters)
 	return clusters, nil
 }
 
@@ -295,6 +296,23 @@ func mapClusterStatistics(stats []ecsTypes.KeyValuePair) ECSClusterStatistics {
 		ActiveFargateServices:   byName["activefargateservicecount"],
 		DrainingEC2Services:     byName["drainingec2servicecount"],
 		DrainingFargateServices: byName["drainingfargateservicecount"],
+	}
+}
+
+func (c *Client) clusterInsightsSetting(clusterName string) string {
+	c.clusterInsightsMu.Lock()
+	defer c.clusterInsightsMu.Unlock()
+	return c.clusterInsights[clusterName]
+}
+
+func (c *Client) recordClusterInsights(clusters []ECSCluster) {
+	c.clusterInsightsMu.Lock()
+	defer c.clusterInsightsMu.Unlock()
+	if c.clusterInsights == nil {
+		c.clusterInsights = map[string]string{}
+	}
+	for _, cl := range clusters {
+		c.clusterInsights[cl.Name] = cl.ContainerInsights
 	}
 }
 

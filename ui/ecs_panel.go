@@ -220,6 +220,19 @@ func formatECSClusterConfig(c *aws.ECSCluster, data *aws.ECSClusterData, insight
 	return out + table + "\n"
 }
 
+// formatServiceMetric distinguishes a service CloudWatch has not answered for from one measured at zero, which the Insights-derived percentages could not: they divided by a reservation that is absent exactly when the data is.
+func formatServiceMetric(m *aws.ECSServiceMetrics, get func(*aws.ECSServiceMetrics) aws.MetricPoint) string {
+	if m == nil {
+		return "n/a"
+	}
+	return presentation.MetricReading(get(m), "1-min avg", func(v float64) string { return fmt.Sprintf("%.1f%%", v) })
+}
+
+// Container Insights reports CPU in the same 1024-per-vCPU units a task definition reserves in, and memory in MiB.
+func formatCPUUnits(v float64) string { return fmt.Sprintf("%.0f (%.2f vCPU)", v, v/1024) }
+
+func formatMebibytes(v float64) string { return fmt.Sprintf("%.0f MiB", v) }
+
 // formatUtilizationPercent renders zero as unavailable because disabled Insights has no reservation denominator.
 func formatUtilizationPercent(insights *aws.ECSContainerInsights, get func(*aws.ECSContainerInsights) float64) string {
 	if insights == nil {
@@ -303,7 +316,8 @@ func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
-		insights, _ := gui.Client.GetECSContainerInsights(fetchCtx, s.Cluster, s.Name)
+		// Best-effort: a service whose metrics fail to load still has load balancers and target health worth rendering.
+		metrics, _ := gui.Client.GetECSServiceMetrics(fetchCtx, s.Cluster, s.Name)
 
 		health := make(map[string][]aws.ECSTargetHealth, len(s.LoadBalancers))
 		for _, lb := range s.LoadBalancers {
@@ -318,12 +332,12 @@ func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 		if gen != gui.Gen {
 			return
 		}
-		gui.RenderStringMain(formatECSServiceConfig(s, insights, health))
+		gui.RenderStringMain(formatECSServiceConfig(s, metrics, health))
 	}})
 }
 
-func formatECSServiceConfig(s *aws.ECSService, insights *aws.ECSContainerInsights, health map[string][]aws.ECSTargetHealth) string {
-	out := utils.FormatMap(0, map[string]string{
+func formatECSServiceConfig(s *aws.ECSService, metrics *aws.ECSServiceMetrics, health map[string][]aws.ECSTargetHealth) string {
+	fields := map[string]string{
 		"Name":            s.Name,
 		"Status":          s.Status,
 		"Task definition": s.TaskDefinition,
@@ -331,10 +345,20 @@ func formatECSServiceConfig(s *aws.ECSService, insights *aws.ECSContainerInsight
 		"Desired":         strconv.Itoa(int(s.DesiredCount)),
 		"Running":         strconv.Itoa(int(s.RunningCount)),
 		"Pending":         strconv.Itoa(int(s.PendingCount)),
-		"CPU utilization": formatUtilizationPercent(insights, func(i *aws.ECSContainerInsights) float64 { return i.CPUPercent }),
-		"Mem utilization": formatUtilizationPercent(insights, func(i *aws.ECSContainerInsights) float64 { return i.MemPercent }),
+		"CPU utilization": formatServiceMetric(metrics, func(m *aws.ECSServiceMetrics) aws.MetricPoint { return m.CPUUtilization }),
+		"Mem utilization": formatServiceMetric(metrics, func(m *aws.ECSServiceMetrics) aws.MetricPoint { return m.MemoryUtilization }),
 		"Console":         s.ConsoleURL,
-	})
+	}
+	// The reservations exist only where Container Insights is on, so they are added rather than shown empty everywhere else.
+	if metrics != nil && metrics.InsightsCPUTotal.OK {
+		fields["CPU reserved"] = presentation.MetricReading(metrics.InsightsCPUTotal, "1-min avg", formatCPUUnits)
+		fields["CPU used"] = presentation.MetricReading(metrics.InsightsCPUUsed, "1-min avg", formatCPUUnits)
+	}
+	if metrics != nil && metrics.InsightsMemTotal.OK {
+		fields["Mem reserved"] = presentation.MetricReading(metrics.InsightsMemTotal, "1-min avg", formatMebibytes)
+		fields["Mem used"] = presentation.MetricReading(metrics.InsightsMemUsed, "1-min avg", formatMebibytes)
+	}
+	out := utils.FormatMap(0, fields)
 
 	out += "\nLoad balancers:\n"
 	if len(s.LoadBalancers) == 0 {

@@ -58,6 +58,10 @@ type Client struct {
 	// instanceTypes caches DescribeInstanceTypes answers (see GetInstanceTypeInfo): a type's vCPU, memory and network performance are properties of the type, not of any instance, so re-asking can only return what is already held.
 	instanceTypesMu sync.Mutex
 	instanceTypes   map[string]InstanceTypeInfo
+	// clusterInsights records each cluster's containerInsights setting as the last cluster list read it, so a service metrics fetch can decide whether the Insights namespace is worth querying without a describe of its own.
+	// It is a record, not a cache: nothing reads it to skip an API call, so a setting changed since the last list costs at most one refresh of an additive extra.
+	clusterInsightsMu sync.Mutex
+	clusterInsights   map[string]string
 	// identityErr is why the STS caller-identity probe last failed, kept so the bootstrap can refuse to start rather than let every panel discover the same expired token on its own.
 	identityErr error
 	Region      string

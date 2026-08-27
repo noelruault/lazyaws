@@ -120,6 +120,57 @@ func TestFormatECSServiceConfigNoLoadBalancers(t *testing.T) {
 	}
 }
 
+// An idle service reads 0.0%, and a service CloudWatch never answered for reads "no data"; the old Insights percentages could not tell those apart because the reservation they divided by was absent exactly when the data was.
+func TestFormatECSServiceConfigSeparatesAnIdleServiceFromAnUnmeasuredOne(t *testing.T) {
+	s := &aws.ECSService{Name: "web"}
+	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+
+	out := formatECSServiceConfig(s, &aws.ECSServiceMetrics{
+		CPUUtilization: aws.MetricPoint{Value: 0, At: at, OK: true},
+	}, nil)
+
+	if !strings.Contains(out, "0.0% (1-min avg @ 17:43Z)") {
+		t.Errorf("formatECSServiceConfig() should stamp a measured zero with its publish time, got:\n%s", out)
+	}
+	if !strings.Contains(out, "no data") {
+		t.Errorf("formatECSServiceConfig() should render the unanswered memory metric as \"no data\", got:\n%s", out)
+	}
+}
+
+// The reservations only exist where Container Insights is on; a service without them must not grow empty rows for them.
+func TestFormatECSServiceConfigAddsInsightsRowsOnlyWhenPresent(t *testing.T) {
+	s := &aws.ECSService{Name: "web"}
+	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+
+	without := formatECSServiceConfig(s, &aws.ECSServiceMetrics{CPUUtilization: aws.MetricPoint{Value: 1.12, At: at, OK: true}}, nil)
+	for _, absent := range []string{"CPU reserved", "Mem reserved", "vCPU", "MiB"} {
+		if strings.Contains(without, absent) {
+			t.Errorf("formatECSServiceConfig() shows %q with no Insights data, got:\n%s", absent, without)
+		}
+	}
+
+	with := formatECSServiceConfig(s, &aws.ECSServiceMetrics{
+		CPUUtilization:   aws.MetricPoint{Value: 1.12, At: at, OK: true},
+		InsightsCPUUsed:  aws.MetricPoint{Value: 11.5, At: at, OK: true},
+		InsightsCPUTotal: aws.MetricPoint{Value: 1024, At: at, OK: true},
+		InsightsMemUsed:  aws.MetricPoint{Value: 285, At: at, OK: true},
+		InsightsMemTotal: aws.MetricPoint{Value: 2048, At: at, OK: true},
+	}, nil)
+	for _, want := range []string{"1024 (1.00 vCPU)", "12 (0.01 vCPU)", "2048 MiB", "285 MiB"} {
+		if !strings.Contains(with, want) {
+			t.Errorf("formatECSServiceConfig() missing %q with Insights data, got:\n%s", want, with)
+		}
+	}
+}
+
+func TestFormatECSServiceConfigWithoutMetrics(t *testing.T) {
+	out := formatECSServiceConfig(&aws.ECSService{Name: "web"}, nil, nil)
+
+	if !strings.Contains(out, "n/a") {
+		t.Errorf("formatECSServiceConfig() with a failed metrics fetch should show \"n/a\", got:\n%s", out)
+	}
+}
+
 func TestFormatECSServiceScalingNone(t *testing.T) {
 	out := formatECSServiceScaling(nil)
 

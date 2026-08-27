@@ -212,6 +212,157 @@ func TestGetInstanceMetricsGuards(t *testing.T) {
 	}
 }
 
+// The ticket's whole point: service utilization comes from AWS/ECS, which publishes whether or not Container Insights is on.
+func TestServiceMetricQueriesUseThePlainECSNamespace(t *testing.T) {
+	queries := serviceMetricQueries("app-cluster", "app-auth", false)
+
+	want := map[string]string{
+		metricIDECSCPU:    "CPUUtilization",
+		metricIDECSMemory: "MemoryUtilization",
+	}
+	if len(queries) != len(want) {
+		t.Fatalf("got %d queries, want %d without Insights", len(queries), len(want))
+	}
+	for _, q := range queries {
+		id := getString(q.Id)
+		if q.MetricStat == nil || q.MetricStat.Metric == nil {
+			t.Fatalf("query %q has no MetricStat", id)
+		}
+		if got := getString(q.MetricStat.Metric.MetricName); got != want[id] {
+			t.Errorf("query %q asks for %q, want %q", id, got, want[id])
+		}
+		// Pinned to the literal: comparing against the constant the code uses agrees with whatever the constant is changed to.
+		if ns := getString(q.MetricStat.Metric.Namespace); ns != "AWS/ECS" {
+			t.Errorf("query %q namespace = %q, want AWS/ECS; ECS/ContainerInsights only publishes where the setting is on", id, ns)
+		}
+		if q.MetricStat.Period == nil || *q.MetricStat.Period != 60 {
+			t.Errorf("query %q period = %v, want 60 for the minute refresh tier", id, q.MetricStat.Period)
+		}
+		if getString(q.MetricStat.Stat) != "Average" {
+			t.Errorf("query %q stat = %q, want Average: a utilization percentage does not sum", id, getString(q.MetricStat.Stat))
+		}
+		dims := map[string]string{}
+		for _, d := range q.MetricStat.Metric.Dimensions {
+			dims[getString(d.Name)] = getString(d.Value)
+		}
+		if len(dims) != 2 || dims["ClusterName"] != "app-cluster" || dims["ServiceName"] != "app-auth" {
+			t.Errorf("query %q dimensions = %v, want exactly ClusterName+ServiceName for the requested service", id, dims)
+		}
+	}
+}
+
+// Insights is additive: it may add ids to the same call, and it may never replace the AWS/ECS pair or be asked for when the cluster has it off.
+func TestServiceMetricQueriesAddInsightsOnlyWhenEnabled(t *testing.T) {
+	namespaces := func(withInsights bool) map[string]string {
+		byID := map[string]string{}
+		for _, q := range serviceMetricQueries("app-cluster", "app-auth", withInsights) {
+			byID[getString(q.Id)] = getString(q.MetricStat.Metric.Namespace) + "/" + getString(q.MetricStat.Metric.MetricName)
+		}
+		return byID
+	}
+
+	off := namespaces(false)
+	for id := range off {
+		if strings.Contains(off[id], "ContainerInsights") {
+			t.Errorf("query %q = %s with Insights off; a cluster without Insights would be billed for an empty series every refresh", id, off[id])
+		}
+	}
+
+	on := namespaces(true)
+	if on[metricIDECSCPU] != "AWS/ECS/CPUUtilization" || on[metricIDECSMemory] != "AWS/ECS/MemoryUtilization" {
+		t.Errorf("with Insights on the AWS/ECS pair = %q/%q, want it kept as the source rather than replaced", on[metricIDECSCPU], on[metricIDECSMemory])
+	}
+	for id, want := range map[string]string{
+		metricIDECSCPUUsed:     "ECS/ContainerInsights/CpuUtilized",
+		metricIDECSCPUReserved: "ECS/ContainerInsights/CpuReserved",
+		metricIDECSMemUsed:     "ECS/ContainerInsights/MemoryUtilized",
+		metricIDECSMemReserved: "ECS/ContainerInsights/MemoryReserved",
+	} {
+		if on[id] != want {
+			t.Errorf("query %q = %q, want %q added when the cluster setting is on", id, on[id], want)
+		}
+	}
+	if len(on) != len(off)+4 {
+		t.Errorf("got %d queries with Insights and %d without, want exactly four more in the same call", len(on), len(off))
+	}
+}
+
+func TestMapServiceMetricsIgnoresResponseOrder(t *testing.T) {
+	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+	// Deliberately not the order serviceMetricQueries asks in, and memory is the empty series a cluster without Insights returns for the extras.
+	results := []types.MetricDataResult{
+		metricResult(metricIDECSMemory, MetricPoint{Value: 13.95, At: at}),
+		metricResult(metricIDECSCPU, MetricPoint{Value: 1.12, At: at}),
+		metricResult(metricIDECSCPUReserved),
+	}
+
+	got := mapServiceMetrics("app-cluster", "app-auth", results)
+
+	if got.ClusterName != "app-cluster" || got.ServiceName != "app-auth" {
+		t.Errorf("got %s/%s, want the requested cluster and service", got.ClusterName, got.ServiceName)
+	}
+	if got.CPUUtilization != (MetricPoint{Value: 1.12, At: at, OK: true}) {
+		t.Errorf("CPUUtilization = %+v, want the ecscpu result matched by id, not by position", got.CPUUtilization)
+	}
+	if got.MemoryUtilization.Value != 13.95 || !got.MemoryUtilization.OK {
+		t.Errorf("MemoryUtilization = %+v, want 13.95 present", got.MemoryUtilization)
+	}
+	if got.InsightsCPUTotal.OK {
+		t.Errorf("InsightsCPUTotal = %+v, want absent: an empty series must never read as a reservation of 0", got.InsightsCPUTotal)
+	}
+	if got.InsightsMemTotal.OK || got.InsightsMemUsed.OK || got.InsightsCPUUsed.OK {
+		t.Error("unanswered Insights metrics must stay absent rather than being mapped from a neighbour")
+	}
+}
+
+// A zero-percent service is idle, not unmeasured, and the two must not render the same.
+func TestMapServiceMetricsKeepsAMeasuredZero(t *testing.T) {
+	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+	got := mapServiceMetrics("c", "s", []types.MetricDataResult{metricResult(metricIDECSCPU, MetricPoint{Value: 0, At: at})})
+
+	if !got.CPUUtilization.OK || got.CPUUtilization.Value != 0 {
+		t.Errorf("CPUUtilization = %+v, want a present zero", got.CPUUtilization)
+	}
+	if got.MemoryUtilization.OK {
+		t.Errorf("MemoryUtilization = %+v, want absent when the response carried no result", got.MemoryUtilization)
+	}
+}
+
+func TestGetECSServiceMetricsGuards(t *testing.T) {
+	_, err := (&Client{}).GetECSServiceMetrics(context.Background(), "c", "s")
+	if err == nil || !strings.Contains(err.Error(), "CloudWatch client") {
+		t.Errorf("nil-client error = %v, want the client guard to be what fired", err)
+	}
+
+	// A non-nil client, so only the name guard can answer: with nil the client guard fires first and hides it.
+	for _, tc := range []struct{ cluster, service string }{{"", "s"}, {"c", ""}} {
+		_, err := (&Client{CloudWatch: &cloudwatch.Client{}}).GetECSServiceMetrics(context.Background(), tc.cluster, tc.service)
+		if err == nil || !strings.Contains(err.Error(), "cluster and service names required") {
+			t.Errorf("GetECSServiceMetrics(%q, %q) error = %v, want the name guard to be what fired", tc.cluster, tc.service, err)
+		}
+	}
+}
+
+// The Insights extras are gated on what the last cluster list recorded, so the gate is what has to be pinned: nothing else tells the fetch which namespace to ask for.
+func TestClusterInsightsRecordDrivesTheInsightsGate(t *testing.T) {
+	c := &Client{}
+	if ContainerInsightsEnabled(c.clusterInsightsSetting("app-cluster")) {
+		t.Error("a cluster nobody has listed must read as Insights off, not on")
+	}
+
+	c.recordClusterInsights([]ECSCluster{
+		{Name: "batch-cluster", ContainerInsights: "enabled"},
+		{Name: "app-cluster", ContainerInsights: "disabled"},
+	})
+
+	if !ContainerInsightsEnabled(c.clusterInsightsSetting("batch-cluster")) {
+		t.Error("batch-cluster was recorded as enabled and must gate the extras on")
+	}
+	if ContainerInsightsEnabled(c.clusterInsightsSetting("app-cluster")) {
+		t.Error("app-cluster was recorded as disabled and must gate the extras off")
+	}
+}
+
 func TestGetInstanceAlarmsGuards(t *testing.T) {
 	if _, err := (&Client{}).GetInstanceAlarms(context.Background(), "i-1234567890"); err == nil {
 		t.Error("GetInstanceAlarms() with nil CloudWatch client should error")
