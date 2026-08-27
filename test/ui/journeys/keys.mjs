@@ -17,6 +17,22 @@ function assertAdvertises (footer, key, label) {
   }
 }
 
+// The lines a popup itself holds, read between ITS borders.
+// Scoping matters more than it looks: the detail pane prints the selected instance's full id in its own header, so "the id is somewhere on screen" is true whatever the popup was handed, and a mutant that publishes the wrong copy value survives that assertion.
+function popupBody (screen, title) {
+  const lines = screen.split('\n')
+  const top = lines.findIndex(line => line.includes(`╭─${title}`))
+  if (top < 0) throw new Error(`no popup titled ${JSON.stringify(title)} on screen\n--- screen ---\n${screen}`)
+  const left = lines[top].indexOf(`╭─${title}`)
+  const body = []
+  for (let i = top + 1; i < lines.length; i++) {
+    const cell = lines[i].slice(left)
+    if (cell.startsWith('╰')) break
+    body.push(cell.replace(/^│/, '').split('│')[0].trim())
+  }
+  return body
+}
+
 async function assertClosed (term, popup, key) {
   await term.sendKeys('Escape')
   await term.settle()
@@ -44,8 +60,11 @@ export async function run ({ term, seed, endpoint }) {
   }
   await term.sendKeys('y')
   await term.waitForText('id / ARN (select to copy)')
-  // The point of the popup is the UNTRUNCATED id: the row shows an ellipsis at this panel width, so finding the whole id proves the popup is not echoing the row.
-  assertScreen(await term.readScreen(), seed.instances.unnamed, 'copy popup holds the full instance id')
+  // The point of the popup is the UNTRUNCATED id, and it is read out of the popup's own lines: the row shows an ellipsis at this panel width, so the whole id inside the box proves the popup is not echoing the row.
+  const copied = popupBody(await term.readScreen(), 'id / ARN (select to copy)')
+  if (!copied.includes(seed.instances.unnamed)) {
+    throw new Error(`the copy popup holds ${JSON.stringify(copied)}, want the full id ${seed.instances.unnamed}`)
+  }
   await assertClosed(term, 'id / ARN (select to copy)', 'y')
 
   // --- a actions menu -------------------------------------------------------------------------

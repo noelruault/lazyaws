@@ -31,12 +31,14 @@ function paneCells (screen) {
   return screen.split('\n').flatMap(line => line.split('│').slice(1).map(cell => cell.trim()))
 }
 
+// The header and the section titles are both whole pane lines, and both are asserted as whole cells.
+// A substring check would pass on text the Overview did not draw: "VPC" is also the side panel's own frame title, and "Instance" sits inside the ECS pane's "Instances" tab.
 async function assertSections (term, resource) {
   const screen = await term.readScreen()
   const cells = paneCells(screen)
-  for (const section of resource.sections) {
-    if (!cells.includes(section)) {
-      throw new Error(`${resource.name} Overview: no "${section}" section title\n--- screen ---\n${screen}`)
+  for (const title of [resource.header, ...resource.sections]) {
+    if (!cells.includes(title)) {
+      throw new Error(`${resource.name} Overview: no "${title}" line in the pane\n--- screen ---\n${screen}`)
     }
   }
   return screen
@@ -70,8 +72,7 @@ export async function run ({ term, seed }) {
     }
 
     // The header is the overview's first block and it names the resource kind, so it is how the pane says which formatter drew it.
-    const screen = await assertSections(term, resource)
-    assertScreen(screen, resource.header, `${resource.name} Overview header`)
+    await assertSections(term, resource)
   }
 
   await term.screenshot('overview-two-column')
