@@ -20,7 +20,7 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 		ContextState: &panels.ContextState[*aws.VPC]{
 			GetMainTabs: func() []panels.MainTab[*aws.VPC] {
 				return []panels.MainTab[*aws.VPC]{
-					overviewTab(gui, func(context.Context, *aws.VPC, int) string { return overviewUnavailable("VPC") }),
+					staticOverviewTab(gui, gui.vpcOverview),
 					{Key: "config", Title: "Config", Render: gui.renderVPCConfig},
 					{Key: "subnets", Title: "Subnets", Render: gui.renderVPCSubnets},
 					{Key: "routes", Title: "Routes", Render: gui.renderVPCRoutes},
@@ -90,6 +90,19 @@ func (gui *Gui) loadVPCList() error {
 
 // vpcSelectionKey identifies a VPC across reloads. The CIDR is not identity: VPCs in different regions, and peered ones, can share it.
 func vpcSelectionKey(vpc *aws.VPC) string { return vpc.ID }
+
+// vpcOverview consolidates the Config, Subnets, Gateways and Endpoints tabs, reading the VPC's own fields off the list row.
+// Six EC2 describes against the tightest-throttled API this app touches is not a per-tick cost, and a VPC's topology is not a per-tick fact either, so the tab renders once per selection.
+func (gui *Gui) vpcOverview(ctx context.Context, vpc *aws.VPC, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("VPC")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, vpcFetchTimeout)
+	defer cancel()
+
+	return presentation.FormatVPCOverview(vpc, gui.Client.GetVPCOverview(fetchCtx, vpc.ID), width)
+}
 
 // vpcTab runs one tab's fetch under the shared timeout and generation check, leaving each render below as only its query and its formatting.
 func (gui *Gui) vpcTab(vpc *aws.VPC, render func(context.Context, string) (string, error)) tasks.TaskFunc {

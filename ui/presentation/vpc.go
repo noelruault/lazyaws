@@ -1,6 +1,10 @@
 package presentation
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/fatih/color"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -30,6 +34,208 @@ func GetVPCDisplayCells(v *aws.VPC) []utils.Cell {
 		// The vpc id is the fallback identifier: you read it when writing a rule or a query, not on every glance down the list.
 		{Text: v.ID, Color: color.Faint},
 	}
+}
+
+// FormatVPCOverview lays a VPC out for the Overview tab: the address space it owns on the left, and what is attached to it on the right.
+// Everything but the DNS attributes comes off the list row or the tabs' own loaders, so the pane costs no call the Subnets, Gateways and Endpoints tabs do not already make.
+func FormatVPCOverview(v *aws.VPC, o *aws.VPCOverview, width int) string {
+	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and a long Name tag beside the CIDR and the id runs off the edge unmarked.
+	header := truncateBlock(ResourceHeader("VPC", vpcLabel(v), Badge(v.State), v.ID, v.CIDR, vpcDefaultNote(v)), width)
+
+	left := joinBlocks(vpcConfigBlock(v), vpcDNSBlock(o), vpcTagsBlock(v))
+	right := joinBlocks(vpcSubnetsBlock(o), vpcGatewaysBlock(o), vpcEndpointsBlock(o))
+
+	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+func vpcLabel(v *aws.VPC) string {
+	if v.Name == "" {
+		return "(no name)"
+	}
+
+	return v.Name
+}
+
+// vpcDefaultNote marks the default VPC, which is the one every account has and the one an unexpected resource usually turns out to be in.
+func vpcDefaultNote(v *aws.VPC) string {
+	if v.IsDefault {
+		return "default VPC"
+	}
+
+	return ""
+}
+
+func vpcConfigBlock(v *aws.VPC) string {
+	rows := []kv{
+		{"CIDR", orNone(v.CIDR)},
+		{"Secondary CIDRs", orNoneList(v.SecondaryCIDRs)},
+		{"IPv6 CIDRs", orNoneList(v.IPv6CIDRs)},
+		{"Default", yesNo(v.IsDefault)},
+		{"Tenancy", orNone(v.Tenancy)},
+		{"Owner", orNone(v.OwnerID)},
+		{"DHCP options", orNone(v.DHCPOptionsID)},
+	}
+
+	return SectionTitle("Configuration") + "\n" + kvBlock(rows)
+}
+
+// vpcDNSBlock reads the overview rather than the VPC, because the two attributes are a separate describe and the list row leaves them false until it answers.
+// Both default to on and are switched off deliberately, so an unreadable attribute must not render as the disabled state.
+func vpcDNSBlock(o *aws.VPCOverview) string {
+	if err := o.Err(aws.SectionDNS); err != nil {
+		return sectionUnavailable("DNS", err)
+	}
+
+	rows := []kv{
+		{"Resolution", onOff(o.DNSSupport)},
+		{"Hostnames", onOff(o.DNSHostnames)},
+	}
+
+	return SectionTitle("DNS") + "\n" + kvBlock(rows)
+}
+
+func vpcSubnetsBlock(o *aws.VPCOverview) string {
+	title := SectionTitle("Subnets")
+	if err := o.Err(aws.SectionSubnets); err != nil {
+		return sectionUnavailable("Subnets", err)
+	}
+	if len(o.Subnets) == 0 {
+		return title + "\nnone"
+	}
+
+	public, available := 0, int32(0)
+	byAZ := map[string]int{}
+	for _, subnet := range o.Subnets {
+		if subnet.Public {
+			public++
+		}
+		available += subnet.AvailableIPs
+		byAZ[subnet.AZ]++
+	}
+
+	lines := []string{
+		title,
+		fmt.Sprintf("%s · %d public / %d private", pluralize(len(o.Subnets), "subnet"), public, len(o.Subnets)-public),
+		fmt.Sprintf("%d addresses free", available),
+		"AZs: " + countsByKey(byAZ),
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// countsByKey renders a count per key in key order, since Go randomizes map iteration and an unsorted line would reshuffle itself on every re-render.
+func countsByKey(counts map[string]int) string {
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, len(keys))
+	for i, key := range keys {
+		parts[i] = fmt.Sprintf("%s (%d)", key, counts[key])
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func vpcGatewaysBlock(o *aws.VPCOverview) string {
+	rows := []kv{
+		{"Internet gateway", vpcIGWLine(o)},
+		{"NAT gateways", vpcNATLine(o)},
+	}
+
+	return SectionTitle("Gateways") + "\n" + kvBlock(rows)
+}
+
+// vpcIGWLine answers whether the VPC can reach the internet at all, which is the fact every "why is this unreachable" question starts from.
+func vpcIGWLine(o *aws.VPCOverview) string {
+	if err := o.Err(aws.SectionIGW); err != nil {
+		return fieldOr(err, "")
+	}
+	if len(o.InternetGateways) == 0 {
+		return "none"
+	}
+
+	ids := make([]string, len(o.InternetGateways))
+	for i, gateway := range o.InternetGateways {
+		ids[i] = gateway.ID
+	}
+
+	return strings.Join(ids, ", ")
+}
+
+// vpcNATLine counts the NAT gateways by state rather than listing them: a NAT gateway is billed per hour, and how many are in which state is the question, not which id.
+func vpcNATLine(o *aws.VPCOverview) string {
+	if err := o.Err(aws.SectionNAT); err != nil {
+		return fieldOr(err, "")
+	}
+	if len(o.NATGateways) == 0 {
+		return "none"
+	}
+
+	byState := map[string]int{}
+	for _, gateway := range o.NATGateways {
+		byState[orNone(gateway.State)]++
+	}
+
+	return fmt.Sprintf("%d · %s", len(o.NATGateways), countsByKey(byState))
+}
+
+func vpcEndpointsBlock(o *aws.VPCOverview) string {
+	title := SectionTitle("Endpoints")
+	if err := o.Err(aws.SectionEndpoints); err != nil {
+		return sectionUnavailable("Endpoints", err)
+	}
+	if len(o.Endpoints) == 0 {
+		return title + "\nnone"
+	}
+
+	byType := map[string]int{}
+	services := make([]string, 0, len(o.Endpoints))
+	for _, endpoint := range o.Endpoints {
+		byType[orNone(endpoint.Type)]++
+		services = append(services, endpoint.ShortService())
+	}
+	sort.Strings(services)
+
+	lines := []string{
+		title,
+		fmt.Sprintf("%s · %s", pluralize(len(o.Endpoints), "endpoint"), countsByKey(byType)),
+		strings.Join(services, ", "),
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func vpcTagsBlock(v *aws.VPC) string {
+	title := SectionTitle("Tags")
+	if len(v.Tags) == 0 {
+		return title + "\nnone"
+	}
+
+	lines := []string{title}
+	for _, tag := range v.Tags {
+		lines = append(lines, tag.Key+": "+orNone(tag.Value))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func orNoneList(values []string) string {
+	if len(values) == 0 {
+		return "none"
+	}
+
+	return strings.Join(values, ", ")
+}
+
+func onOff(b bool) string {
+	if b {
+		return "on"
+	}
+
+	return utils.ColoredString("off", color.FgYellow)
 }
 
 // GetVPCEndpointDisplayStrings labels the row by service rather than by id, because endpoints are usually untagged and one id looks like the next.
