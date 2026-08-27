@@ -20,14 +20,15 @@ func Columns(width, gap int, left, right string) string {
 	}
 	gap = max(gap, 0)
 
-	column := (width - 2*gap - 1) / 2
-	if width < minTwoColWidth || column <= 0 {
+	column := ColumnWidth(width, gap)
+	if column == width {
 		// Stacking gives each block the whole width, which is still a budget: main renders an overview with wrapping off, so a line longer than the pane is clipped at the edge with nothing to say it was clipped.
 		// An ARN is longer than any narrow terminal, so this is the common case rather than the degenerate one.
 		if left == "" {
 			return truncateBlock(right, width)
 		}
-		return truncateBlock(left, width) + "\n" + truncateBlock(right, width)
+		// A blank line between them, because stacking removes the rule that told the two blocks apart: without it the last row of the left block and the first heading of the right one read as one section.
+		return truncateBlock(left, width) + "\n\n" + truncateBlock(right, width)
 	}
 
 	leftLines, rightLines := strings.Split(left, "\n"), strings.Split(right, "\n")
@@ -46,6 +47,17 @@ func Columns(width, gap int, left, right string) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// ColumnWidth reports the width one of Columns' two columns will get at this pane width, returning the full width when Columns would stack instead.
+// A block that lays its own table out has to be built for the width it will be cut to, and deriving that twice is how the table and the cut drift apart.
+func ColumnWidth(width, gap int) int {
+	column := (width - 2*max(gap, 0) - 1) / 2
+	if width < minTwoColWidth || column <= 0 {
+		return width
+	}
+
+	return column
 }
 
 // truncateBlock cuts every line of a pre-rendered block to width terminal cells.

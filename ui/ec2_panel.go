@@ -265,13 +265,9 @@ func (gui *Gui) renderEC2Metrics(inst *aws.Instance) tasks.TaskFunc {
 	})
 }
 
-// formatMetricPoint stamps a reading with the time CloudWatch published it, because the freshest datapoint basic monitoring offers is already minutes old and captioning it "last 5 minutes" claims a freshness the data does not have.
-// A series that published nothing reads "no data": zero is a measurement, absence is not.
+// formatMetricPoint keeps the panel call sites short now that the formatter is shared with the overview.
 func formatMetricPoint(p aws.MetricPoint, stat string, format func(float64) string) string {
-	if !p.OK {
-		return "no data"
-	}
-	return fmt.Sprintf("%s (%s @ %s)", format(p.Value), stat, p.At.UTC().Format("15:04Z"))
+	return presentation.MetricReading(p, stat, format)
 }
 
 func formatEC2Metrics(m *aws.InstanceMetrics) string {

@@ -50,7 +50,7 @@ func TestColumnsMeasuresColoredLinesWithoutTheirEscapes(t *testing.T) {
 
 // Two columns on a narrow terminal are two unreadable slivers, so the right block goes underneath instead.
 func TestColumnsStacksBelowTheTwoColumnThreshold(t *testing.T) {
-	if got, want := Columns(minTwoColWidth-1, testGap, "alpha\nbeta", "one"), "alpha\nbeta\none"; got != want {
+	if got, want := Columns(minTwoColWidth-1, testGap, "alpha\nbeta", "one"), "alpha\nbeta\n\none"; got != want {
 		t.Errorf("Columns = %q, want %q", got, want)
 	}
 	if got, want := Columns(minTwoColWidth, testGap, "alpha", "one"), fmt.Sprintf("%-*s │ %s", (minTwoColWidth-2*testGap-1)/2, "alpha", "one"); got != want {
@@ -60,8 +60,17 @@ func TestColumnsStacksBelowTheTwoColumnThreshold(t *testing.T) {
 
 // A gap wide enough to swallow the width leaves no column to render into, so it stacks rather than emitting negative padding.
 func TestColumnsStacksWhenTheGapEatsTheWidth(t *testing.T) {
-	if got, want := Columns(testWidth, testWidth, "alpha", "one"), "alpha\none"; got != want {
+	if got, want := Columns(testWidth, testWidth, "alpha", "one"), "alpha\n\none"; got != want {
 		t.Errorf("Columns = %q, want %q", got, want)
+	}
+}
+
+// Stacking removes the rule that told the two blocks apart, so the blank line is what replaces it: without one, the last row of the left block and the first heading of the right one read as a single section.
+func TestColumnsStackedBlocksStayToldApart(t *testing.T) {
+	got := Columns(minTwoColWidth-1, testGap, "Metrics\nCPU: 0.5%", "Status\nState: running")
+
+	if want := "CPU: 0.5%\n\nStatus"; !strings.Contains(got, want) {
+		t.Errorf("Columns stacked = %q, want the blocks separated by a blank line", got)
 	}
 }
 
