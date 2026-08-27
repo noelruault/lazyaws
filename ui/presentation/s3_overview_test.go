@@ -124,13 +124,14 @@ func TestBucketOverviewSeparatesAnAbsentBlockFromAFailedRead(t *testing.T) {
 		t.Errorf("an absent public access block should not read as a failed fetch\n%s", absent)
 	}
 
-	o := emptyBucketOverview()
+	// Built from the FULL fixture, which carries a block AND the error: today the fetch nils the block whenever it fails, so an empty fixture cannot tell the error guard from the nil check beside it.
+	o := fullBucketOverview()
 	o.Errs[aws.SectionPublicAccess] = errors.New("AccessDenied")
 	failed := plainBucket(overviewBucket(), o, stackedWidth)
 	if !strings.Contains(failed, "Public access: unavailable: AccessDenied") {
 		t.Errorf("a failed public access read should say so\n%s", failed)
 	}
-	// The four flag rows come off the same response, so a failed read must not print four unanswerable "no"s under it.
+	// The four flag rows come off the same response, so a failed read must not print four settings it could not read.
 	if strings.Contains(failed, "Block ACLs") {
 		t.Errorf("a failed public access read should not render its flag rows\n%s", failed)
 	}
