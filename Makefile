@@ -59,8 +59,8 @@ publish-check: ## Refuse ignored tracked files or source files missing from the 
 		if [ -n "$$missing" ]; then echo "source files missing from the Git index:"; echo "$$missing"; exit 1; fi; \
 	fi
 
-bench: ## Run the hot-path benchmarks (command bar, fuzzy ranking, chat render)
-	go test ./ui/ ./ui/resources/ ./ui/fuzzy/ -run '^$$' -bench . -benchmem -count 3
+bench: ## Run the hot-path benchmarks (list rerender, fit table, overview formatters, command bar, fuzzy ranking, chat render)
+	go test ./ui/ ./ui/utils/ ./ui/presentation/ ./ui/resources/ ./ui/fuzzy/ -run '^$$' -bench . -benchmem -count 3
 
 cover: ## Run tests with coverage, print the total, open the HTML report
 	go test -coverprofile=coverage.out ./...
