@@ -39,6 +39,7 @@ test/ui/node_modules/
 test/ui/.lazyaws
 test/ui/.seed.json
 test/ui/.screenshots/
+test/ui/.shots/
 test/ui/.ttyd.log
 
 __debug_bin
