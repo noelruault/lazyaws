@@ -31,6 +31,22 @@ func overviewTab[T any](gui *Gui, render func(ctx context.Context, item T, width
 	}
 }
 
+// staticOverviewTab is overviewTab for a resource whose overview is configuration rather than state: it renders once per selection instead of on the refresh interval.
+// A bucket costs eleven S3 calls and a repository pages its whole image list, so a two-second ticker would spend unbounded calls redrawing an unchanged pane; selection, profile switch and resize each still rebuild the task.
+func staticOverviewTab[T any](gui *Gui, render func(ctx context.Context, item T, width int) string) panels.MainTab[T] {
+	return panels.MainTab[T]{
+		Key:   overviewTabKey,
+		Title: "Overview",
+		Render: func(item T) tasks.TaskFunc {
+			width := gui.Views.Main.InnerWidth()
+
+			return gui.newOverviewTask(0, func(ctx context.Context) string {
+				return render(ctx, item, width)
+			})
+		},
+	}
+}
+
 // overviewInterval maps the configured seconds onto a duration, where 0 means no auto-refresh at all.
 // time.NewTicker panics on a non-positive duration, so a negative value is folded into the off state rather than passed on.
 func overviewInterval(seconds int) time.Duration {

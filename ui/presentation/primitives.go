@@ -126,6 +126,25 @@ func kvBlock(rows []kv) string {
 	return strings.Join(lines, "\n")
 }
 
+// pluralize renders a count with its noun, "1 rule" / "2 rules".
+func pluralize(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// fieldOr reports a failed fetch in the field's own place, for an overview whose sections each read several independent calls.
+// sectionUnavailable is the right shape when one fetch feeds the whole section; this one is for a section that would otherwise throw away the lines that did answer.
+func fieldOr(err error, value string) string {
+	if err != nil {
+		return utils.ColoredString("unavailable: "+err.Error(), color.FgRed)
+	}
+
+	return value
+}
+
 // FormatByteCount renders a byte count in binary units, "1.5 GiB".
 func FormatByteCount(b float64) string {
 	const unit = 1024.0
