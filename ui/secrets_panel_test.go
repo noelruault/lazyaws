@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	secretsmanagertypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
+	"github.com/aws/smithy-go"
 
 	awsapp "github.com/noelruault/lazyaws/apps/aws"
 	"github.com/noelruault/lazyaws/ui/utils"
@@ -176,6 +178,60 @@ func TestFormatSecretsConfigNeverIncludesValue(t *testing.T) {
 	}
 	if !strings.Contains(out, "db-password") || !strings.Contains(out, "AWSCURRENT") || !strings.Contains(out, "2012-10-17") {
 		t.Errorf("expected name, version stage, and resource policy in output, got:\n%s", out)
+	}
+}
+
+// The Config tab publishes the same field as the Overview, so it renders the same three states: a failed read left saying "not configured" here would contradict the pane next to it.
+func TestFormatSecretsConfigSeparatesAnUnreadablePolicyFromAnAbsentOne(t *testing.T) {
+	unreadable := &awsapp.SecretDetails{
+		SecretSummary:     awsapp.SecretSummary{Name: "db-password"},
+		ResourcePolicyErr: errors.New("AccessDenied"),
+	}
+
+	failed := formatSecretsConfig(unreadable)
+	absent := formatSecretsConfig(&awsapp.SecretDetails{SecretSummary: awsapp.SecretSummary{Name: "db-password"}})
+
+	if !strings.Contains(failed, "Resource Policy:\nunavailable: AccessDenied\n") {
+		t.Errorf("a policy read that failed does not say so:\n%s", failed)
+	}
+	if strings.Contains(failed, "not configured") {
+		t.Errorf("a policy read that failed still renders as an absence:\n%s", failed)
+	}
+	if !strings.Contains(absent, "Resource Policy:\nnot configured\n") {
+		t.Errorf("a secret with no policy no longer states the absence:\n%s", absent)
+	}
+}
+
+// A throttled GetResourcePolicy never fails the overview, so nothing else would carry it to the gate that paces the pane's next fetch.
+func TestSecretOverviewReportsAThrottledPolicyReadToTheBackoffEngine(t *testing.T) {
+	var watch throttleWatch
+	details := &awsapp.SecretDetails{ResourcePolicyErr: &smithy.GenericAPIError{Code: "ThrottlingException"}}
+
+	watch.observe(secretOverviewErrs(details, nil)...)
+
+	throttled, reported := watch.take()
+	if !reported || !throttled {
+		t.Errorf("a throttled policy read did not reach the backoff engine: throttled=%v reported=%v", throttled, reported)
+	}
+}
+
+func TestSecretOverviewErrs(t *testing.T) {
+	fetchErr, policyErr := errors.New("describe failed"), errors.New("policy read failed")
+
+	for _, tt := range []struct {
+		name    string
+		details *awsapp.SecretDetails
+		err     error
+		want    error
+	}{
+		{name: "the fetch failed", details: nil, err: fetchErr, want: fetchErr},
+		{name: "only the policy read failed", details: &awsapp.SecretDetails{ResourcePolicyErr: policyErr}, want: policyErr},
+		{name: "nothing failed", details: &awsapp.SecretDetails{}, want: nil},
+	} {
+		got := secretOverviewErrs(tt.details, tt.err)
+		if len(got) != 1 || got[0] != tt.want {
+			t.Errorf("secretOverviewErrs(%s) = %v, want [%v]", tt.name, got, tt.want)
+		}
 	}
 }
 

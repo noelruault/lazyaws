@@ -41,8 +41,9 @@ type SecretDetails struct {
 	Rotation    *secretsmanagertypes.RotationRulesType
 	RotationARN string
 	RawJSON     string
-	// ResourcePolicy is "" when absent or when its best-effort fetch fails.
-	ResourcePolicy string
+	// ResourcePolicy is "" when no policy is attached. A read that failed leaves it empty too, which is what ResourcePolicyErr is for: without checking that first, a renderer states an absence it cannot know.
+	ResourcePolicy    string
+	ResourcePolicyErr error
 }
 
 // rotationDays reads the cadence off a rotation schedule that is absent on every secret that has never had one configured.
@@ -156,9 +157,13 @@ func (c *Client) GetSecretDetails(ctx context.Context, name string) (*SecretDeta
 		details.HasReplication = true
 	}
 
-	// A missing or unreadable resource policy must not fail the metadata view.
+	// A missing or unreadable resource policy must not fail the metadata view, but the failure is carried rather than dropped:
+	// this is the last of three calls sharing timeoutCtx, so it is the one that runs out of budget, and a deadline here is not evidence that no policy is attached.
 	policyOut, policyErr := c.Secrets.GetResourcePolicy(timeoutCtx, &secretsmanager.GetResourcePolicyInput{SecretId: aws.String(name)})
-	if policyErr == nil && policyOut != nil {
+	switch {
+	case policyErr != nil:
+		details.ResourcePolicyErr = policyErr
+	case policyOut != nil:
 		details.ResourcePolicy = getString(policyOut.ResourcePolicy)
 	}
 

@@ -125,12 +125,21 @@ func (gui *Gui) secretOverview(ctx context.Context, secret *aws.SecretSummary, w
 	defer cancel()
 
 	details, err := gui.Client.GetSecretDetails(fetchCtx, secret.Name)
-	gui.throttles.observe(err)
+	gui.throttles.observe(secretOverviewErrs(details, err)...)
 	if err != nil {
 		return overviewUnavailableBecause("secret", err)
 	}
 
 	return presentation.FormatSecretOverview(details, width, time.Now())
+}
+
+// secretOverviewErrs is everything one overview fetch can be throttled on, which is not the same as everything that can fail it: the best-effort resource-policy read is dropped by GetSecretDetails' own error, so a throttle on it would otherwise never reach the backoff engine and the pane would keep asking at full rate.
+func secretOverviewErrs(details *aws.SecretDetails, err error) []error {
+	if err != nil || details == nil {
+		return []error{err}
+	}
+
+	return []error{details.ResourcePolicyErr}
 }
 
 // renderSecretsConfig avoids GetSecretValue so browsing emits no value-read CloudTrail event.
@@ -219,9 +228,12 @@ func formatSecretsConfig(d *aws.SecretDetails) string {
 	}
 
 	out += "\nResource Policy:\n"
-	if d.ResourcePolicy == "" {
+	switch {
+	case d.ResourcePolicyErr != nil:
+		out += "unavailable: " + d.ResourcePolicyErr.Error() + "\n"
+	case d.ResourcePolicy == "":
 		out += "not configured\n"
-	} else {
+	default:
 		out += d.ResourcePolicy + "\n"
 	}
 

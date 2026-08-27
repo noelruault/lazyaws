@@ -96,12 +96,7 @@ func secretPostureBlock(d *aws.SecretDetails) string {
 		lines = append(lines, orNone(deref(replica.Region))+"  "+Badge(string(replica.Status)))
 	}
 
-	// GetResourcePolicy answers on a read-only role and simply omits the policy when none is attached, so an empty string is a known absence and not a failed read.
-	policy := "Not configured"
-	if d.ResourcePolicy != "" {
-		policy = "Configured, shown on the Config tab"
-	}
-	lines = append(lines, "", SectionTitle("Resource policy"), policy)
+	lines = append(lines, "", secretPolicyBlock(d))
 
 	lines = append(lines, "", SectionTitle("Tags"))
 	if len(d.Tags) == 0 {
@@ -112,6 +107,21 @@ func secretPostureBlock(d *aws.SecretDetails) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// secretPolicyBlock keeps a policy that could not be read apart from a secret that has none.
+// GetResourcePolicy is the last of the three calls the details fetch spends one deadline on, so a timeout, a throttle or a denial reaching here is not evidence of an absence, and "Not configured" would be the pane inventing the safest of the two answers.
+func secretPolicyBlock(d *aws.SecretDetails) string {
+	if d.ResourcePolicyErr != nil {
+		return sectionUnavailable("Resource policy", d.ResourcePolicyErr)
+	}
+
+	policy := "Not configured"
+	if d.ResourcePolicy != "" {
+		policy = "Configured, shown on the Config tab"
+	}
+
+	return SectionTitle("Resource policy") + "\n" + policy
 }
 
 func secretVersionsBlock(d *aws.SecretDetails, width int, now time.Time) string {

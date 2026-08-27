@@ -1,6 +1,7 @@
 package presentation
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -203,6 +204,25 @@ func TestFormatSecretOverviewStatesEveryAbsence(t *testing.T) {
 	// Tags render under their own heading, so the word alone would also match the Description row above.
 	if !strings.Contains(got, "Tags\nnone") {
 		t.Errorf("overview does not state that there are no tags:\n%s", got)
+	}
+}
+
+// The two states share one field, so the absent render is asserted beside the failed one: an assertion on the failure text alone stays green while both still collapse to "Not configured".
+func TestFormatSecretOverviewSeparatesAnUnreadablePolicyFromAnAbsentOne(t *testing.T) {
+	unreadable := neverRotatedSecret()
+	unreadable.ResourcePolicyErr = errors.New("AccessDenied")
+
+	failed := plainOverview(t, unreadable, stackedWidth)
+	absent := plainOverview(t, neverRotatedSecret(), stackedWidth)
+
+	if !strings.Contains(failed, "Resource policy\nunavailable: AccessDenied\n") {
+		t.Errorf("a policy read that failed does not say so under its own heading:\n%s", failed)
+	}
+	if strings.Contains(failed, "Not configured") {
+		t.Errorf("a policy read that failed still renders as an absence:\n%s", failed)
+	}
+	if !strings.Contains(absent, "Resource policy\nNot configured\n") {
+		t.Errorf("a secret with no policy no longer states the absence:\n%s", absent)
 	}
 }
 
