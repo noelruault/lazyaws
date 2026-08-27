@@ -218,19 +218,16 @@ type ECSServiceMetrics struct {
 	InsightsMemTotal  MetricPoint
 }
 
-func ecsMetricQuery(id, namespace, metricName, clusterName, serviceName string) types.MetricDataQuery {
+// ecsMetricQuery builds one query at the ECS refresh period; the dimensions are what decide whether it asks about a whole cluster or a single service.
+func ecsMetricQuery(id, namespace, metricName string, dims []types.Dimension) types.MetricDataQuery {
 	stat := "Average"
-	clusterDim, serviceDim := "ClusterName", "ServiceName"
 	return types.MetricDataQuery{
 		Id: &id,
 		MetricStat: &types.MetricStat{
 			Metric: &types.Metric{
 				Namespace:  &namespace,
 				MetricName: &metricName,
-				Dimensions: []types.Dimension{
-					{Name: &clusterDim, Value: &clusterName},
-					{Name: &serviceDim, Value: &serviceName},
-				},
+				Dimensions: dims,
 			},
 			Period: getInt32Ptr(ecsMetricPeriod),
 			Stat:   &stat,
@@ -238,21 +235,36 @@ func ecsMetricQuery(id, namespace, metricName, clusterName, serviceName string) 
 	}
 }
 
+// ecsServiceDimensions and ecsClusterDimensions are separate rather than one variadic builder because the pair is not optional: a service metric asked for with the cluster dimension alone silently answers for the whole cluster.
+func ecsServiceDimensions(clusterName, serviceName string) []types.Dimension {
+	clusterDim, serviceDim := "ClusterName", "ServiceName"
+	return []types.Dimension{
+		{Name: &clusterDim, Value: &clusterName},
+		{Name: &serviceDim, Value: &serviceName},
+	}
+}
+
+func ecsClusterDimensions(clusterName string) []types.Dimension {
+	clusterDim := "ClusterName"
+	return []types.Dimension{{Name: &clusterDim, Value: &clusterName}}
+}
+
 // serviceMetricQueries asks AWS/ECS for the utilization every cluster publishes, and appends the Container Insights reservations only when the cluster has the setting on.
 // The extras ride the same request, so having them costs four more metric ids and no extra round trip; asking for them on a cluster without Insights would bill for six empty series on every refresh.
 func serviceMetricQueries(clusterName, serviceName string, withInsights bool) []types.MetricDataQuery {
+	dims := ecsServiceDimensions(clusterName, serviceName)
 	queries := []types.MetricDataQuery{
-		ecsMetricQuery(metricIDECSCPU, ecsNamespace, "CPUUtilization", clusterName, serviceName),
-		ecsMetricQuery(metricIDECSMemory, ecsNamespace, "MemoryUtilization", clusterName, serviceName),
+		ecsMetricQuery(metricIDECSCPU, ecsNamespace, "CPUUtilization", dims),
+		ecsMetricQuery(metricIDECSMemory, ecsNamespace, "MemoryUtilization", dims),
 	}
 	if !withInsights {
 		return queries
 	}
 	return append(queries,
-		ecsMetricQuery(metricIDECSCPUUsed, ecsInsightsNamespace, "CpuUtilized", clusterName, serviceName),
-		ecsMetricQuery(metricIDECSCPUReserved, ecsInsightsNamespace, "CpuReserved", clusterName, serviceName),
-		ecsMetricQuery(metricIDECSMemUsed, ecsInsightsNamespace, "MemoryUtilized", clusterName, serviceName),
-		ecsMetricQuery(metricIDECSMemReserved, ecsInsightsNamespace, "MemoryReserved", clusterName, serviceName),
+		ecsMetricQuery(metricIDECSCPUUsed, ecsInsightsNamespace, "CpuUtilized", dims),
+		ecsMetricQuery(metricIDECSCPUReserved, ecsInsightsNamespace, "CpuReserved", dims),
+		ecsMetricQuery(metricIDECSMemUsed, ecsInsightsNamespace, "MemoryUtilized", dims),
+		ecsMetricQuery(metricIDECSMemReserved, ecsInsightsNamespace, "MemoryReserved", dims),
 	)
 }
 
@@ -298,6 +310,81 @@ func (c *Client) GetECSServiceMetrics(ctx context.Context, clusterName, serviceN
 	}
 
 	return mapServiceMetrics(clusterName, serviceName, result.MetricDataResults), nil
+}
+
+// ECSClusterMetrics is a cluster's Container Insights reading in the absolute units Insights publishes, not as a percentage.
+// The percentage is derived, and deriving it from two absent readings gives exactly 0.0%, which is the "idle cluster" lie an unpublished series must not be allowed to tell.
+type ECSClusterMetrics struct {
+	ClusterName string
+	CPUUsed     MetricPoint
+	CPUReserved MetricPoint
+	MemUsed     MetricPoint
+	MemReserved MetricPoint
+}
+
+// UtilizationPercent divides a used reading by its reservation, and reports absence unless BOTH sides are present and the reservation is above zero.
+// A cluster reserving nothing and a cluster CloudWatch has not answered for both compute to 0%, and only one of them is a measurement.
+func UtilizationPercent(used, reserved MetricPoint) (float64, bool) {
+	if !used.OK || !reserved.OK || reserved.Value <= 0 {
+		return 0, false
+	}
+
+	return used.Value / reserved.Value * 100, true
+}
+
+// clusterMetricQueries asks for a cluster's four Insights reservation series in one request.
+// ECS/ContainerInsights is the namespace rather than AWS/ECS because AWS/ECS publishes CPUUtilization only for EC2 launch-type reservations, so a Fargate-only cluster reads permanently empty there.
+func clusterMetricQueries(clusterName string) []types.MetricDataQuery {
+	dims := ecsClusterDimensions(clusterName)
+	return []types.MetricDataQuery{
+		ecsMetricQuery(metricIDECSCPUUsed, ecsInsightsNamespace, "CpuUtilized", dims),
+		ecsMetricQuery(metricIDECSCPUReserved, ecsInsightsNamespace, "CpuReserved", dims),
+		ecsMetricQuery(metricIDECSMemUsed, ecsInsightsNamespace, "MemoryUtilized", dims),
+		ecsMetricQuery(metricIDECSMemReserved, ecsInsightsNamespace, "MemoryReserved", dims),
+	}
+}
+
+func mapClusterMetrics(clusterName string, results []types.MetricDataResult) *ECSClusterMetrics {
+	byID := make(map[string]MetricPoint, len(results))
+	for _, r := range results {
+		byID[getString(r.Id)] = latestPoint(r)
+	}
+
+	return &ECSClusterMetrics{
+		ClusterName: clusterName,
+		CPUUsed:     byID[metricIDECSCPUUsed],
+		CPUReserved: byID[metricIDECSCPUReserved],
+		MemUsed:     byID[metricIDECSMemUsed],
+		MemReserved: byID[metricIDECSMemReserved],
+	}
+}
+
+// GetECSClusterMetrics reads a cluster's reservation utilization in ONE GetMetricData call.
+// Callers are expected to have checked that Container Insights is on: this namespace publishes nothing without it, and asking anyway bills for four empty series on every refresh tick.
+func (c *Client) GetECSClusterMetrics(ctx context.Context, clusterName string) (*ECSClusterMetrics, error) {
+	if c.CloudWatch == nil {
+		return nil, fmt.Errorf("CloudWatch client not initialized")
+	}
+	if clusterName == "" {
+		return nil, fmt.Errorf("cluster name required")
+	}
+
+	timeoutCtx, cancel := withDefaultTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	endTime := time.Now()
+	startTime := endTime.Add(-metricWindow)
+
+	result, err := c.CloudWatch.GetMetricData(timeoutCtx, &cloudwatch.GetMetricDataInput{
+		MetricDataQueries: clusterMetricQueries(clusterName),
+		StartTime:         &startTime,
+		EndTime:           &endTime,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ECS cluster metrics: %w", err)
+	}
+
+	return mapClusterMetrics(clusterName, result.MetricDataResults), nil
 }
 
 type ECSContainerInsights struct {

@@ -21,10 +21,98 @@ func TestClusterDescribeFieldsAsksForStatisticsAndSettings(t *testing.T) {
 		asked[f] = true
 	}
 	// Pinned to the literals: comparing against the enum the code already uses agrees with whatever it is changed to.
-	for _, want := range []ecsTypes.ClusterField{"STATISTICS", "SETTINGS"} {
+	for _, want := range []ecsTypes.ClusterField{"STATISTICS", "SETTINGS", "CONFIGURATIONS"} {
 		if !asked[want] {
 			t.Errorf("DescribeClusters does not ask for %s; without it the data reads as zero rather than as missing", want)
 		}
+	}
+}
+
+// Both levels of the configuration are absent on a cluster nobody has configured execute-command on, and a guard on the outer one alone is a nil dereference on the inner.
+func TestExecuteCommandLoggingIsNilSafeAtEachLevel(t *testing.T) {
+	if got := executeCommandLogging(nil); got != "" {
+		t.Errorf("executeCommandLogging(nil) = %q, want empty", got)
+	}
+	if got := executeCommandLogging(&ecsTypes.ClusterConfiguration{}); got != "" {
+		t.Errorf("executeCommandLogging(no execute-command config) = %q, want empty", got)
+	}
+
+	got := executeCommandLogging(&ecsTypes.ClusterConfiguration{
+		ExecuteCommandConfiguration: &ecsTypes.ExecuteCommandConfiguration{Logging: ecsTypes.ExecuteCommandLoggingOverride},
+	})
+	if got != "OVERRIDE" {
+		t.Errorf("executeCommandLogging(OVERRIDE) = %q, want %q", got, "OVERRIDE")
+	}
+}
+
+// The region is not on the DescribeClusters response, so it can only come off the client; without it the overview's Configuration section has no region to state.
+func TestMapECSClusterCarriesTheRegionAndExecuteCommandSetting(t *testing.T) {
+	name, arn := "batch-cluster", "arn:aws:ecs:eu-west-1:123:cluster/batch-cluster"
+	c := &Client{Region: "eu-west-1", AccountID: "123"}
+
+	got := c.mapECSCluster(ecsTypes.Cluster{
+		ClusterName: &name,
+		ClusterArn:  &arn,
+		Configuration: &ecsTypes.ClusterConfiguration{
+			ExecuteCommandConfiguration: &ecsTypes.ExecuteCommandConfiguration{Logging: ecsTypes.ExecuteCommandLoggingDefault},
+		},
+	})
+
+	if got.Region != "eu-west-1" {
+		t.Errorf("Region = %q, want the client's region", got.Region)
+	}
+	if got.ExecuteCommandLogging != "DEFAULT" {
+		t.Errorf("ExecuteCommandLogging = %q, want the CONFIGURATIONS setting carried onto the cluster", got.ExecuteCommandLogging)
+	}
+}
+
+// The rollout half of a deployment is what says whether it ever finished; Status is PRIMARY throughout and long after.
+func TestMapECSDeploymentCarriesTheRolloutState(t *testing.T) {
+	status, taskDef := "PRIMARY", "arn:aws:ecs:eu-west-1:123:task-definition/kicker:42"
+	reason := "ECS deployment circuit breaker: task failed to start."
+
+	got := mapECSDeployment(ecsTypes.Deployment{
+		Status:             &status,
+		TaskDefinition:     &taskDef,
+		RolloutState:       ecsTypes.DeploymentRolloutStateFailed,
+		RolloutStateReason: &reason,
+		FailedTasks:        3,
+	})
+
+	if got.RolloutState != "FAILED" {
+		t.Errorf("RolloutState = %q, want %q", got.RolloutState, "FAILED")
+	}
+	if got.RolloutStateReason != reason {
+		t.Errorf("RolloutStateReason = %q, want the reason ECS gave", got.RolloutStateReason)
+	}
+	if got.FailedTasks != 3 {
+		t.Errorf("FailedTasks = %d, want 3; a rollout sits at IN_PROGRESS while it retries, and this count is what says it is stuck", got.FailedTasks)
+	}
+}
+
+// A per-task row names its own task's image, where runningECSServiceImage picks one task out of a service first; conflating the two makes every row show the newest task's image.
+func TestECSTaskImageNamesTheEssentialContainerOfThatTask(t *testing.T) {
+	task := ECSTask{Containers: []ECSContainer{
+		{Name: "log-router", ImageURI: "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable"},
+		{Name: "app", ImageURI: "123.dkr.ecr.eu-west-1.amazonaws.com/kicker:v9", Essential: true},
+	}}
+
+	got, ok := ECSTaskImage(task)
+	if !ok {
+		t.Fatal("ECSTaskImage() found nothing on a task with containers")
+	}
+	if got.Image != "kicker:v9" {
+		t.Errorf("Image = %q, want the essential container's image with the registry host dropped", got.Image)
+	}
+	if got.Sidecars != 1 {
+		t.Errorf("Sidecars = %d, want 1", got.Sidecars)
+	}
+	if got.Desired {
+		t.Error("an image read off a running container must not be marked desired")
+	}
+
+	if _, ok := ECSTaskImage(ECSTask{}); ok {
+		t.Error("a task with no containers has no image to name")
 	}
 }
 

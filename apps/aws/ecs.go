@@ -49,6 +49,11 @@ type ECSCluster struct {
 	// ContainerInsights is the cluster's containerInsights setting verbatim (enabled, enhanced or disabled), empty when the cluster was described without the SETTINGS field.
 	// Empty is not disabled: it means unknown, and the difference decides whether the Insights metric namespace is worth querying at all.
 	ContainerInsights string
+	// ExecuteCommandLogging is where `ecs execute-command` sessions are logged (NONE, DEFAULT or OVERRIDE), empty when the cluster carries no execute-command configuration at all.
+	// It only ever arrives with the CONFIGURATIONS field asked for, which clusterDescribeFields does; without it the value is silently empty rather than an error.
+	ExecuteCommandLogging string
+	// Region is the client's region rather than anything DescribeClusters returns, because a cluster is only ever read through a client already bound to one.
+	Region string
 }
 
 type ECSDeployment struct {
@@ -58,7 +63,20 @@ type ECSDeployment struct {
 	Running        int32
 	Pending        int32
 	Created        *time.Time
+	// RolloutState is the deployment's own progress, which Status cannot report: a deployment is PRIMARY from the moment it starts until the next one replaces it, whether or not it ever finished rolling out.
+	// ECS omits it entirely for a CODE_DEPLOY or EXTERNAL controller, so empty means "this controller does not report one" rather than "not finished".
+	RolloutState string
+	// RolloutStateReason is the sentence ECS gives for the state, and the only thing that says WHY a rollout failed; it is too long for a table cell and belongs on a line of its own.
+	RolloutStateReason string
+	// FailedTasks counts the tasks this deployment started and lost. ECS keeps retrying, so a rollout can sit at IN_PROGRESS indefinitely, and this count is the difference between slow and stuck.
+	FailedTasks int32
 }
+
+// ECS rollout states, matched as literals because the SDK's DeploymentRolloutState is a string enum the UI compares against rather than switches on.
+const (
+	ECSRolloutCompleted = "COMPLETED"
+	ECSRolloutFailed    = "FAILED"
+)
 
 type ECSEvent struct {
 	Message string
@@ -253,9 +271,13 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 }
 
 // clusterDescribeFields names the optional fields the cluster list depends on.
-// Both ride the describe call that already runs; asking for them separately would be a second call per page for data the same response can carry, and dropping either leaves its data silently zero rather than erroring.
+// All three ride the describe call that already runs; asking for them separately would be a call per page for data the same response can carry, and dropping any of them leaves its data silently empty rather than erroring.
 func clusterDescribeFields() []ecsTypes.ClusterField {
-	return []ecsTypes.ClusterField{ecsTypes.ClusterFieldStatistics, ecsTypes.ClusterFieldSettings}
+	return []ecsTypes.ClusterField{
+		ecsTypes.ClusterFieldStatistics,
+		ecsTypes.ClusterFieldSettings,
+		ecsTypes.ClusterFieldConfigurations,
+	}
 }
 
 // ingestECSClusters maps a DescribeClusters page and records what only that response can say.
@@ -281,6 +303,8 @@ func (c *Client) mapECSCluster(cl ecsTypes.Cluster) ECSCluster {
 		CapacityProviders:        cl.CapacityProviders,
 		Statistics:               mapClusterStatistics(cl.Statistics),
 		ContainerInsights:        containerInsightsSetting(cl.Settings),
+		ExecuteCommandLogging:    executeCommandLogging(cl.Configuration),
+		Region:                   c.Region,
 	}
 	if c.Region != "" && c.AccountID != "" {
 		cluster.ConsoleURL = fmt.Sprintf("https://%s.console.aws.amazon.com/ecs/v2/clusters/%s?region=%s", c.Region, cluster.Name, c.Region)
@@ -333,6 +357,16 @@ func (c *Client) recordClusterInsights(clusters []ECSCluster) {
 	for _, cl := range clusters {
 		c.clusterInsights[cl.Name] = cl.ContainerInsights
 	}
+}
+
+// executeCommandLogging reads the execute-command log destination out of the cluster configuration.
+// Both the configuration and its execute-command half are optional pointers on a cluster that has never been configured, so this is nil-safe at each level rather than at the outer one only.
+func executeCommandLogging(cfg *ecsTypes.ClusterConfiguration) string {
+	if cfg == nil || cfg.ExecuteCommandConfiguration == nil {
+		return ""
+	}
+
+	return string(cfg.ExecuteCommandConfiguration.Logging)
 }
 
 func containerInsightsSetting(settings []ecsTypes.ClusterSetting) string {
@@ -462,11 +496,13 @@ func (c *Client) ListECSTasks(ctx context.Context, clusterName, serviceName stri
 	var taskArns []string
 	var nextToken *string
 	for {
-		listOut, err := c.ECS.ListTasks(timeoutCtx, &ecs.ListTasksInput{
-			Cluster:     &clusterName,
-			ServiceName: &serviceName,
-			NextToken:   nextToken,
-		})
+		input := &ecs.ListTasksInput{Cluster: &clusterName, NextToken: nextToken}
+		// An empty service name means every task in the cluster, which is the filter being ABSENT rather than a filter matching "".
+		// Sending the empty string asks ECS to match a service by that name, so the cluster-wide listing has to omit the field.
+		if serviceName != "" {
+			input.ServiceName = &serviceName
+		}
+		listOut, err := c.ECS.ListTasks(timeoutCtx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list ECS tasks: %w", err)
 		}
@@ -662,12 +698,15 @@ func mapECSContainer(ctn ecsTypes.Container, cd *ecsTypes.ContainerDefinition) E
 
 func mapECSDeployment(dep ecsTypes.Deployment) ECSDeployment {
 	return ECSDeployment{
-		Status:         getString(dep.Status),
-		TaskDefinition: getString(dep.TaskDefinition),
-		Desired:        dep.DesiredCount,
-		Running:        dep.RunningCount,
-		Pending:        dep.PendingCount,
-		Created:        dep.CreatedAt,
+		Status:             getString(dep.Status),
+		TaskDefinition:     getString(dep.TaskDefinition),
+		Desired:            dep.DesiredCount,
+		Running:            dep.RunningCount,
+		Pending:            dep.PendingCount,
+		Created:            dep.CreatedAt,
+		RolloutState:       string(dep.RolloutState),
+		RolloutStateReason: getString(dep.RolloutStateReason),
+		FailedTasks:        dep.FailedTasks,
 	}
 }
 
@@ -1049,17 +1088,24 @@ func ecsTaskStart(t ECSTask) time.Time {
 	return time.Time{}
 }
 
+// ECSTaskImage names the image ONE task identifies with, for a per-task row; runningECSServiceImage answers the same question for a whole service by choosing a task first.
+func ECSTaskImage(t ECSTask) (ECSServiceImage, bool) {
+	primary, ok := primaryECSContainer(t.Containers)
+	if !ok {
+		return ECSServiceImage{}, false
+	}
+
+	return ECSServiceImage{Image: ShortImageRef(primary.ImageURI), Sidecars: len(t.Containers) - 1}, true
+}
+
 // runningECSServiceImage resolves what a service is running from the tasks DescribeTasks already returned, which carry the image per container and need no task definition call.
 func runningECSServiceImage(tasks []ECSTask) (ECSServiceImage, bool) {
 	task, ok := newestECSTask(tasks)
 	if !ok {
 		return ECSServiceImage{}, false
 	}
-	primary, ok := primaryECSContainer(task.Containers)
-	if !ok {
-		return ECSServiceImage{}, false
-	}
-	return ECSServiceImage{Image: ShortImageRef(primary.ImageURI), Sidecars: len(task.Containers) - 1}, true
+
+	return ECSTaskImage(task)
 }
 
 // desiredECSServiceImage reads the intended image off a task definition, for a service with nothing running to read it from.

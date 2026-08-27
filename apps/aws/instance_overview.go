@@ -39,38 +39,49 @@ func (o *InstanceOverview) Err(section string) error {
 // A section that failed is reported through Errs so the sections that succeeded still render: the point of the fan-out is that one denied permission degrades one block instead of blanking the pane.
 func (c *Client) GetInstanceOverview(ctx context.Context, instanceID string) *InstanceOverview {
 	overview := &InstanceOverview{Errs: map[string]error{}}
-
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	// Each fetch writes its own field, so only the shared error map needs the lock; wg.Wait is what publishes the fields to the caller.
-	fetch := func(section string, run func() error) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := run(); err != nil {
-				mu.Lock()
-				overview.Errs[section] = err
-				mu.Unlock()
-			}
-		}()
-	}
+	sections := newSectionFetcher(overview.Errs)
 
 	// describeInstance rather than GetInstanceDetails: the Elastic IP list it would add costs its own DescribeAddresses call, and this runs on a refresh ticker.
-	fetch(SectionDetails, func() (err error) {
+	sections.fetch(SectionDetails, func() (err error) {
 		overview.Details, err = c.describeInstance(ctx, instanceID)
 		return err
 	})
-	fetch(SectionStatus, func() (err error) {
+	sections.fetch(SectionStatus, func() (err error) {
 		overview.Status, err = c.GetInstanceStatus(ctx, instanceID)
 		return err
 	})
-	fetch(SectionMetrics, func() (err error) {
+	sections.fetch(SectionMetrics, func() (err error) {
 		overview.Metrics, err = c.GetInstanceMetrics(ctx, instanceID)
 		return err
 	})
 
-	wg.Wait()
+	sections.wait()
 
 	return overview
 }
+
+// sectionFetcher runs each of an overview's sections concurrently and collects the failures by section.
+// Each fetch writes its own field on the overview, so only the shared error map needs the lock; wait is what publishes every field to the caller.
+type sectionFetcher struct {
+	mu   sync.Mutex
+	wg   sync.WaitGroup
+	errs map[string]error
+}
+
+func newSectionFetcher(errs map[string]error) *sectionFetcher {
+	return &sectionFetcher{errs: errs}
+}
+
+func (f *sectionFetcher) fetch(section string, run func() error) {
+	f.wg.Add(1)
+	go func() {
+		defer f.wg.Done()
+		if err := run(); err != nil {
+			f.mu.Lock()
+			f.errs[section] = err
+			f.mu.Unlock()
+		}
+	}()
+}
+
+func (f *sectionFetcher) wait() { f.wg.Wait() }

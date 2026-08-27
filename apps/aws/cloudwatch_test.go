@@ -344,6 +344,111 @@ func TestGetECSServiceMetricsGuards(t *testing.T) {
 	}
 }
 
+// A cluster metric asked for with the service dimension attached answers for one service; asked for with neither it answers for every cluster in the account. The dimension set is the whole of what makes this a cluster reading.
+func TestClusterMetricQueriesAskInsightsForTheClusterAlone(t *testing.T) {
+	queries := clusterMetricQueries("app-cluster")
+
+	want := map[string]string{
+		metricIDECSCPUUsed:     "CpuUtilized",
+		metricIDECSCPUReserved: "CpuReserved",
+		metricIDECSMemUsed:     "MemoryUtilized",
+		metricIDECSMemReserved: "MemoryReserved",
+	}
+	if len(queries) != len(want) {
+		t.Fatalf("got %d queries, want %d in the one call", len(queries), len(want))
+	}
+	for _, q := range queries {
+		id := getString(q.Id)
+		if q.MetricStat == nil || q.MetricStat.Metric == nil {
+			t.Fatalf("query %q has no MetricStat", id)
+		}
+		if got := getString(q.MetricStat.Metric.MetricName); got != want[id] {
+			t.Errorf("query %q asks for %q, want %q", id, got, want[id])
+		}
+		// Pinned to the literal: AWS/ECS publishes CPUUtilization only for EC2 reservations, so a Fargate-only cluster reads permanently empty there.
+		if ns := getString(q.MetricStat.Metric.Namespace); ns != "ECS/ContainerInsights" {
+			t.Errorf("query %q namespace = %q, want ECS/ContainerInsights", id, ns)
+		}
+		if q.MetricStat.Period == nil || *q.MetricStat.Period != 60 {
+			t.Errorf("query %q period = %v, want 60", id, q.MetricStat.Period)
+		}
+		if getString(q.MetricStat.Stat) != "Average" {
+			t.Errorf("query %q stat = %q, want Average", id, getString(q.MetricStat.Stat))
+		}
+		dims := map[string]string{}
+		for _, d := range q.MetricStat.Metric.Dimensions {
+			dims[getString(d.Name)] = getString(d.Value)
+		}
+		if len(dims) != 1 || dims["ClusterName"] != "app-cluster" {
+			t.Errorf("query %q dimensions = %v, want exactly ClusterName; a ServiceName here answers for one service instead of the cluster", id, dims)
+		}
+	}
+}
+
+func TestMapClusterMetricsIgnoresResponseOrder(t *testing.T) {
+	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+	// Deliberately not the order clusterMetricQueries asks in, and the memory reservation is the empty series a cluster that has just switched Insights on returns.
+	results := []types.MetricDataResult{
+		metricResult(metricIDECSCPUReserved, MetricPoint{Value: 1024, At: at}),
+		metricResult(metricIDECSCPUUsed, MetricPoint{Value: 256, At: at}),
+		metricResult(metricIDECSMemReserved),
+	}
+
+	got := mapClusterMetrics("app-cluster", results)
+
+	if got.ClusterName != "app-cluster" {
+		t.Errorf("ClusterName = %q, want the requested cluster", got.ClusterName)
+	}
+	if got.CPUUsed != (MetricPoint{Value: 256, At: at, OK: true}) {
+		t.Errorf("CPUUsed = %+v, want the ecscpuused result matched by id, not by position", got.CPUUsed)
+	}
+	if got.CPUReserved.Value != 1024 || !got.CPUReserved.OK {
+		t.Errorf("CPUReserved = %+v, want 1024 present", got.CPUReserved)
+	}
+	if got.MemReserved.OK || got.MemUsed.OK {
+		t.Error("an unanswered memory series must stay absent rather than being mapped from a neighbour")
+	}
+}
+
+// The percentage is derived, so absence has to survive the division: a cluster reserving nothing and a cluster CloudWatch never answered for both compute to 0.0%.
+func TestUtilizationPercentReportsAbsenceRatherThanZero(t *testing.T) {
+	present := func(v float64) MetricPoint { return MetricPoint{Value: v, OK: true} }
+
+	cases := []struct {
+		name           string
+		used, reserved MetricPoint
+		want           float64
+		wantOK         bool
+	}{
+		{"both present", present(256), present(1024), 25, true},
+		{"a measured zero is still a measurement", present(0), present(1024), 0, true},
+		{"used absent", MetricPoint{}, present(1024), 0, false},
+		{"reservation absent", present(256), MetricPoint{}, 0, false},
+		{"reservation present but zero", present(256), present(0), 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := UtilizationPercent(tc.used, tc.reserved)
+			if ok != tc.wantOK || got != tc.want {
+				t.Errorf("UtilizationPercent() = %v, %v, want %v, %v", got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestGetECSClusterMetricsGuards(t *testing.T) {
+	_, err := (&Client{}).GetECSClusterMetrics(context.Background(), "c")
+	if err == nil || !strings.Contains(err.Error(), "CloudWatch client") {
+		t.Errorf("nil-client error = %v, want the client guard to be what fired", err)
+	}
+
+	// A non-nil client, so only the name guard can answer: with nil the client guard fires first and hides it.
+	_, err = (&Client{CloudWatch: &cloudwatch.Client{}}).GetECSClusterMetrics(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "cluster name required") {
+		t.Errorf("empty-name error = %v, want the name guard to be what fired", err)
+	}
+}
+
 // The Insights extras are gated on what the last cluster list recorded, so the gate is what has to be pinned: nothing else tells the fetch which namespace to ask for.
 func TestClusterInsightsRecordDrivesTheInsightsGate(t *testing.T) {
 	c := &Client{}
