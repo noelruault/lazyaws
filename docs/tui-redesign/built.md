@@ -17,3 +17,4 @@ One line per closed ticket, appended by the builder: `- <id> <sha> — summary`.
 - s4-secrets-overview 7226b1a — Secrets Overview from the metadata the Config tab already fetches: rotation badge, two-column body, capped version table with joint and absent stages; Columns stacked path now cuts to the pane (265d1a0)
 - s5-cw-getmetricdata 649fb8b — six EC2 metrics in one GetMetricData, results matched by query id, each reading stamped with its own timestamp and an unpublished series rendering "no data" instead of 0
 - s5-ec2-datalayer 6fd562c — one DescribeVolumes for every attached volume matched back by VolumeId, and DescribeInstanceTypes cached per type on the Client
+- s5-ec2-overview 85f4366 — Overview tab for EC2: a WaitGroup fan-out whose sections fail independently, two columns of seven sections, and the alarm/ASG/address lookups priced per selection instead of per tick
