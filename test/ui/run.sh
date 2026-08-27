@@ -73,4 +73,6 @@ done
 # Said here rather than left to the browser: a port already in use fails ttyd on startup, and "net::ERR_CONNECTION_REFUSED" does not name that.
 curl -fsS "http://127.0.0.1:$ttyd_port" >/dev/null || { echo "ttyd did not come up on port $ttyd_port; see $here/.ttyd.log" >&2; exit 1; }
 
-TTYD_URL="http://127.0.0.1:$ttyd_port" "$runtime" "$here/run.mjs" "$@"
+# The endpoint reaches the journeys too: proving a refresh key reached AWS means changing what AWS answers, which only the fake one may be asked to do.
+TTYD_URL="http://127.0.0.1:$ttyd_port" AWS_ENDPOINT_URL="$endpoint" AWS_REGION="$region" \
+	"$runtime" "$here/run.mjs" "$@"
