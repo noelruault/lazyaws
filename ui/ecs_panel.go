@@ -167,8 +167,9 @@ func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) 
 }
 
 // ecsServiceOverview consolidates the service's detail tabs into one pane, refetching its metrics and its running image on each render.
+// The row is checked as well as the client: a rerender queued before a drill level changed arrives with the tab set of one level and the row of another, and the formatter reads the service unguarded.
 func (gui *Gui) ecsServiceOverview(ctx context.Context, row *ecsRow, width int) string {
-	if gui.Client == nil {
+	if gui.Client == nil || row.Service == nil {
 		return overviewUnavailable("service")
 	}
 

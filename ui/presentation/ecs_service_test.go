@@ -411,3 +411,32 @@ func TestServiceOverviewNeverExceedsTheWidth(t *testing.T) {
 		}
 	}
 }
+
+// Mid-rollout a service carries two deployments, and only the PRIMARY one is what it is trying to reach; the other is the revision it is draining away from.
+// Listed PRIMARY-second on purpose: a formatter that took whichever deployment came first passes every fixture that happens to be in the right order.
+func TestServiceOverviewReadsThePrimaryDeployment(t *testing.T) {
+	forceColor(t)
+	service, overview, now := serviceFixture()
+	settled := now.Add(-3 * 24 * time.Hour)
+	service.Deployments = []aws.ECSDeployment{
+		{
+			Status: "ACTIVE", RolloutState: aws.ECSRolloutCompleted, Created: &settled,
+			TaskDefinition: "arn:aws:ecs:eu-west-1:123456789012:task-definition/app-auth:41",
+		},
+		{
+			Status: aws.ECSDeploymentPrimary, RolloutState: "IN_PROGRESS", Created: service.Deployments[0].Created,
+			TaskDefinition: "arn:aws:ecs:eu-west-1:123456789012:task-definition/app-auth:42",
+		},
+	}
+
+	got := utils.Decolorise(FormatECSServiceOverview(service, overview, overviewTestWidth, now))
+
+	for _, want := range []string{"⟳ IN_PROGRESS", "Started:         6h ago", "Task definition: app-auth:42"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the deployment section must describe the PRIMARY deployment, %q is missing\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "▶ COMPLETED") {
+		t.Errorf("the deployment being drained away from must not be the one reported\n%s", got)
+	}
+}

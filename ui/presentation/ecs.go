@@ -402,7 +402,8 @@ func ecsTaskImageText(t aws.ECSTask) string {
 // ecsServiceEventsShown caps the events list. ECS keeps the last hundred, the pane has room for a handful, and the ones worth a glance are the newest.
 const ecsServiceEventsShown = 5
 
-// ecsEventAgeWidth pads the relative time so the messages line up in a column the eye can run down; "just now" is the longest RelTime can render at this scale.
+// ecsEventAgeWidth pads the relative time so the messages line up in a column the eye can run down.
+// It is a minimum rather than a cut: an age wider than this (a four-digit day count) pushes its own message right instead of losing digits, which costs one ragged line and no information.
 const ecsEventAgeWidth = 8
 
 // ecsServiceMetricStat captions a service reading with the window it was averaged over, matching the period the ECS metric queries ask for.

@@ -36,3 +36,19 @@ func TestECSServicePanelRendersTheServiceOverview(t *testing.T) {
 		}
 	}
 }
+
+// The service overview tab is built for one drill level and rendered with whatever row the panel holds when the task runs, which a rerender queued across a drill can make the wrong kind.
+// The formatter reads the service unguarded, so without the row check this is a panic that takes the app down rather than a tab that says nothing.
+func TestECSServiceOverviewToleratesARowWithoutAService(t *testing.T) {
+	gui, g := newHeadlessGuiWithConfig(t, overviewFirstConfig())
+	resizeView(t, g, "main", 80, 24)
+	gui.Client = &aws.Client{}
+
+	got := ask(g, func() string {
+		return gui.ecsServiceOverview(context.Background(), &ecsRow{Kind: ecsRowKindService}, 80)
+	})
+
+	if !strings.Contains(got, "service overview unavailable") {
+		t.Errorf("ecsServiceOverview() = %q, want the unavailable statement rather than a panic", got)
+	}
+}
