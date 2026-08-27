@@ -18,7 +18,7 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 		ContextState: &panels.ContextState[*aws.ECRRepository]{
 			GetMainTabs: func() []panels.MainTab[*aws.ECRRepository] {
 				return []panels.MainTab[*aws.ECRRepository]{
-					staticOverviewTab(gui, gui.ecrRepositoryOverview),
+					staticOverviewTab(gui, func(r *aws.ECRRepository) string { return "ecr-" + r.Name }, gui.ecrRepositoryOverview),
 					{Key: "images", Title: "Images", Render: gui.renderECRImages},
 					{Key: "scan", Title: "Scan", Render: gui.renderECRScan},
 					// Policies carries the two full JSON documents; the Overview reports only their presence, and every other Config field lives there already.

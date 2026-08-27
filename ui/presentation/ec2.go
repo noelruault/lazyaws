@@ -180,6 +180,9 @@ func instanceNetworkBlock(o *aws.InstanceOverview) string {
 	if err := o.Err(aws.SectionEIP); err != nil {
 		return strings.Join(append(lines, "Elastic IPs: "+utils.ColoredString("unavailable", color.FgRed)), "\n")
 	}
+	if o.ExtrasPending {
+		return strings.Join(append(lines, "Elastic IPs: "+pendingValue()), "\n")
+	}
 
 	lines = append(lines, "Elastic IPs:")
 	if len(d.ElasticIPs) == 0 {
@@ -264,10 +267,18 @@ func instanceStatusBlock(o *aws.InstanceOverview) string {
 	return strings.Join(lines, "\n") + "\n" + instanceAlarmsLines(o) + "\n" + instanceASGLines(o)
 }
 
+// pendingValue is what a selection-time field says on the pane's first paint, before its fetch has answered: an ellipsis, never a value the fetch has not verified.
+func pendingValue() string {
+	return utils.ColoredString("…", color.Faint)
+}
+
 // instanceAlarmsLines and instanceASGLines sit inside Status rather than in sections of their own: both are one line on almost every instance, and a heading per line turns the column into a list of headings.
 func instanceAlarmsLines(o *aws.InstanceOverview) string {
 	if err := o.Err(aws.SectionAlarms); err != nil {
 		return "Alarms: " + utils.ColoredString("unavailable", color.FgRed)
+	}
+	if o.ExtrasPending {
+		return "Alarms: " + pendingValue()
 	}
 	if len(o.Alarms) == 0 {
 		return "Alarms:\n  none"
@@ -284,6 +295,9 @@ func instanceAlarmsLines(o *aws.InstanceOverview) string {
 func instanceASGLines(o *aws.InstanceOverview) string {
 	if err := o.Err(aws.SectionASG); err != nil {
 		return "Auto Scaling: " + utils.ColoredString("unavailable", color.FgRed)
+	}
+	if o.ExtrasPending {
+		return "Auto Scaling: " + pendingValue()
 	}
 	// A nil membership is the answer for an instance that belongs to no group, not a missing read: GetInstanceASGMembership reports that case as nil with no error.
 	if o.ASG == nil {
@@ -340,6 +354,9 @@ func instanceSnapshotLines(o *aws.InstanceOverview) string {
 	if err := o.Err(aws.SectionSnapshots); err != nil {
 		return "Snapshots: " + utils.ColoredString("unavailable", color.FgRed)
 	}
+	if o.ExtrasPending {
+		return "Snapshots: " + pendingValue()
+	}
 	if len(o.Snapshots) == 0 {
 		return "Snapshots: none"
 	}
@@ -359,6 +376,9 @@ func instanceConsoleBlock(o *aws.InstanceOverview, now time.Time) string {
 	}
 	c := o.Console
 	if c == nil {
+		if o.ExtrasPending {
+			return SectionTitle("Console") + "\n" + pendingValue()
+		}
 		return SectionTitle("Console") + "\nnot fetched yet"
 	}
 

@@ -41,6 +41,9 @@ type InstanceOverview struct {
 	Console   *ConsoleAvailability
 	Snapshots []VolumeSnapshot
 
+	// ExtrasPending marks a render made before the selection-time sections arrived, so the formatter can say "…" where an empty field would otherwise claim an absence nothing has verified yet.
+	ExtrasPending bool
+
 	Errs map[string]error
 }
 

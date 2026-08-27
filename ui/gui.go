@@ -94,6 +94,8 @@ type Gui struct {
 
 	// rerenderMainTab collapses a drag-resize into one re-render per 50ms window.
 	rerenderMainTab *throttle
+	// overviewCache keeps each resource's last rendered Overview so re-selecting it paints instantly; see overviewPaneCache.
+	overviewCache overviewPaneCache
 }
 
 type Panels struct {

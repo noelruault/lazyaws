@@ -60,6 +60,11 @@ func (r *ecsRow) arn() string {
 	}
 }
 
+// ecsRowKey identifies a row for the overview pane cache: the kind keeps a cluster and a service that share an ARN prefix apart.
+func ecsRowKey(r *ecsRow) string {
+	return fmt.Sprintf("ecs-%d-%s", r.Kind, r.arn())
+}
+
 func (r *ecsRow) name() string {
 	switch r.Kind {
 	case ecsRowKindService:
@@ -90,7 +95,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 				switch gui.ecsDrill.level {
 				case ecsLevelServices:
 					return []panels.MainTab[*ecsRow]{
-						overviewTab(gui, gui.ecsServiceOverview),
+						overviewTab(gui, ecsRowKey, gui.ecsServiceOverview),
 						{Key: "config", Title: "Config", Render: gui.renderECSServiceConfig},
 						{Key: "deployments", Title: "Deployments", Render: gui.renderECSServiceDeployments},
 						{Key: "events", Title: "Events", Render: gui.renderECSServiceEvents},
@@ -109,7 +114,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 				default:
 					// Instances stays a tab of its own: the container-instance table is a per-node fetch the 2s Overview ticker has no business repeating, and on Fargate clusters it is empty anyway.
 					return []panels.MainTab[*ecsRow]{
-						overviewTab(gui, gui.ecsClusterOverview),
+						overviewTab(gui, ecsRowKey, gui.ecsClusterOverview),
 						{Key: "instances", Title: "Instances", Render: gui.renderECSClusterInstances},
 					}
 				}

@@ -45,7 +45,7 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 		ContextState: &panels.ContextState[*aws.SecretSummary]{
 			GetMainTabs: func() []panels.MainTab[*aws.SecretSummary] {
 				return []panels.MainTab[*aws.SecretSummary]{
-					overviewTab(gui, gui.secretOverview),
+					overviewTab(gui, func(s *aws.SecretSummary) string { return "secret-" + s.Name }, gui.secretOverview),
 					{Key: "value", Title: "Value", Render: gui.renderSecretValue},
 					{Key: "versions", Title: "Versions", Render: gui.renderSecretVersions},
 					{Key: "policy", Title: "Policy", Render: gui.renderSecretPolicy},

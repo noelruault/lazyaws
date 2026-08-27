@@ -79,6 +79,28 @@ func emptyOverview() *aws.InstanceOverview {
 	}
 }
 
+// The first paint of a selection lands before the selection-time extras have answered, and every field they own must read "…" rather than an absence nothing has verified.
+func TestInstanceOverviewPendingExtrasSaySoInsteadOfClaimingAbsences(t *testing.T) {
+	forceColor(t)
+	o := fullOverview()
+	o.ExtrasPending = true
+	o.ASG, o.Alarms, o.Console, o.Snapshots = nil, nil, nil, nil
+	o.Details.ElasticIPs = nil
+
+	got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, stackedWidth, overviewNow))
+
+	for _, want := range []string{"Alarms: …", "Auto Scaling: …", "Snapshots: …", "Elastic IPs: …"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("pending overview is missing %q\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"Alarms:\n  none", "Auto Scaling: none", "Snapshots: none", "not fetched yet"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("pending overview claims %q before the fetch answered\n%s", absent, got)
+		}
+	}
+}
+
 func TestInstanceOverviewRendersEverySection(t *testing.T) {
 	got := FormatInstanceOverview(overviewInstance(), fullOverview(), stackedWidth, overviewNow)
 

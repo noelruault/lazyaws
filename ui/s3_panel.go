@@ -20,7 +20,7 @@ func (gui *Gui) getS3Panel() *panels.SideListPanel[*aws.Bucket] {
 		ContextState: &panels.ContextState[*aws.Bucket]{
 			GetMainTabs: func() []panels.MainTab[*aws.Bucket] {
 				return []panels.MainTab[*aws.Bucket]{
-					staticOverviewTab(gui, gui.bucketOverview),
+					staticOverviewTab(gui, func(b *aws.Bucket) string { return "s3-" + b.Name }, gui.bucketOverview),
 					{Key: "config", Title: "Config", Render: gui.renderS3Config},
 					{
 						Key:    "objects",

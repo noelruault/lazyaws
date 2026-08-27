@@ -21,7 +21,7 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 			GetMainTabs: func() []panels.MainTab[*aws.VPC] {
 				// No Config tab: the Overview's Configuration, DNS and Tags sections carry every field it held.
 				return []panels.MainTab[*aws.VPC]{
-					staticOverviewTab(gui, gui.vpcOverview),
+					staticOverviewTab(gui, func(v *aws.VPC) string { return "vpc-" + v.ID }, gui.vpcOverview),
 					{Key: "subnets", Title: "Subnets", Render: gui.renderVPCSubnets},
 					{Key: "routes", Title: "Routes", Render: gui.renderVPCRoutes},
 					{Key: "gateways", Title: "Gateways", Render: gui.renderVPCGateways},

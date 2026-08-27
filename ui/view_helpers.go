@@ -169,7 +169,17 @@ func (gui *Gui) RenderStringMain(s string) {
 }
 
 func (gui *Gui) reRenderStringMain(s string) {
-	gui.g.Update(func(*gocui.Gui) error {
+	gui.g.Update(gui.setMainContent(s))
+}
+
+// reRenderStringMainOrdered is reRenderStringMain with the enqueue done on THIS goroutine: gocui's Update spawns a goroutine per call, so two writes made back to back can apply in either order, and a pane painted "loading" before its content would sometimes keep the loading line.
+// Only worth reaching for when one goroutine writes main twice in a row; a single write has nothing to race with.
+func (gui *Gui) reRenderStringMainOrdered(s string) {
+	gui.g.UpdateAsync(gui.setMainContent(s))
+}
+
+func (gui *Gui) setMainContent(s string) func(*gocui.Gui) error {
+	return func(*gocui.Gui) error {
 		if gui.mainBelongsToQ() {
 			return nil
 		}
@@ -178,7 +188,7 @@ func (gui *Gui) reRenderStringMain(s string) {
 			return nil
 		}
 		return gui.setViewContent(v, s)
-	})
+	}
 }
 
 // mainBelongsToQ checks queued updates so stale chat work cannot overwrite the dashboard.
