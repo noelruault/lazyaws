@@ -49,6 +49,60 @@ somethingLazyawsDoesNotKnowAbout: 42
 	}
 }
 
+// An int key written as a quoted string leaves a file the next load rejects, so the round trip through LoadUserConfig is the assertion that matters here rather than the bytes.
+func TestSetIntSettingWritesANumberTheNextLoadCanRead(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path := filepath.Join(dir, "lazyaws", "config.yml")
+
+	writeFile(t, path, "# keep me\nrefresh:\n  ecsLogsSeconds: 9\n")
+
+	if err := SetIntSetting([]string{"refresh", "metricsSeconds"}, 300); err != nil {
+		t.Fatalf("SetIntSetting() error = %v", err)
+	}
+
+	saved := readFile(t, path)
+	// Unquoted: `metricsSeconds: "300"` is a !!str and an int field will not unmarshal from it.
+	if !strings.Contains(saved, "metricsSeconds: 300") {
+		t.Errorf("saved config does not hold an unquoted number:\n%s", saved)
+	}
+	if strings.Contains(saved, `"300"`) || strings.Contains(saved, "'300'") {
+		t.Errorf("saved config quoted the number, which the next load cannot parse into an int:\n%s", saved)
+	}
+
+	loaded, err := LoadUserConfig()
+	if err != nil {
+		t.Fatalf("LoadUserConfig() after SetIntSetting() error = %v", err)
+	}
+	if loaded.Refresh.MetricsSeconds != 300 {
+		t.Errorf("Refresh.MetricsSeconds = %d, want the written 300", loaded.Refresh.MetricsSeconds)
+	}
+	if loaded.Refresh.ECSLogsSeconds != 9 {
+		t.Errorf("Refresh.ECSLogsSeconds = %d, want the file's 9 left alone", loaded.Refresh.ECSLogsSeconds)
+	}
+	if !strings.Contains(saved, "# keep me") {
+		t.Errorf("saved config lost its comment:\n%s", saved)
+	}
+}
+
+// 0 is how a refresh tier is turned off, so it has to survive a write: a writer that treated it as an absent value would make the off state unreachable from the Settings screen.
+func TestSetIntSettingWritesZero(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	if err := SetIntSetting([]string{"refresh", "panelSeconds"}, 0); err != nil {
+		t.Fatalf("SetIntSetting() error = %v", err)
+	}
+
+	loaded, err := LoadUserConfig()
+	if err != nil {
+		t.Fatalf("LoadUserConfig() error = %v", err)
+	}
+	if loaded.Refresh.PanelSeconds != 0 {
+		t.Errorf("Refresh.PanelSeconds = %d, want the written 0", loaded.Refresh.PanelSeconds)
+	}
+}
+
 func TestSetBoolSettingCreatesTheFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

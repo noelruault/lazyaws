@@ -132,6 +132,93 @@ func TestTogglingReportsAFailedWrite(t *testing.T) {
 	}
 }
 
+// An interval row cycles its ladder and writes a NUMBER: a string write would leave a file the next load rejects on the key the screen had just saved.
+func TestCyclingARefreshInterval(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	user := config.DefaultUserConfig()
+	gui, g := newHeadlessGuiWithConfig(t, user)
+
+	run(t, g, gui.handleToggleSettings)
+	selectSettingNamed(t, g, gui, "Panel refresh")
+
+	if got := gui.Config.User.Refresh.PanelSeconds; got != 2 {
+		t.Fatalf("PanelSeconds = %d, want the default 2", got)
+	}
+
+	run(t, g, gui.handleSettingsToggle)
+	if got := gui.Config.User.Refresh.PanelSeconds; got != 5 {
+		t.Errorf("PanelSeconds = %d after one step, want the next rung 5", got)
+	}
+
+	saved, err := config.LoadUserConfig()
+	if err != nil {
+		t.Fatalf("LoadUserConfig() after the write error = %v", err)
+	}
+	if saved.Refresh.PanelSeconds != 5 {
+		t.Errorf("saved PanelSeconds = %d, want 5", saved.Refresh.PanelSeconds)
+	}
+
+	// Past the top rung it wraps to off, which is what makes the disabled state reachable from the screen at all.
+	run(t, g, gui.handleSettingsToggle)
+	run(t, g, gui.handleSettingsToggle)
+	if got := gui.Config.User.Refresh.PanelSeconds; got != 0 {
+		t.Errorf("PanelSeconds = %d after wrapping past the top rung, want 0", got)
+	}
+}
+
+// The metrics ladder starts at the floor, because CloudWatch bills per metric per request and the screen must not offer a rate the app would then refuse.
+func TestTheMetricsLadderNeverOffersLessThanTheFloor(t *testing.T) {
+	gui, _ := newHeadlessGuiWithConfig(t, config.DefaultUserConfig())
+
+	for _, item := range gui.settings() {
+		if item.name != "Metrics refresh" {
+			continue
+		}
+		for _, seconds := range item.seconds {
+			if seconds != 0 && seconds < config.MetricsFloorSeconds {
+				t.Errorf("the metrics ladder offers %ds, below the %ds floor MetricsInterval enforces", seconds, config.MetricsFloorSeconds)
+			}
+		}
+		return
+	}
+
+	t.Fatal("no \"Metrics refresh\" row on the settings screen")
+}
+
+// A row's rendered value has to say what the setting IS: a bare 0 reads as an interval of no length rather than as no refresh at all.
+func TestSecondsLabelNamesTheDisabledState(t *testing.T) {
+	if got := secondsLabel(0); got != "off" {
+		t.Errorf("secondsLabel(0) = %q, want %q", got, "off")
+	}
+	if got := secondsLabel(60); got != "60s" {
+		t.Errorf("secondsLabel(60) = %q, want %q", got, "60s")
+	}
+}
+
+// A hand-edited number the ladder does not contain must step UP to the next rung, not snap back to the first: snapping would send 45 to off on one keypress, discarding the setting rather than changing it.
+func TestNextSecondsStepsUpFromAValueOffTheLadder(t *testing.T) {
+	ladder := []int{0, 1, 2, 5, 10}
+
+	tests := []struct {
+		current int
+		want    int
+	}{
+		{current: 0, want: 1},
+		{current: 2, want: 5},
+		{current: 3, want: 5},
+		{current: 10, want: 0},
+		{current: 45, want: 0},
+	}
+
+	for _, test := range tests {
+		if got := nextSeconds(ladder, test.current); got != test.want {
+			t.Errorf("nextSeconds(%v, %d) = %d, want %d", ladder, test.current, got, test.want)
+		}
+	}
+}
+
 func TestCyclingTheChatBackend(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

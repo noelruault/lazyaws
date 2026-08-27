@@ -153,6 +153,8 @@ refresh:
   ecsLogsSeconds: 5
   ec2StatusSeconds: 10
   overviewSeconds: 2                        # the Overview tab's auto-refresh; 0 turns it off
+  panelSeconds: 2                           # the focused panel's list reload; 0 turns it off
+  metricsSeconds: 60                        # CloudWatch metrics, billed per metric requested; 0 turns it off, and anything under 10 is treated as 10
 chat:
   enabled: false                            # the chat screen, off unless you ask for it
   provider: bedrock                         # bedrock|kiro
@@ -160,7 +162,7 @@ chat:
 readOnly: false                             # hide every action that changes AWS state
 ```
 
-You don't have to write any of this by hand: `o` opens the Settings screen, toggles write straight into the file (keeping your comments and any keys they don't manage), and `o` then `e` opens it in `$EDITOR` for the keys the screen doesn't cover (theme, panel widths, refresh intervals, keybindings).
+You don't have to write any of this by hand: `o` opens the Settings screen, toggles write straight into the file (keeping your comments and any keys they don't manage), and `o` then `e` opens it in `$EDITOR` for the keys the screen doesn't cover (theme, panel widths, keybindings). The refresh intervals cycle through a ladder of values on the screen; the file takes any number.
 
 ### Read-only mode
 

@@ -43,9 +43,17 @@ type setting struct {
 	getChoice func(*config.UserConfig) string
 	setChoice func(*config.UserConfig, string)
 	emptyHint string
+
+	// seconds is the interval kind: a ladder of values the row cycles through, because the Settings screen has no text entry and an interval is not a string choice.
+	// It needs its own kind rather than reusing choices: the YAML tag differs, and writing an int key as a quoted string leaves a file the next load cannot parse.
+	seconds []int
+	getInt  func(*config.UserConfig) int
+	setInt  func(*config.UserConfig, int)
 }
 
 func (s setting) isChoice() bool { return s.choices != nil }
+
+func (s setting) isSeconds() bool { return s.seconds != nil }
 
 func (gui *Gui) settings() []setting {
 	return []setting{
@@ -86,6 +94,31 @@ func (gui *Gui) settings() []setting {
 			path: []string{"gui", "dimBehindPopups"},
 			get:  func(user *config.UserConfig) bool { return user.Gui.DimBehindPopups },
 			set:  func(user *config.UserConfig, value bool) { user.Gui.DimBehindPopups = value },
+		},
+		{
+			name:    "Overview refresh",
+			help:    "how often the open Overview tab redraws",
+			path:    []string{"refresh", "overviewSeconds"},
+			seconds: []int{0, 1, 2, 5, 10},
+			getInt:  func(user *config.UserConfig) int { return user.Refresh.OverviewSeconds },
+			setInt:  func(user *config.UserConfig, value int) { user.Refresh.OverviewSeconds = value },
+		},
+		{
+			name:    "Panel refresh",
+			help:    "how often the focused panel's list reloads",
+			path:    []string{"refresh", "panelSeconds"},
+			seconds: []int{0, 1, 2, 5, 10},
+			getInt:  func(user *config.UserConfig) int { return user.Refresh.PanelSeconds },
+			setInt:  func(user *config.UserConfig, value int) { user.Refresh.PanelSeconds = value },
+		},
+		{
+			// The ladder starts at the floor rather than at 1: CloudWatch bills per metric per request, so this is the one interval where a shorter setting has a price rather than a cost.
+			name:    "Metrics refresh",
+			help:    "how often CloudWatch metrics refetch (billed per metric)",
+			path:    []string{"refresh", "metricsSeconds"},
+			seconds: []int{0, config.MetricsFloorSeconds, 30, 60, 300},
+			getInt:  func(user *config.UserConfig) int { return user.Refresh.MetricsSeconds },
+			setInt:  func(user *config.UserConfig, value int) { user.Refresh.MetricsSeconds = value },
 		},
 	}
 }
@@ -212,7 +245,12 @@ func (gui *Gui) handleSettingsToggle() error {
 	selected := all[gui.State.Settings.selected]
 
 	var save error
-	if selected.isChoice() {
+	switch {
+	case selected.isSeconds():
+		value := nextSeconds(selected.seconds, selected.getInt(&gui.Config.User))
+		selected.setInt(&gui.Config.User, value)
+		save = config.SetIntSetting(selected.path, value)
+	case selected.isChoice():
 		choices := selected.choices()
 		if len(choices) == 0 {
 			return nil
@@ -220,7 +258,7 @@ func (gui *Gui) handleSettingsToggle() error {
 		value := nextChoice(choices, selected.getChoice(&gui.Config.User))
 		selected.setChoice(&gui.Config.User, value)
 		save = config.SetStringSetting(selected.path, value)
-	} else {
+	default:
 		value := !selected.get(&gui.Config.User)
 		selected.set(&gui.Config.User, value)
 		save = config.SetBoolSetting(selected.path, value)
@@ -245,6 +283,18 @@ func nextChoice(choices []string, current string) string {
 	}
 
 	return choices[0]
+}
+
+// nextSeconds advances to the next rung of the ladder, landing on the first value ABOVE a config-file number the ladder does not contain.
+// Snapping to the first rung instead would send a hand-edited 45 back to 0 (off) on one keypress, which is a setting silently discarded rather than changed.
+func nextSeconds(ladder []int, current int) int {
+	for _, value := range ladder {
+		if value > current {
+			return value
+		}
+	}
+
+	return ladder[0]
 }
 
 func (gui *Gui) handleSettingsEditFile() error {
@@ -282,6 +332,9 @@ func renderSettingsTable(rows [][]string) (string, error) {
 }
 
 func (gui *Gui) settingValueLabel(item setting) string {
+	if item.isSeconds() {
+		return " " + secondsLabel(item.getInt(&gui.Config.User))
+	}
 	if !item.isChoice() {
 		if item.get(&gui.Config.User) {
 			return " [on] "
@@ -297,7 +350,19 @@ func (gui *Gui) settingValueLabel(item setting) string {
 	return " " + value
 }
 
+// secondsLabel names the disabled state rather than showing a bare 0, which reads as an interval of no length instead of no refresh at all.
+func secondsLabel(seconds int) string {
+	if seconds <= 0 {
+		return "off"
+	}
+
+	return fmt.Sprintf("%ds", seconds)
+}
+
 func (gui *Gui) settingHelp(item setting) string {
+	if item.isSeconds() {
+		return fmt.Sprintf("%s — space cycles %d", item.help, len(item.seconds))
+	}
 	if !item.isChoice() {
 		return item.help
 	}
