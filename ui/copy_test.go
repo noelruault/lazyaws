@@ -74,6 +74,42 @@ func TestEveryPanelCopiesItsFullIdentifier(t *testing.T) {
 	}
 }
 
+// The ECS panel is three tables behind one view, each with its row payload in a different field, and the table above can only drive one of them.
+// The cluster level is the one a user opens on, so a copy value that only resolves for services would be wrong most of the time.
+func TestCopyOnEveryECSDrillLevel(t *testing.T) {
+	// The expectations are literals, not row.arn(): that is the function the copy value calls, so asking it what to expect makes any answer it gives correct.
+	rows := []struct {
+		row  *ecsRow
+		want string
+	}{
+		{
+			row:  &ecsRow{Kind: ecsRowKindCluster, Cluster: &aws.ECSCluster{Name: "prod", Arn: "arn:aws:ecs:eu-west-1:111122223333:cluster/prod"}},
+			want: "arn:aws:ecs:eu-west-1:111122223333:cluster/prod",
+		},
+		{
+			row:  &ecsRow{Kind: ecsRowKindService, Service: &aws.ECSService{Name: "api", Arn: "arn:aws:ecs:eu-west-1:111122223333:service/prod/api"}},
+			want: "arn:aws:ecs:eu-west-1:111122223333:service/prod/api",
+		},
+		{
+			row:  &ecsRow{Kind: ecsRowKindTask, Task: &aws.ECSTask{ID: "9f8e7d", Arn: "arn:aws:ecs:eu-west-1:111122223333:task/prod/9f8e7d"}},
+			want: "arn:aws:ecs:eu-west-1:111122223333:task/prod/9f8e7d",
+		},
+	}
+
+	for _, tc := range rows {
+		gui := newTestGui(t)
+		gui.Panels.ECS.SetItems([]*ecsRow{tc.row})
+
+		got, ok := gui.Panels.ECS.SelectedCopyValue()
+		if !ok {
+			t.Fatalf("an ECS row of kind %v reports nothing to copy", tc.row.Kind)
+		}
+		if got != tc.want {
+			t.Errorf("an ECS row of kind %v copies %q, want %q", tc.row.Kind, got, tc.want)
+		}
+	}
+}
+
 // The three panels that carry an ARN carry it from a list call that can answer without one, and a blank popup is worse than the name.
 func TestCopyValueFallsBackToTheNameWithoutAnArn(t *testing.T) {
 	gui := newTestGui(t)
