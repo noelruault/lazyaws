@@ -178,8 +178,8 @@ func TestColumnsNeverExceedsTheWidth(t *testing.T) {
 		for _, right := range blocks {
 			for _, gap := range []int{0, 1, 2, 5} {
 				for width := range 261 {
-					// Stacked and passthrough both hand the blocks back at their own width, which is the documented fallback rather than a budget.
-					if width < minTwoColWidth || right == "" {
+					// Passthrough is the one path that is not a budget: with no right block Columns is an identity its callers rely on.
+					if right == "" {
 						continue
 					}
 					for _, line := range strings.Split(Columns(width, gap, left, right), "\n") {

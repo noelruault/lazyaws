@@ -22,10 +22,12 @@ func Columns(width, gap int, left, right string) string {
 
 	column := (width - 2*gap - 1) / 2
 	if width < minTwoColWidth || column <= 0 {
+		// Stacking gives each block the whole width, which is still a budget: main renders an overview with wrapping off, so a line longer than the pane is clipped at the edge with nothing to say it was clipped.
+		// An ARN is longer than any narrow terminal, so this is the common case rather than the degenerate one.
 		if left == "" {
-			return right
+			return truncateBlock(right, width)
 		}
-		return left + "\n" + right
+		return truncateBlock(left, width) + "\n" + truncateBlock(right, width)
 	}
 
 	leftLines, rightLines := strings.Split(left, "\n"), strings.Split(right, "\n")
@@ -41,6 +43,16 @@ func Columns(width, gap int, left, right string) string {
 			rightLine = truncateStyled(rightLines[i], column)
 		}
 		lines[i] = strings.TrimRight(utils.WithPadding(leftLine, column)+rule+rightLine, " ")
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// truncateBlock cuts every line of a pre-rendered block to width terminal cells.
+func truncateBlock(block string, width int) string {
+	lines := strings.Split(block, "\n")
+	for i, line := range lines {
+		lines[i] = truncateStyled(line, width)
 	}
 
 	return strings.Join(lines, "\n")
