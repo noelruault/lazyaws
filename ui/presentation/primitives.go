@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/ui/utils"
 )
@@ -104,6 +105,25 @@ func ResourceHeader(kind, name, badge, id string, meta ...string) string {
 	}
 
 	return header.String()
+}
+
+// kv is one label/value row of an overview's key-value block.
+type kv struct{ label, value string }
+
+// kvBlock renders label/value rows with the labels padded to a common width, so the values line up in a column the eye can run down.
+// Padding is applied to the coloured label because utils.WithPadding measures what is visible, not what is stored.
+func kvBlock(rows []kv) string {
+	label := 0
+	for _, row := range rows {
+		label = max(label, runewidth.StringWidth(row.label)+len(":"))
+	}
+
+	lines := make([]string, len(rows))
+	for i, row := range rows {
+		lines[i] = utils.WithPadding(utils.ColoredString(row.label+":", color.FgYellow), label) + " " + row.value
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // FormatByteCount renders a byte count in binary units, "1.5 GiB".

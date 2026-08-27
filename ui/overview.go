@@ -77,6 +77,12 @@ func overviewUnavailable(kind string) string {
 	return utils.ColoredString(kind+" overview unavailable", color.Faint)
 }
 
+// overviewUnavailableBecause keeps a failed fetch on the same footing as an absent one, and says which it was.
+// A ticking overview retries on its own interval, so the reason has to stay on screen: without it a transient throttle and a permanent denial look identical.
+func overviewUnavailableBecause(kind string, err error) string {
+	return overviewUnavailable(kind) + "\n" + utils.ColoredString(err.Error(), color.FgRed)
+}
+
 // syncMainWidth re-renders the open tab when main's inner width changes.
 // It runs from layout for the same reason syncQWidth does: that is the one place view dimensions can be read without racing the render.
 // An overview is laid out for the width captured when its task was built and wrapping is off, so after a resize the old text is either cut off or leaves its second column stranded.

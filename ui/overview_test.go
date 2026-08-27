@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/ui/tasks"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
 
 func TestOverviewInterval(t *testing.T) {
@@ -30,6 +32,18 @@ func TestOverviewInterval(t *testing.T) {
 				t.Errorf("overviewInterval(%d) = %v, want %v", tt.seconds, got, tt.want)
 			}
 		})
+	}
+}
+
+// An overview that fails to fetch re-renders on its own interval, so it has to say WHY: without the reason a transient throttle and a permanent access denial are the same blank statement.
+func TestOverviewUnavailableCarriesTheReason(t *testing.T) {
+	got := utils.Decolorise(overviewUnavailableBecause("secret", errors.New("AccessDeniedException: not authorized")))
+
+	if want := "secret overview unavailable"; !strings.Contains(got, want) {
+		t.Errorf("overview = %q, want it to contain %q", got, want)
+	}
+	if want := "AccessDeniedException: not authorized"; !strings.Contains(got, want) {
+		t.Errorf("overview = %q, want it to carry the reason %q", got, want)
 	}
 }
 

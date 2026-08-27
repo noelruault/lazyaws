@@ -45,7 +45,7 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 		ContextState: &panels.ContextState[*aws.SecretSummary]{
 			GetMainTabs: func() []panels.MainTab[*aws.SecretSummary] {
 				return []panels.MainTab[*aws.SecretSummary]{
-					overviewTab(gui, func(context.Context, *aws.SecretSummary, int) string { return overviewUnavailable("secret") }),
+					overviewTab(gui, gui.secretOverview),
 					{Key: "config", Title: "Config", Render: gui.renderSecretsConfig},
 					{Key: "value", Title: "Value", Render: gui.renderSecretValue},
 				}
@@ -112,6 +112,23 @@ func secretsSelectionKey(secret *aws.SecretSummary) string { return secret.Name 
 func (gui *Gui) handleSecretsToggleDeleted(g *gocui.Gui, v *gocui.View) error {
 	gui.secretsShowDeleted = !gui.secretsShowDeleted
 	return gui.loadSecretsList()
+}
+
+// secretOverview reads the same metadata the Config tab does and never the value, so an overview that re-renders on its own interval still emits no GetSecretValue CloudTrail event.
+func (gui *Gui) secretOverview(ctx context.Context, secret *aws.SecretSummary, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("secret")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	details, err := gui.Client.GetSecretDetails(fetchCtx, secret.Name)
+	if err != nil {
+		return overviewUnavailableBecause("secret", err)
+	}
+
+	return presentation.FormatSecretOverview(details, width, time.Now())
 }
 
 // renderSecretsConfig avoids GetSecretValue so browsing emits no value-read CloudTrail event.
