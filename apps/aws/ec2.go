@@ -631,6 +631,9 @@ func (c *Client) ListVolumeSnapshots(ctx context.Context, volumeIDs []string) ([
 	if len(volumeIDs) == 0 {
 		return nil, nil
 	}
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
 
 	result, err := c.EC2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
@@ -776,6 +779,9 @@ type ConsoleOutput struct {
 
 // GetConsoleOutput returns the instance's console output still base64-encoded, with an empty Content when none is available.
 func (c *Client) GetConsoleOutput(ctx context.Context, instanceID string) (ConsoleOutput, error) {
+	if c.EC2 == nil {
+		return ConsoleOutput{}, fmt.Errorf("EC2 client not initialized")
+	}
 	input := &ec2.GetConsoleOutputInput{
 		InstanceId: &instanceID,
 	}
@@ -799,6 +805,9 @@ func (c *Client) GetConsoleOutput(ctx context.Context, instanceID string) (Conso
 
 // GetConsoleScreenshot returns the instance console screenshot as base64-encoded PNG bytes, or "" when not available.
 func (c *Client) GetConsoleScreenshot(ctx context.Context, instanceID string) (string, error) {
+	if c.EC2 == nil {
+		return "", fmt.Errorf("EC2 client not initialized")
+	}
 	input := &ec2.GetConsoleScreenshotInput{
 		InstanceId: &instanceID,
 	}

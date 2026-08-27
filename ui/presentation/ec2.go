@@ -50,7 +50,7 @@ func MetricReading(p aws.MetricPoint, stat string, format func(float64) string) 
 // The header is built from the list row rather than from the fetch, so an instance whose every section failed is still identified by name and id instead of leaving an anonymous pane of errors.
 func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width int, now time.Time) string {
 	// Cut to the pane: the header spans the full width rather than a column, so Columns never sees it, and with wrap off a long name plus its badge and id runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("Instance", instanceName(inst), Badge(inst.State), inst.ID, inst.InstanceType, inst.AZ), width)
+	header := truncateBlock(ResourceHeader("EC2 Instance", instanceName(inst), Badge(inst.State), inst.ID, inst.InstanceType, inst.AZ), width)
 
 	column := ColumnWidth(width, overviewGap)
 	left := joinBlocks(
@@ -62,6 +62,7 @@ func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width i
 		instanceStatusBlock(o),
 		instanceStorageBlock(o, column),
 		instanceSecurityBlock(o),
+		instanceConsoleBlock(o, now),
 		instanceTagsBlock(o),
 	)
 
@@ -111,6 +112,10 @@ func instanceConfigBlock(o *aws.InstanceOverview, now time.Time) string {
 		{"Root device", orNone(d.RootDeviceType)},
 		{"Monitoring", orNone(d.Monitoring)},
 		{"Launched", launchedAt(d.LaunchTime, now)},
+	}
+	// Same rule as instanceTypeLine: absent specs degrade to the row not appearing, never to a value the lookup did not answer.
+	if d.InstanceTypeInfo != nil {
+		rows = append(rows, kv{"Instance storage", orNone(d.InstanceTypeInfo.StorageType)})
 	}
 
 	return SectionTitle("Configuration") + "\n" + kvBlock(rows)
@@ -168,7 +173,7 @@ func instanceNetworkBlock(o *aws.InstanceOverview) string {
 		lines = append(lines, "  none")
 	}
 	for _, ni := range d.NetworkInterfaces {
-		lines = append(lines, "  "+ni.ID+" "+utils.ColoredString(orNone(ni.PrivateIP), color.Faint))
+		lines = append(lines, "  "+ni.ID+" "+utils.ColoredString(interfaceAddresses(ni), color.Faint))
 	}
 
 	// An unreadable address list is not an instance with no Elastic IP: the fetch is separate from the rest of the details, so its failure is stated rather than rendered as an absence.
@@ -181,10 +186,27 @@ func instanceNetworkBlock(o *aws.InstanceOverview) string {
 		lines = append(lines, "  none")
 	}
 	for _, eip := range d.ElasticIPs {
-		lines = append(lines, "  "+eip.PublicIP)
+		line := "  " + eip.PublicIP
+		if eip.NetworkIF != "" {
+			line += " " + utils.ColoredString(eip.NetworkIF, color.Faint)
+		}
+		lines = append(lines, line)
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// interfaceAddresses compacts one interface's addressing to its row: private always, public and subnet when present.
+func interfaceAddresses(ni aws.NetworkInterface) string {
+	parts := []string{orNone(ni.PrivateIP)}
+	if ni.PublicIP != "" {
+		parts = append(parts, "→ "+ni.PublicIP)
+	}
+	if ni.SubnetID != "" {
+		parts = append(parts, ni.SubnetID)
+	}
+
+	return strings.Join(parts, " ")
 }
 
 func instanceMetricsBlock(o *aws.InstanceOverview) string {
@@ -196,8 +218,14 @@ func instanceMetricsBlock(o *aws.InstanceOverview) string {
 	percent := func(v float64) string { return fmt.Sprintf("%.1f%%", v) }
 	count := func(v float64) string { return strconv.Itoa(int(v)) }
 
+	// The CPU row gets the bar the mockups draw; the byte metrics have no 0..100 scale for one.
+	cpu := MetricReading(m.CPUUtilization, "5-min avg", percent)
+	if m.CPUUtilization.OK {
+		cpu = Gauge(ecsGaugeWidth, m.CPUUtilization.Value) + fmt.Sprintf("  (5-min avg @ %s)", m.CPUUtilization.At.UTC().Format("15:04Z"))
+	}
+
 	return SectionTitle("Metrics") + "\n" + kvBlock([]kv{
-		{"CPU", MetricReading(m.CPUUtilization, "5-min avg", percent)},
+		{"CPU", cpu},
 		{"Network in", MetricReading(m.NetworkIn, "5-min total", FormatByteCount)},
 		{"Network out", MetricReading(m.NetworkOut, "5-min total", FormatByteCount)},
 		{"Disk read", MetricReading(m.DiskReadBytes, "5-min total", FormatByteCount)},
@@ -223,7 +251,14 @@ func instanceStatusBlock(o *aws.InstanceOverview) string {
 		lines = append(lines, "  none")
 	}
 	for _, event := range s.ScheduledEvents {
-		lines = append(lines, "  "+utils.ColoredString(event.Code, color.FgYellow)+" "+event.NotBefore)
+		line := "  " + utils.ColoredString(event.Code, color.FgYellow) + " " + event.NotBefore
+		if event.NotAfter != "" {
+			line += " - " + event.NotAfter
+		}
+		if event.Description != "" {
+			line += " " + utils.ColoredString(event.Description, color.Faint)
+		}
+		lines = append(lines, line)
 	}
 
 	return strings.Join(lines, "\n") + "\n" + instanceAlarmsLines(o) + "\n" + instanceASGLines(o)
@@ -240,7 +275,7 @@ func instanceAlarmsLines(o *aws.InstanceOverview) string {
 
 	lines := []string{"Alarms:"}
 	for _, alarm := range o.Alarms {
-		lines = append(lines, "  "+Badge(alarm.State)+" "+alarm.Name)
+		lines = append(lines, "  "+Badge(alarm.State)+" "+alarm.Name+" "+utils.ColoredString(alarm.MetricName, color.Faint))
 	}
 
 	return strings.Join(lines, "\n")
@@ -258,6 +293,9 @@ func instanceASGLines(o *aws.InstanceOverview) string {
 	return fmt.Sprintf("Auto Scaling: %s (desired %d, min %d, max %d)", o.ASG.GroupName, o.ASG.Desired, o.ASG.Min, o.ASG.Max)
 }
 
+// storageVolumeIDWidth is the table width at which the volume-id column joins: the widest realistic row with it stays whole there. A tune-by-eye number like minTwoColWidth, not a derived one.
+const storageVolumeIDWidth = 80
+
 func instanceStorageBlock(o *aws.InstanceOverview, width int) string {
 	if err := o.Err(aws.SectionDetails); err != nil {
 		return sectionUnavailable("Storage", err)
@@ -271,15 +309,20 @@ func instanceStorageBlock(o *aws.InstanceOverview, width int) string {
 
 	// gp2 volumes report no throughput at all, so the column is carried only when some volume actually has one: an unconditional "0 MiB/s" is a reading nobody published.
 	throughput := slices.ContainsFunc(devices, func(d aws.BlockDevice) bool { return d.Throughput > 0 })
+	// The volume id is 21 cells the narrow pane cannot spare without cutting the encryption flag, which is the one column anybody acts on; wide panes carry it, narrow ones keep the row whole.
+	withVolume := width >= storageVolumeIDWidth
 
 	rows := make([][]utils.Cell, len(devices))
 	for i, d := range devices {
-		cells := []utils.Cell{
-			{Text: d.DeviceName},
-			{Text: fmt.Sprintf("%d GiB", d.VolumeSize)},
-			{Text: d.VolumeType},
-			{Text: fmt.Sprintf("%d IOPS", d.Iops)},
+		cells := []utils.Cell{{Text: d.DeviceName}}
+		if withVolume {
+			cells = append(cells, utils.Cell{Text: d.VolumeID, Color: color.Faint})
 		}
+		cells = append(cells,
+			utils.Cell{Text: fmt.Sprintf("%d GiB", d.VolumeSize)},
+			utils.Cell{Text: d.VolumeType},
+			utils.Cell{Text: fmt.Sprintf("%d IOPS", d.Iops)},
+		)
 		if throughput {
 			cells = append(cells, utils.Cell{Text: fmt.Sprintf("%d MiB/s", d.Throughput)})
 		}
@@ -289,7 +332,49 @@ func instanceStorageBlock(o *aws.InstanceOverview, width int) string {
 	// Every column holds a value of its own natural width, so none takes a weight; the rows and the weights are built together, which is why neither error RenderTableFit reports can happen.
 	table, _ := utils.RenderTableFit(rows, width, make([]int, len(rows[0])))
 
-	return title + "\n" + table
+	return title + "\n" + table + "\n" + instanceSnapshotLines(o)
+}
+
+// instanceSnapshotLines rides the selection-time schedule (see ec2OverviewExtras), so on the first render of a selection the list can be legitimately absent without having failed.
+func instanceSnapshotLines(o *aws.InstanceOverview) string {
+	if err := o.Err(aws.SectionSnapshots); err != nil {
+		return "Snapshots: " + utils.ColoredString("unavailable", color.FgRed)
+	}
+	if len(o.Snapshots) == 0 {
+		return "Snapshots: none"
+	}
+
+	lines := []string{"Snapshots:"}
+	for _, s := range o.Snapshots {
+		lines = append(lines, fmt.Sprintf("  %s %s %s %s (%d GiB) started %s", s.SnapshotID, utils.ColoredString(s.VolumeID, color.Faint), s.State, s.Progress, s.SizeGiB, s.StartTime))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// instanceConsoleBlock reports availability and age only: the payloads stay behind the actions menu, and the age matters because AWS captures the console log at boot and never again.
+func instanceConsoleBlock(o *aws.InstanceOverview, now time.Time) string {
+	if err := o.Err(aws.SectionConsole); err != nil {
+		return sectionUnavailable("Console", err)
+	}
+	c := o.Console
+	if c == nil {
+		return SectionTitle("Console") + "\nnot fetched yet"
+	}
+
+	output := "none"
+	if c.OutputBytes > 0 {
+		output = fmt.Sprintf("available · %s · captured %s", FormatByteCount(float64(c.OutputBytes)), RelTime(c.CapturedAt, now))
+	}
+	screenshot := "none"
+	if c.ScreenshotBytes > 0 {
+		screenshot = "available · " + FormatByteCount(float64(c.ScreenshotBytes))
+	}
+
+	return SectionTitle("Console") + "\n" + kvBlock([]kv{
+		{"Output", output},
+		{"Screenshot", screenshot},
+	})
 }
 
 // encryptionCell says which state it is in words, because this table has no header row and a bare "no" between a volume type and an IOPS figure says nothing.
@@ -328,7 +413,7 @@ func instanceTagsBlock(o *aws.InstanceOverview) string {
 		lines = append(lines, "none")
 	}
 	for _, tag := range o.Details.Tags {
-		lines = append(lines, tag.Key+": "+orNone(tag.Value))
+		lines = append(lines, TagLine(tag.Key, tag.Value))
 	}
 
 	return strings.Join(lines, "\n")

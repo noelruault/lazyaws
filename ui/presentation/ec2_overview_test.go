@@ -86,7 +86,8 @@ func TestInstanceOverviewRendersEverySection(t *testing.T) {
 		"Instance", "web-1", "i-0abcdef1234567890",
 		"Configuration", "t3a.micro · 2 vCPU · 1.0 GiB", "eu-west-1a", "x86_64", "Linux/UNIX", "web-kp", "web-role",
 		"Network", "198.51.100.178", "203.0.113.10", "vpc-0abcdef1234567890", "Up to 5 Gigabit", "eni-0abcdef1234567890",
-		"Metrics", "0.5% (5-min avg @ 11:43Z)", "235.0 KiB (5-min total @ 11:43Z)",
+		// The CPU row carries the mockups' bar; a reading of 0.5% fills no cells at this width, so the empty bar plus its number is the recorded render.
+		"Metrics", "▕░░░░░░░░░░▏ 0.5%  (5-min avg @ 11:43Z)", "235.0 KiB (5-min total @ 11:43Z)",
 		"Status", "instance-reboot", "cpu-high", "web-asg (desired 2, min 1, max 4)",
 		"Storage", "/dev/sda1", "8 GiB", "gp2", "100 IOPS", "unencrypted",
 		"Security", "web-sg", "sg-0abcdef1234567890",
@@ -363,7 +364,7 @@ func storageRows(t *testing.T, plain string) []string {
 func TestInstanceOverviewSeparatesItsSections(t *testing.T) {
 	got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), fullOverview(), stackedWidth, overviewNow))
 
-	for _, want := range []string{"\n\nNetwork\n", "\n\nMetrics\n", "\n\nStorage\n", "\n\nSecurity\n", "\n\nTags\n"} {
+	for _, want := range []string{"\n\n⇄ Network\n", "\n\n◒ Metrics\n", "\n\n▣ Storage\n", "\n\n⌾ Security\n", "\n\n◇ Tags\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("section %q is not preceded by a blank line\n%s", strings.TrimSpace(want), got)
 		}

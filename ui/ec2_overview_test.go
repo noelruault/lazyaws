@@ -2,9 +2,7 @@ package ui
 
 import (
 	"context"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/noelruault/lazyaws/apps/aws"
 )
@@ -81,25 +79,25 @@ func TestEC2OverviewExtrasCopyErrorsWithoutInventingThem(t *testing.T) {
 	}
 }
 
-// The console log is captured at boot and never again, so on an instance up for months the size reads as a live log and the capture date is the only thing that says otherwise.
-func TestFormatEC2StatusDatesTheConsoleCapture(t *testing.T) {
-	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	status := &aws.InstanceStatus{InstanceState: "running"}
-	console := aws.ConsoleOutput{Content: "abcd", At: time.Date(2025, 12, 23, 22, 58, 51, 0, time.UTC)}
+// The snapshots need the volume ids off the ticker's details fetch, so a render where details failed must not latch an empty snapshot list for the whole selection.
+func TestEC2OverviewExtrasSnapshotsWaitForTheDetails(t *testing.T) {
+	var extras ec2OverviewExtras
 
-	got := formatEC2Status(status, nil, console, "", now)
-	if want := "captured 2025-12-23T22:58:51Z (246d ago)"; !strings.Contains(got, want) {
-		t.Errorf("status is missing %q\n%s", want, got)
+	// First render: details failed, so the snapshot fetch must not run or latch.
+	withoutDetails := newExtrasOverview()
+	extras.fill(context.Background(), &aws.Client{}, 1, "i-1", withoutDetails)
+	if extras.snapsFilled {
+		t.Fatal("fill() latched the snapshot list before the volume ids were known")
 	}
 
-	// A capture with no timestamp must not be related against the zero time, which would report a log from the year 1.
-	got = formatEC2Status(status, nil, aws.ConsoleOutput{Content: "abcd"}, "", now)
-	if !strings.Contains(got, "captured unknown") {
-		t.Errorf("an unstamped console capture should say so\n%s", got)
+	// A later render of the same selection has the details; the fetch runs (and fails on the empty client), which is the latch plus a reported error.
+	withDetails := newExtrasOverview()
+	withDetails.Details = &aws.InstanceDetails{BlockDevices: []aws.BlockDevice{{VolumeID: "vol-1"}}}
+	extras.fill(context.Background(), &aws.Client{}, 1, "i-1", withDetails)
+	if !extras.snapsFilled {
+		t.Fatal("fill() did not fetch the snapshots once the details arrived")
 	}
-
-	got = formatEC2Status(status, nil, aws.ConsoleOutput{}, "", now)
-	if !strings.Contains(got, "Console output:\nnone") {
-		t.Errorf("an absent console log should read none\n%s", got)
+	if withDetails.Err(aws.SectionSnapshots) == nil {
+		t.Error("a failed snapshot fetch should be reported on the overview")
 	}
 }
