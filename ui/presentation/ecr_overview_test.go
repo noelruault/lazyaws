@@ -100,6 +100,41 @@ func TestRepositoryOverviewStatesEveryAbsence(t *testing.T) {
 	}
 }
 
+// A policy read that failed is not a repository without a policy, and both leave the field empty.
+// Each read is reported on its own row: the two calls fail independently, so the one that answered must keep answering.
+func TestRepositoryOverviewTellsAFailedPolicyReadFromAnAbsentPolicy(t *testing.T) {
+	absent := plainRepository(&aws.ECRRepository{Name: "bare"}, nil, nil, stackedWidth)
+	unreadable := plainRepository(&aws.ECRRepository{
+		Name:               "bare",
+		PolicyErr:          errors.New("ThrottlingException"),
+		LifecyclePolicyErr: errors.New("AccessDenied"),
+	}, nil, nil, stackedWidth)
+
+	for _, want := range []string{
+		"Repository policy: unavailable: ThrottlingException",
+		"Lifecycle policy: unavailable: AccessDenied",
+	} {
+		if !strings.Contains(unreadable, want) {
+			t.Errorf("overview is missing %q\n%s", want, unreadable)
+		}
+	}
+	// Asserting the failure text alone passes while both states still collapse to one string, which is the bug this closes.
+	for _, absentLine := range []string{"Repository policy: none", "Lifecycle policy: none"} {
+		if strings.Contains(unreadable, absentLine) {
+			t.Errorf("an unreadable policy still renders as %q\n%s", absentLine, unreadable)
+		}
+		if !strings.Contains(absent, absentLine) {
+			t.Errorf("a genuinely absent policy no longer renders as %q\n%s", absentLine, absent)
+		}
+	}
+
+	// One read failing must not take the other's answer with it.
+	oneSide := plainRepository(&aws.ECRRepository{Name: "bare", PolicyErr: errors.New("ThrottlingException"), LifecyclePolicy: `{"rules":[]}`}, nil, nil, stackedWidth)
+	if !strings.Contains(oneSide, "Lifecycle policy: attached, never evaluated") {
+		t.Errorf("a failed repository-policy read took the lifecycle answer down with it\n%s", oneSide)
+	}
+}
+
 // An attached lifecycle policy that has never run has deleted nothing yet, and reporting it as merely attached hides that.
 func TestRepositoryOverviewSeparatesAnUnevaluatedLifecyclePolicy(t *testing.T) {
 	repo := overviewRepository()

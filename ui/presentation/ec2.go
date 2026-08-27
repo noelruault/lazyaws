@@ -90,6 +90,11 @@ func sectionUnavailable(title string, err error) string {
 	return SectionTitle(title) + "\n" + utils.ColoredString("unavailable: "+err.Error(), color.FgRed)
 }
 
+// fieldUnavailable is the same statement for ONE row of a section whose other rows read fine, which is where a per-field read failed rather than the fetch behind the whole section.
+func fieldUnavailable(err error) string {
+	return utils.ColoredString("unavailable: "+err.Error(), color.FgRed)
+}
+
 func instanceConfigBlock(o *aws.InstanceOverview, now time.Time) string {
 	if err := o.Err(aws.SectionDetails); err != nil {
 		return sectionUnavailable("Configuration", err)

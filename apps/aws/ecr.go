@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"sort"
@@ -14,18 +15,22 @@ import (
 )
 
 type ECRRepository struct {
-	Name               string
-	Arn                string
-	URI                string
-	RegistryID         string
-	CreatedAt          *time.Time
-	ScanOnPush         bool
-	TagMutability      string
-	EncryptionType     string
-	KMSKey             string
+	Name           string
+	Arn            string
+	URI            string
+	RegistryID     string
+	CreatedAt      *time.Time
+	ScanOnPush     bool
+	TagMutability  string
+	EncryptionType string
+	KMSKey         string
+	// PolicyText and LifecyclePolicy are "" when no policy is attached and "" again when the read failed, which is what the Err fields beside them are for: without checking those first, a renderer states an absence it cannot know.
+	// These two are the least reliable fields on the row — the list fetch spends one deadline on the repository pages AND two policy calls per repository, so they are what runs out of budget.
 	PolicyText         string
+	PolicyErr          error
 	LifecyclePolicy    string
 	LifecycleEvaluated *time.Time
+	LifecyclePolicyErr error
 }
 
 type ECRImage struct {
@@ -110,19 +115,12 @@ func (c *Client) ListECRRepositoriesDetailed(ctx context.Context) ([]ECRReposito
 				repo.KMSKey = getString(r.EncryptionConfiguration.KmsKey)
 			}
 
-			// Optional policy calls must not hide the repository metadata.
-			pol, err := c.ECR.GetRepositoryPolicy(timeoutCtx, &ecr.GetRepositoryPolicyInput{RepositoryName: r.RepositoryName})
-			if err == nil && pol.PolicyText != nil {
-				repo.PolicyText = *pol.PolicyText
-			}
+			// Optional policy calls must not hide the repository metadata, which is why their failure is carried on the row instead of failing the list: a repository is still worth showing without them.
+			pol, polErr := c.ECR.GetRepositoryPolicy(timeoutCtx, &ecr.GetRepositoryPolicyInput{RepositoryName: r.RepositoryName})
+			repo.PolicyText, repo.PolicyErr = repositoryPolicyResult(pol, polErr)
 
-			lc, err := c.ECR.GetLifecyclePolicy(timeoutCtx, &ecr.GetLifecyclePolicyInput{RepositoryName: r.RepositoryName})
-			if err == nil {
-				if lc.LifecyclePolicyText != nil {
-					repo.LifecyclePolicy = *lc.LifecyclePolicyText
-				}
-				repo.LifecycleEvaluated = lc.LastEvaluatedAt
-			}
+			lc, lcErr := c.ECR.GetLifecyclePolicy(timeoutCtx, &ecr.GetLifecyclePolicyInput{RepositoryName: r.RepositoryName})
+			repo.LifecyclePolicy, repo.LifecycleEvaluated, repo.LifecyclePolicyErr = lifecyclePolicyResult(lc, lcErr)
 
 			repos = append(repos, repo)
 		}
@@ -133,6 +131,41 @@ func (c *Client) ListECRRepositoriesDetailed(ctx context.Context) ([]ECRReposito
 	}
 
 	return repos, nil
+}
+
+// repositoryPolicyResult pairs the policy with the read that produced it, because "none attached" and "could not be read" are both the empty string and only the error tells them apart.
+// Returning them together is what stops the error being dropped again: the fetch cannot record one without the other.
+// ECR answers an unattached policy WITH an error rather than an empty body, so RepositoryPolicyNotFoundException is the absence and every other error is a read that did not happen.
+func repositoryPolicyResult(out *ecr.GetRepositoryPolicyOutput, err error) (string, error) {
+	var absent *ecrTypes.RepositoryPolicyNotFoundException
+	if errors.As(err, &absent) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if out == nil {
+		return "", nil
+	}
+
+	return getString(out.PolicyText), nil
+}
+
+// lifecyclePolicyResult keeps the last evaluation with the policy it belongs to: a nil stamp means "attached but never evaluated" only when the read succeeded.
+// LifecyclePolicyNotFoundException is this call's way of saying no policy is set, so it is the absence and not a failure.
+func lifecyclePolicyResult(out *ecr.GetLifecyclePolicyOutput, err error) (string, *time.Time, error) {
+	var absent *ecrTypes.LifecyclePolicyNotFoundException
+	if errors.As(err, &absent) {
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if out == nil {
+		return "", nil, nil
+	}
+
+	return getString(out.LifecyclePolicyText), out.LastEvaluatedAt, nil
 }
 
 func (c *Client) ListECRImages(ctx context.Context, repoName string) ([]ECRImage, error) {

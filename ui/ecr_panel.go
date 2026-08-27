@@ -89,8 +89,14 @@ func (gui *Gui) ecrRepositoryOverview(ctx context.Context, repo *aws.ECRReposito
 	defer cancel()
 
 	images, err := gui.Client.ListECRImages(fetchCtx, repo.Name)
+	gui.throttles.observe(ecrOverviewErrs(repo, err)...)
 
 	return presentation.FormatECRRepositoryOverview(repo, images, err, width, time.Now())
+}
+
+// ecrOverviewErrs is everything one repository Overview can be throttled on, which is not the same as everything that can fail it: the two policy reads happen per repository inside the list fetch and do not surface as its error, so a throttle on either would otherwise never reach the backoff engine and this pane would keep asking at full rate.
+func ecrOverviewErrs(repo *aws.ECRRepository, err error) []error {
+	return []error{err, repo.PolicyErr, repo.LifecyclePolicyErr}
 }
 
 // renderECRConfig reuses policy data already fetched with the repository row.
@@ -117,16 +123,22 @@ func formatECRConfig(repo *aws.ECRRepository) string {
 	})
 
 	out += "\nRepository Policy:\n"
-	if repo.PolicyText == "" {
+	switch {
+	case repo.PolicyErr != nil:
+		out += "unavailable: " + repo.PolicyErr.Error() + "\n"
+	case repo.PolicyText == "":
 		out += "not configured\n"
-	} else {
+	default:
 		out += repo.PolicyText + "\n"
 	}
 
 	out += "\nLifecycle Policy:\n"
-	if repo.LifecyclePolicy == "" {
+	switch {
+	case repo.LifecyclePolicyErr != nil:
+		out += "unavailable: " + repo.LifecyclePolicyErr.Error() + "\n"
+	case repo.LifecyclePolicy == "":
 		out += "not configured\n"
-	} else {
+	default:
 		out += repo.LifecyclePolicy + "\n"
 		if repo.LifecycleEvaluated != nil {
 			out += fmt.Sprintf("last evaluated: %s\n", repo.LifecycleEvaluated.Format(time.RFC3339))

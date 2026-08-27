@@ -119,17 +119,23 @@ func ecrEncryptionLine(r *aws.ECRRepository) string {
 	return r.EncryptionType
 }
 
+// ecrPolicyBlock reports each policy against its OWN read: the two calls fail independently, so one unavailable section would delete the answer the other one returned.
 func ecrPolicyBlock(r *aws.ECRRepository, now time.Time) string {
 	rows := []kv{
-		{"Repository policy", ecrPolicyLine(r.PolicyText != "")},
+		{"Repository policy", ecrPolicyLine(r)},
 		{"Lifecycle policy", ecrLifecycleLine(r, now)},
 	}
 
 	return SectionTitle("Policies") + "\n" + kvBlock(rows)
 }
 
-func ecrPolicyLine(present bool) string {
-	if present {
+// ecrPolicyLine keeps a policy that could not be read apart from a repository that has none.
+// Both are the empty string, and the list fetch spends one deadline on the repository pages plus two policy calls per repository, so a timeout, a throttle or a denial reaching here is not evidence of an absence and "none" would be the pane inventing the safer of the two answers.
+func ecrPolicyLine(r *aws.ECRRepository) string {
+	if r.PolicyErr != nil {
+		return fieldUnavailable(r.PolicyErr)
+	}
+	if r.PolicyText != "" {
 		return "attached, shown on the Config tab"
 	}
 
@@ -137,7 +143,11 @@ func ecrPolicyLine(present bool) string {
 }
 
 // ecrLifecycleLine carries the last evaluation because an attached lifecycle policy that has never run has not deleted anything yet, and the two states look identical without it.
+// A read that failed is a third state: the stamp is nil then too, so it is checked before either.
 func ecrLifecycleLine(r *aws.ECRRepository, now time.Time) string {
+	if r.LifecyclePolicyErr != nil {
+		return fieldUnavailable(r.LifecyclePolicyErr)
+	}
 	if r.LifecyclePolicy == "" {
 		return "none"
 	}
