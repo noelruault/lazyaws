@@ -79,7 +79,7 @@ Every group is reviewed and repaired inside the cycle that built it (spec.md), s
 
 ## Terminal
 
-- [ ] `final-dod` — HUGE. **The only ticket that may emit "backlog empty", and it is dispatched ALONE** (that is what the HUGE token buys: batched with other tickets, a cycle could reach the stop sentinel while its group was still open). Confirm every group carries a
+- [x] `final-dod` — HUGE. **The only ticket that may emit "backlog empty", and it is dispatched ALONE** (that is what the HUGE token buys: batched with other tickets, a cycle could reach the stop sentinel while its group was still open). Confirm every group carries a
   `- reviewed <id>` line in `review.md`, then that the full Definition of Done (spec.md) holds and the
   green gate passes end-to-end. If
   ANY item fails, file append-only fix tickets and KEEP LOOPING. Only when every item passes, end the
