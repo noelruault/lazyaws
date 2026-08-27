@@ -141,6 +141,30 @@ func TestInstanceOverviewStatesEveryAbsence(t *testing.T) {
 	}
 }
 
+// Network performance has no absent state: every instance type carries a rating, so a nil InstanceTypeInfo is the DescribeInstanceTypes lookup having failed and "none" was a statement about the instance that AWS never made.
+// The row is read as a whole line rather than by Contains, because "none" is on half a dozen other lines of the same pane.
+func TestInstanceOverviewRendersMissingNetworkPerformanceAsUnavailable(t *testing.T) {
+	got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), emptyOverview(), stackedWidth, overviewNow))
+
+	line := ""
+	for _, l := range strings.Split(got, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "Performance:") {
+			line = strings.TrimSpace(l)
+		}
+	}
+	if line == "" {
+		t.Fatalf("overview has no performance row\n%s", got)
+	}
+	if !strings.Contains(line, "unavailable") || strings.Contains(line, "none") {
+		t.Errorf("performance line = %q, want it to read unavailable and not none", line)
+	}
+
+	// The type name is still the honest answer to what the instance IS, and this row must not have taken it down.
+	if !strings.Contains(got, "t2.micro") {
+		t.Errorf("a failed instance-type lookup took the type name with it\n%s", got)
+	}
+}
+
 // An instance in no Auto Scaling group is a nil membership with no error, and reading that as a failed lookup would report a broken permission on the commonest case there is.
 func TestInstanceOverviewSeparatesNoASGFromAFailedASGLookup(t *testing.T) {
 	absent := FormatInstanceOverview(overviewInstance(), emptyOverview(), stackedWidth, overviewNow)

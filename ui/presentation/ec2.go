@@ -148,7 +148,9 @@ func instanceNetworkBlock(o *aws.InstanceOverview) string {
 	}
 	d := o.Details
 
-	performance := "none"
+	// Every instance type carries a network performance rating, so the field has no absent state for "none" to describe: a nil InstanceTypeInfo can only be the DescribeInstanceTypes lookup having failed.
+	// instanceTypeLine degrades honestly on the same nil because the type name alone still answers what the instance IS; this row has nothing left to fall back to, so it says so.
+	performance := utils.ColoredString("unavailable", color.FgRed)
 	if d.InstanceTypeInfo != nil {
 		performance = orNone(d.InstanceTypeInfo.NetworkPerformance)
 	}
