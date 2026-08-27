@@ -50,6 +50,48 @@ export async function openTerminal ({ url, screenshotDir, viewport = defaultView
       await page.keyboard.type(text, { delay: 20 })
     },
 
+    // The selected row is drawn with SelBgColor and nothing else — this gocui's highlight branch never reads SelFgColor — so the highlight lives in the cell attributes and translateToString cannot see it at all.
+    // Exactly one row on the dashboard carries a non-default background, which is why this can return the selection rather than a list: a second painted row would mean something else started colouring backgrounds and the assertion should fail rather than pick.
+    async selectedRow () {
+      const painted = await page.evaluate(() => {
+        const buf = window.term.buffer.active
+        const rows = []
+        for (let i = 0; i < window.term.rows; i++) {
+          const line = buf.getLine(buf.viewportY + i)
+          if (!line) continue
+          // Only the painted cells, never the whole terminal row: the highlight spans the panel's inner width, and the rest of the row is the detail pane beside it.
+          let text = ''
+          for (let x = 0; x < window.term.cols; x++) {
+            const cell = line.getCell(x)
+            if (cell && !cell.isBgDefault()) text += cell.getChars()
+          }
+          // The frame's corner cells can inherit a background, so a row counts as highlighted only once it holds a run of them.
+          if (text.trim().length > 3) rows.push(text.trim())
+        }
+        return rows
+      })
+      if (painted.length !== 1) {
+        throw new Error(`expected exactly one highlighted row, found ${painted.length}: ${JSON.stringify(painted)}`)
+      }
+      return painted[0]
+    },
+
+    // A keypress is answered on the app's next redraw and not on the key event, so an assertion about the selection has to wait for the highlight to arrive rather than read it back immediately (measured: a focus key plus an arrow settles ~200ms later).
+    async waitForSelectedRow (want, { timeout = 5000 } = {}) {
+      const deadline = Date.now() + timeout
+      let last = ''
+      while (Date.now() < deadline) {
+        try {
+          last = await term.selectedRow()
+          if (want instanceof RegExp ? want.test(last) : last === want) return last
+        } catch (err) {
+          last = err.message
+        }
+        await page.waitForTimeout(100)
+      }
+      throw new Error(`timed out after ${timeout}ms waiting for the highlight to be ${want}; last saw ${JSON.stringify(last)}`)
+    },
+
     async waitForText (needle, { timeout = 15000 } = {}) {
       const deadline = Date.now() + timeout
       let screen = ''
