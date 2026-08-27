@@ -160,14 +160,22 @@ func (c *Client) GetSecretDetails(ctx context.Context, name string) (*SecretDeta
 	// A missing or unreadable resource policy must not fail the metadata view, but the failure is carried rather than dropped:
 	// this is the last of three calls sharing timeoutCtx, so it is the one that runs out of budget, and a deadline here is not evidence that no policy is attached.
 	policyOut, policyErr := c.Secrets.GetResourcePolicy(timeoutCtx, &secretsmanager.GetResourcePolicyInput{SecretId: aws.String(name)})
-	switch {
-	case policyErr != nil:
-		details.ResourcePolicyErr = policyErr
-	case policyOut != nil:
-		details.ResourcePolicy = getString(policyOut.ResourcePolicy)
-	}
+	details.ResourcePolicy, details.ResourcePolicyErr = resourcePolicyResult(policyOut, policyErr)
 
 	return details, nil
+}
+
+// resourcePolicyResult pairs the policy with the read that produced it, because both states are the empty string and only the error tells "none attached" from "could not be read".
+// Returning them together is what stops the error being dropped again: the fetch cannot record one without the other.
+func resourcePolicyResult(out *secretsmanager.GetResourcePolicyOutput, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	if out == nil {
+		return "", nil
+	}
+
+	return getString(out.ResourcePolicy), nil
 }
 
 func (c *Client) RotateSecret(ctx context.Context, name string) error {
