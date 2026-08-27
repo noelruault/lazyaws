@@ -2,9 +2,11 @@ package config
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -176,6 +178,34 @@ func TestMetricsIntervalAppliesItsFloorWithoutRewritingTheSetting(t *testing.T) 
 
 	if MetricsFloorSeconds != 10 {
 		t.Errorf("MetricsFloorSeconds = %d, want 10", MetricsFloorSeconds)
+	}
+}
+
+// Every refresh key is published twice, in DefaultUserConfig and in README.md's sample block, and nothing else pins them to each other.
+// The keybindings table has TestReadmeKeyTableIsCurrent for exactly this reason; the sample block had nothing, so a changed default left the documented sample quietly wrong.
+func TestReadmeRefreshSampleMatchesTheDefaults(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "README.md"))
+	if err != nil {
+		t.Fatalf("reading README.md: %v", err)
+	}
+
+	refresh := DefaultUserConfig().Refresh
+	for key, value := range map[string]int{
+		"ecsLogsSeconds":   refresh.ECSLogsSeconds,
+		"ec2StatusSeconds": refresh.EC2StatusSeconds,
+		"overviewSeconds":  refresh.OverviewSeconds,
+		"panelSeconds":     refresh.PanelSeconds,
+		"metricsSeconds":   refresh.MetricsSeconds,
+	} {
+		want := fmt.Sprintf("%s: %d", key, value)
+		if !strings.Contains(string(readme), want) {
+			t.Errorf("README.md's sample block does not document %q; it publishes the default a second time and has drifted", want)
+		}
+	}
+
+	// The floor is a third publication of the same number: the constant, the Settings ladder's first rung, and this sentence.
+	if want := fmt.Sprintf("anything under %d is treated as %d", MetricsFloorSeconds, MetricsFloorSeconds); !strings.Contains(string(readme), want) {
+		t.Errorf("README.md does not state the metrics floor as %q", want)
 	}
 }
 

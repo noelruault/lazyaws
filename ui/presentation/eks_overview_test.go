@@ -264,6 +264,43 @@ func TestEKSAddonHealthSeparatesUnreportedFromHealthy(t *testing.T) {
 	}
 }
 
+// A group already at its maximum cannot absorb a scale-up, which is the whole reason the bounds are rendered beside the desired count rather than the count alone.
+// Asserted as the whole label: three numbers in one cell are the easiest place for a swap to hide, and the render tests read the rows through a space-collapsing filter that cannot see which bound is which.
+func TestEKSScalingLabelReportsDesiredWithinItsBounds(t *testing.T) {
+	tests := []struct {
+		group aws.EKSNodeGroup
+		want  string
+	}{
+		{group: aws.EKSNodeGroup{DesiredSize: 4, MinSize: 2, MaxSize: 8}, want: "4 (2-8)"},
+		// At the ceiling, which is the state the bounds exist to make visible.
+		{group: aws.EKSNodeGroup{DesiredSize: 6, MinSize: 1, MaxSize: 6}, want: "6 (1-6)"},
+		// A scaled-to-zero group is a real state and must not render as absent.
+		{group: aws.EKSNodeGroup{DesiredSize: 0, MinSize: 0, MaxSize: 10}, want: "0 (0-10)"},
+	}
+
+	for _, test := range tests {
+		if got := eksScalingLabel(test.group); got != test.want {
+			t.Errorf("eksScalingLabel(desired %d, min %d, max %d) = %q, want %q", test.group.DesiredSize, test.group.MinSize, test.group.MaxSize, got, test.want)
+		}
+	}
+}
+
+// Each table's row is asserted whole, because a per-word Contains cannot see a column that swapped places with its neighbour or a cell that went missing.
+func TestEKSOverviewRendersItsTableRowsInFull(t *testing.T) {
+	got := plainEKS(overviewEKSCluster(), fullEKSOverview(), stackedWidth)
+
+	for _, want := range []string{
+		"general ▶ ACTIVE 4 (2-8) v1.29",
+		"workers-spot ▶ ACTIVE 2 (1-4) v1.29",
+		"coredns ▶ ACTIVE v1.11.1-eksbuild.4 healthy",
+		"vpc-cni ▶ ACTIVE v1.18.1-eksbuild.1 healthy",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("overview is missing the row %q\n%s", want, got)
+		}
+	}
+}
+
 // Neither list arrives ordered, so an unsorted table reshuffles itself between renders of the same cluster.
 func TestEKSOverviewOrdersItsTablesByName(t *testing.T) {
 	got := plainEKS(overviewEKSCluster(), fullEKSOverview(), stackedWidth)
