@@ -21,14 +21,16 @@ type SecretSummary struct {
 	LastChanged     *time.Time
 	LastAccessed    *time.Time
 	RotationEnabled bool
-	NextRotation    *time.Time
-	PrimaryRegion   string
-	Tags            []secretsmanagertypes.Tag
-	HasReplication  bool
-	OwningService   string
-	KMSKeyID        string
-	LastRotated     *time.Time
-	DeletedDate     *time.Time
+	// RotationDays is 0 when Secrets Manager reports no day cadence, which is not the same as "does not rotate": a secret scheduled by a cron() or rate() expression only gets AutomaticallyAfterDays filled in after its first successful rotation.
+	RotationDays   int64
+	NextRotation   *time.Time
+	PrimaryRegion  string
+	Tags           []secretsmanagertypes.Tag
+	HasReplication bool
+	OwningService  string
+	KMSKeyID       string
+	LastRotated    *time.Time
+	DeletedDate    *time.Time
 }
 
 type SecretDetails struct {
@@ -39,8 +41,18 @@ type SecretDetails struct {
 	Rotation    *secretsmanagertypes.RotationRulesType
 	RotationARN string
 	RawJSON     string
-	// ResourcePolicy is "" when absent or when its best-effort fetch fails.
-	ResourcePolicy string
+	// ResourcePolicy is "" when no policy is attached. A read that failed leaves it empty too, which is what ResourcePolicyErr is for: without checking that first, a renderer states an absence it cannot know.
+	ResourcePolicy    string
+	ResourcePolicyErr error
+}
+
+// rotationDays reads the cadence off a rotation schedule that is absent on every secret that has never had one configured.
+func rotationDays(rules *secretsmanagertypes.RotationRulesType) int64 {
+	if rules == nil || rules.AutomaticallyAfterDays == nil {
+		return 0
+	}
+
+	return *rules.AutomaticallyAfterDays
 }
 
 func (c *Client) ListSecrets(ctx context.Context, includeDeleted bool) ([]SecretSummary, error) {
@@ -69,6 +81,7 @@ func (c *Client) ListSecrets(ctx context.Context, includeDeleted bool) ([]Secret
 				LastChanged:     s.LastChangedDate,
 				LastAccessed:    s.LastAccessedDate,
 				RotationEnabled: s.RotationEnabled != nil && *s.RotationEnabled,
+				RotationDays:    rotationDays(s.RotationRules),
 				NextRotation:    s.NextRotationDate,
 				PrimaryRegion:   getString(s.PrimaryRegion),
 				Tags:            s.Tags,
@@ -126,6 +139,7 @@ func (c *Client) GetSecretDetails(ctx context.Context, name string) (*SecretDeta
 			LastChanged:     desc.LastChangedDate,
 			LastAccessed:    desc.LastAccessedDate,
 			RotationEnabled: desc.RotationEnabled != nil && *desc.RotationEnabled,
+			RotationDays:    rotationDays(desc.RotationRules),
 			NextRotation:    desc.NextRotationDate,
 			PrimaryRegion:   getString(desc.PrimaryRegion),
 			Tags:            desc.Tags,
@@ -143,13 +157,25 @@ func (c *Client) GetSecretDetails(ctx context.Context, name string) (*SecretDeta
 		details.HasReplication = true
 	}
 
-	// A missing or unreadable resource policy must not fail the metadata view.
+	// A missing or unreadable resource policy must not fail the metadata view, but the failure is carried rather than dropped:
+	// this is the last of three calls sharing timeoutCtx, so it is the one that runs out of budget, and a deadline here is not evidence that no policy is attached.
 	policyOut, policyErr := c.Secrets.GetResourcePolicy(timeoutCtx, &secretsmanager.GetResourcePolicyInput{SecretId: aws.String(name)})
-	if policyErr == nil && policyOut != nil {
-		details.ResourcePolicy = getString(policyOut.ResourcePolicy)
-	}
+	details.ResourcePolicy, details.ResourcePolicyErr = resourcePolicyResult(policyOut, policyErr)
 
 	return details, nil
+}
+
+// resourcePolicyResult pairs the policy with the read that produced it, because both states are the empty string and only the error tells "none attached" from "could not be read".
+// Returning them together is what stops the error being dropped again: the fetch cannot record one without the other.
+func resourcePolicyResult(out *secretsmanager.GetResourcePolicyOutput, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	if out == nil {
+		return "", nil
+	}
+
+	return getString(out.ResourcePolicy), nil
 }
 
 func (c *Client) RotateSecret(ctx context.Context, name string) error {

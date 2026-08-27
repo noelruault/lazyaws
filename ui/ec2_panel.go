@@ -3,7 +3,9 @@ package ui
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -19,6 +21,7 @@ func (gui *Gui) getEC2Panel() *panels.SideListPanel[*aws.Instance] {
 		ContextState: &panels.ContextState[*aws.Instance]{
 			GetMainTabs: func() []panels.MainTab[*aws.Instance] {
 				return []panels.MainTab[*aws.Instance]{
+					overviewTab(gui, gui.instanceOverview),
 					{Key: "config", Title: "Config", Render: gui.renderEC2Config},
 					{Key: "status", Title: "Status", Render: gui.renderEC2Status},
 					{Key: "metrics", Title: "Metrics", Render: gui.renderEC2Metrics},
@@ -36,7 +39,7 @@ func (gui *Gui) getEC2Panel() *panels.SideListPanel[*aws.Instance] {
 			List: panels.NewFilteredList[*aws.Instance](),
 			View: gui.Views.EC2,
 		},
-		NoItemsMessage: "no EC2 instances found",
+		NoItemsMessage: "no EC2 instances",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *aws.Instance) bool {
@@ -47,9 +50,11 @@ func (gui *Gui) getEC2Panel() *panels.SideListPanel[*aws.Instance] {
 			}
 			return a.Name < b.Name
 		},
-		GetTableCells: func(inst *aws.Instance) []string {
-			return presentation.GetInstanceDisplayStrings(inst)
+		GetTableCellsFit: func(inst *aws.Instance) []utils.Cell {
+			return presentation.GetInstanceDisplayCells(inst)
 		},
+		Weights:   func(*aws.Instance) []int { return presentation.InstanceWeights() },
+		CopyValue: func(inst *aws.Instance) string { return inst.ID },
 	}
 }
 
@@ -76,9 +81,78 @@ func (gui *Gui) loadEC2List() error {
 		for i := range instances {
 			rows[i] = &instances[i]
 		}
-		gui.Panels.EC2.SetItems(rows)
+		gui.Panels.EC2.SetItemsKeepSelection(rows, ec2SelectionKey)
 		return gui.Panels.EC2.RerenderList()
 	})
+}
+
+// ec2SelectionKey identifies an instance across reloads. The Name tag is absent on plenty of instances and duplicated across an autoscaling group, so the id is the only identity.
+func ec2SelectionKey(inst *aws.Instance) string { return inst.ID }
+
+// instanceOverview consolidates the six detail tabs into one pane, refetching the refreshable sections on every render and reusing the selection-time ones.
+func (gui *Gui) instanceOverview(ctx context.Context, inst *aws.Instance, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("instance")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	overview := gui.Client.GetInstanceOverview(fetchCtx, inst.ID, gui.metricsMaxAge())
+	gui.ec2Extras.fill(fetchCtx, gui.Client, gui.Gen, inst.ID, overview)
+	gui.throttles.observeSections(overview.Errs)
+
+	return presentation.FormatInstanceOverview(inst, overview, width, time.Now())
+}
+
+// ec2OverviewExtras holds the two overview sections whose frequency is a cost decision rather than a display one.
+// The overview re-renders on a ticker, and DescribeAlarms cannot filter by dimension server-side: it pages every alarm in the account, against the tightest quota this app touches. Fetching that every couple of seconds is what "best effort" must not turn into, so both are fetched once per selected instance and reused until the selection moves.
+type ec2OverviewExtras struct {
+	mu         sync.Mutex
+	gen        int
+	instanceID string
+	asg        *aws.ASGMembership
+	alarms     []aws.InstanceAlarm
+	eips       []aws.ElasticIP
+	errs       map[string]error
+}
+
+// fill puts the selection-time sections onto an overview, fetching them only when the selection or the profile behind it has moved.
+// The lock is held across the fetches on purpose: it is also what stops two overview renders of the same instance from making the same pair of calls at once.
+func (e *ec2OverviewExtras) fill(ctx context.Context, client *aws.Client, gen int, instanceID string, overview *aws.InstanceOverview) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// The generation is part of the key because an instance id is only unique within the account it was read from, and a profile switch replaces the account without changing the id.
+	if e.instanceID != instanceID || e.gen != gen {
+		e.instanceID, e.gen = instanceID, gen
+		e.errs = map[string]error{}
+
+		asg, err := client.GetInstanceASGMembership(ctx, instanceID)
+		e.asg = asg
+		if err != nil {
+			e.errs[aws.SectionASG] = err
+		}
+
+		alarms, err := client.GetInstanceAlarms(ctx, instanceID)
+		e.alarms = alarms
+		if err != nil {
+			e.errs[aws.SectionAlarms] = err
+		}
+
+		eips, err := client.DescribeInstanceAddresses(ctx, instanceID)
+		e.eips = eips
+		if err != nil {
+			e.errs[aws.SectionEIP] = err
+		}
+	}
+
+	overview.ASG, overview.Alarms = e.asg, e.alarms
+	// The Elastic IPs belong to the details the formatter reads, but they are fetched on this schedule rather than with the rest of them.
+	if overview.Details != nil {
+		overview.Details.ElasticIPs = e.eips
+	}
+	maps.Copy(overview.Errs, e.errs)
 }
 
 func (gui *Gui) renderEC2Config(inst *aws.Instance) tasks.TaskFunc {
@@ -183,12 +257,12 @@ func (gui *Gui) renderEC2Status(inst *aws.Instance) tasks.TaskFunc {
 			if gen != gui.Gen {
 				return
 			}
-			gui.reRenderStringMain(formatEC2Status(status, alarms, consoleOutput, consoleScreenshot))
+			gui.reRenderStringMain(formatEC2Status(status, alarms, consoleOutput, consoleScreenshot, time.Now()))
 		},
 	})
 }
 
-func formatEC2Status(s *aws.InstanceStatus, alarms []aws.InstanceAlarm, consoleOutput, consoleScreenshot string) string {
+func formatEC2Status(s *aws.InstanceStatus, alarms []aws.InstanceAlarm, consoleOutput aws.ConsoleOutput, consoleScreenshot string, now time.Time) string {
 	out := utils.FormatMap(0, map[string]string{
 		"Instance state":  s.InstanceState,
 		"System status":   orNone(s.SystemStatus),
@@ -212,10 +286,10 @@ func formatEC2Status(s *aws.InstanceStatus, alarms []aws.InstanceAlarm, consoleO
 	}
 
 	out += "\nConsole output:\n"
-	if consoleOutput == "" {
+	if consoleOutput.Content == "" {
 		out += "none\n"
 	} else {
-		out += fmt.Sprintf("available (%s)\n", formatByteCount(float64(len(consoleOutput)*3/4)))
+		out += fmt.Sprintf("available (%s), captured %s\n", formatByteCount(float64(len(consoleOutput.Content)*3/4)), consoleCapture(consoleOutput.At, now))
 	}
 
 	out += "\nConsole screenshot:\n"
@@ -228,6 +302,15 @@ func formatEC2Status(s *aws.InstanceStatus, alarms []aws.InstanceAlarm, consoleO
 	return out
 }
 
+// consoleCapture dates the console log against now, because AWS captures it at boot and never again: on an instance up for months the size looks like a live log and the age is the only thing that says otherwise.
+func consoleCapture(at, now time.Time) string {
+	if at.IsZero() {
+		return "unknown"
+	}
+
+	return at.UTC().Format(time.RFC3339) + " (" + presentation.RelTime(at, now) + ")"
+}
+
 func (gui *Gui) renderEC2Metrics(inst *aws.Instance) tasks.TaskFunc {
 	id := inst.ID
 	return gui.NewTickerTask(TickerTaskOpts{
@@ -238,7 +321,7 @@ func (gui *Gui) renderEC2Metrics(inst *aws.Instance) tasks.TaskFunc {
 			fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 
-			metrics, err := gui.Client.GetInstanceMetrics(fetchCtx, id)
+			metrics, err := gui.Client.GetInstanceMetricsAged(fetchCtx, id, gui.metricsMaxAge())
 			if gen != gui.Gen {
 				return
 			}
@@ -251,29 +334,27 @@ func (gui *Gui) renderEC2Metrics(inst *aws.Instance) tasks.TaskFunc {
 	})
 }
 
+// formatMetricPoint keeps the panel call sites short now that the formatter is shared with the overview.
+func formatMetricPoint(p aws.MetricPoint, stat string, format func(float64) string) string {
+	return presentation.MetricReading(p, stat, format)
+}
+
 func formatEC2Metrics(m *aws.InstanceMetrics) string {
+	percent := func(v float64) string { return fmt.Sprintf("%.1f%%", v) }
+	count := func(v float64) string { return strconv.Itoa(int(v)) }
 	return utils.FormatMap(0, map[string]string{
-		"Period":              m.Period,
-		"CPU utilization":     fmt.Sprintf("%.1f%%", m.CPUUtilization),
-		"Network in":          formatByteCount(m.NetworkIn),
-		"Network out":         formatByteCount(m.NetworkOut),
-		"Disk read":           formatByteCount(m.DiskReadBytes),
-		"Disk write":          formatByteCount(m.DiskWriteBytes),
-		"Status check failed": strconv.Itoa(m.StatusCheckFailed),
+		"CPU utilization":     formatMetricPoint(m.CPUUtilization, "5-min avg", percent),
+		"Network in":          formatMetricPoint(m.NetworkIn, "5-min total", formatByteCount),
+		"Network out":         formatMetricPoint(m.NetworkOut, "5-min total", formatByteCount),
+		"Disk read":           formatMetricPoint(m.DiskReadBytes, "5-min total", formatByteCount),
+		"Disk write":          formatMetricPoint(m.DiskWriteBytes, "5-min total", formatByteCount),
+		"Status check failed": formatMetricPoint(m.StatusCheckFailed, "5-min max", count),
 	})
 }
 
+// formatByteCount keeps the panel call sites short now that the formatter is shared with the presentation overviews.
 func formatByteCount(b float64) string {
-	const unit = 1024.0
-	if b < unit {
-		return fmt.Sprintf("%.0f B", b)
-	}
-	div, exp := unit, 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", b/div, "KMGTPE"[exp])
+	return presentation.FormatByteCount(b)
 }
 
 // renderEC2Storage refetches per tab and treats optional snapshots as best effort.

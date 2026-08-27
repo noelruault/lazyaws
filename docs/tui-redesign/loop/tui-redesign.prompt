@@ -1,0 +1,66 @@
+TuiRedesign BUILDER loop. Run ONE cycle now. Purposeful work, reviewable diffs, never commit red.
+
+CWD = the lazyaws repo root (the runner starts you in TARGET). Branch = **tui-redesign** (pushed to origin; you are the ONLY writer). Docs: docs/tui-redesign/{spec.md, backlog.md, built.md}.
+
+**spec.md is the operating contract — read it EVERY cycle.** It defines the goal, the exact GREEN GATE commands for this repo, and the Definition of Done.
+
+THE BLUEPRINT: if a local planning document exists under `.plans/` (gitignored, machine-local), read the sections your group's tickets correspond to BEFORE building — it carries verified AWS response shapes, quotas, cost math, code snippets and file:line anchors so you never re-derive or guess them. It is a blueprint, NEVER a citation: no code comment, commit message, committed doc, or handoff line may reference it — absorb the rationale, state it directly where needed. It may hold internal account identifiers; none of them may leak into committed files. Without such a document, spec.md and backlog.md are self-contained; verify any AWS response shape against a live read-only profile before writing code that depends on it.
+
+YOU REVIEW YOUR OWN GROUP, IN THIS CYCLE, BEFORE IT COUNTS AS SHIPPED. There is no reviewer loop. Every group ends with a REVIEW GATE (step 5) that BLOCKS: you audit the group you just built, you FIX what you find here and now, and only then do you close the group. You never file a review ticket — a ticket costs a whole cycle of orientation before one line is edited, and a review queue grows without bound (measured on a live pair: 46 tickets filed against 24 ships, most of the spend re-reading context). You already hold the context. Fix it, record it, hand back a green tree.
+
+DELEGATE DOWN WHEN IT SAVES MONEY. THIS THREAD ALWAYS RUNS STRONG and is never routed down — it decides what the work IS, holds the contract, and answers for the gate; a cheap model making that call confidently costs more than it saves. The savings come from what you HAND DOWN, not from running yourself cheaper. `router` (installed as `router`, the loop-less foreground executor built on the same routing library this loop uses) runs a finite plan to done, routing EACH STEP by its own `[dN]` marker. Grouping saves orientation; router restores per-step economy inside the group. Use it deliberately, not reflexively.
+
+DELEGATE when BOTH hold: the work is bulk, and it is mechanically specifiable — many similar edits, applying one known fix across sites, writing tests to a shape you have already decided, a migration whose transform you can state exactly. Write the steps so a cheap model needs NO judgement: exact file, exact change, exact verification per step.
+
+    router run plan.md -routes "1-2:haiku:low,3-4:sonnet,5:fable:high" -gate "<this repo's gate>" -budget-usd <cap>
+
+The delegated table is cheap at the bottom and capable at the top: `haiku` for the mechanical bulk, `sonnet` for the middle, `fable` for a delegated step that is genuinely hard. So a demanding sub-task still gets a strong model — it just is not THIS thread paying for the whole cycle.
+
+KEEP ON THIS THREAD: anything needing judgement about the contract, a design decision, interpreting a measurement, or debugging a cause you have not yet found. A cheap model cannot decide what the right answer IS; it can only carry out an answer you already have. And do not delegate a small group — writing the plan costs more than the delegation saves.
+
+YOU REMAIN ACCOUNTABLE. Delegated output is a lead, not evidence: read the diff, run the gate yourself, and ledger it as your work. If the plan came back with the gate red, that is yours to fix, not to pass on.
+
+DECIDING IS FREE, DELEGATING IS NOT. If you are unsure whether a group qualifies, do it yourself and say in the handoff why it did not look delegable — a wrong delegation costs a plan, a failed run, and the repair.
+
+COMMIT AS YOU GO, NOT AT THE END. Land each coherent step the moment its gate is green, rather than saving one commit for the end of the cycle. A cycle can be cut off — by a timeout, a limit, a crash — and whatever is uncommitted is work nobody can see and the next cycle cannot build on. Committing per step means a kill costs the CURRENT step, never the whole cycle. It also gives the reviewer real units to audit instead of one opaque diff.
+
+Steps:
+1. `git fetch origin && git rebase origin/tui-redesign`. Read docs/tui-redesign/{spec.md, backlog.md, built.md} and, if present, docs/tui-redesign/lessons.md (obey recorded lessons: working gate invocations, repo gotchas, known dead ends).
+
+NEVER READ findings.md, handoff.md OR review.md WHOLE. They grow ~25 KB per ship and re-reading them is what a cycle actually pays for — measured on a live loop, 78.4% of the bill was cache-read, and those files were 52% of the corpus. Read the INDEX, then slice only what this group owns:
+
+    bash scripts/docs-slice.sh index findings          # every heading + its line number
+    bash scripts/docs-slice.sh findings <id>...        # only those ids' sections, original line numbers kept
+
+Same for `handoff` and `review`. Line numbers are preserved, so a `findings.md:223` citation still resolves against a slice, and you cite the same way you always did. Shared framing (headings naming no id) is always included, so nothing a section rests on goes missing. Measured on a real corpus: 402,389 B read becomes 98,615 B, −75.5%. If a slice looks like it is missing something you need, widen the id list or read the whole file — but say in the handoff that you had to, because that is a defect in how the group was drawn.
+2. SELECT THE TICKET DETERMINISTICALLY — do NOT choose by judgment. Run:
+   `bash scripts/loop-next.sh tui-redesign`
+   It prints A GROUP (or `DONE`). EVERY ticket lives in a group — that is the only unit of work, because a cycle's cost is orientation, not the edit, and because encapsulated groups cannot grow without bound the way a ticket queue does. The single exception is a ticket whose line carries the token HUGE, dispatched alone.
+
+You MAY add a member to a group when the work genuinely demands it — a refactor the group needs, a missing piece you only see once inside the code. That is expected occasionally and must stay rare: if you are adding members most cycles, the groups were drawn wrong and you should say so in the handoff rather than keep growing them. You MUST build EVERY id it printed this cycle, in the order printed, and nothing else. Commit per coherent change — several commits in one cycle is expected — and keep the gate green at every commit. Ledger ONE line per group naming every member you closed. If a member cannot be closed, leave it open, ledger the ones you did close, and say in the handoff which you left and why; never fold an unclosed member into a neighbour's line.
+   HANDOFF (per group, with the same commit): append a block to docs/tui-redesign/handoff.md. It is what you audit against in step 5, written BEFORE you know what the review will find, so be HONEST — the deviations line is the most valuable thing you write.
+
+   Write it as a POINTER MAP, not a narrative. The diff, the tests and the ledgers are the ground truth; this block's job is to point INTO them so the next cycle can find the thing without re-deriving it. Every line is a pointer plus the one fact the pointer does not carry. No restating the ticket, no re-explaining code that the diff shows, no prose a `git show` would tell you. That discipline is why this file stays sliceable: it grows ~25 KB per ship, and every KB is re-read on every later cycle that touches the group.
+
+   The four lines stay, because the audit in step 5 checks CLAIMS against the diff and a pure pointer with no claim is unauditable:
+     ### <id> (<sha>)
+     meant: <the contract section it implements — cite spec.md:<line>, do not paste it>
+     did: <file:symbol pointers + the behavior added; 2-3 lines, no code>
+     deviations: <everything NOT per spec and why — hardcodes, dropped scope, deferrals; "none" is rare>
+     verified: <exact gate commands run and what green did/didn't cover>
+     threads: <open ends, dead ends tried and why they failed, gotchas the next cycle would otherwise re-discover — one line each, omit if genuinely none>
+   - `DONE` ⇒ build/run the terminal `final-dod` if present (the ONLY ticket that may emit "backlog
+     empty", and only when its checks pass); else end "backlog empty".
+   - PRODUCE exception: if the selected ticket is too large to ship green in one cycle, split it into
+     smaller append-only ids in backlog.md (never renumber/delete) and commit docs-only; end "refined backlog".
+3. GREEN-ONLY GATE: run the EXACT gate commands spec.md defines, from the repo root, and trust their exit codes (noisy warnings are not failures). Where the ticket adds non-trivial pure logic, leave ONE assert-based unit test wired into the gate. NEVER commit red.
+4. If green: `git add -A`, commit with a plain descriptive English subject naming the id (NO `type(scope):` / `feat:` / `fix:` prefixes — a local PreToolUse hook blocks them), append ONE line to docs/tui-redesign/built.md (`- <id> <sha> — summary`), commit that, then `git push origin tui-redesign`. The id in that line MUST be copied verbatim from the selector's output for this cycle: grep backlog.md for the exact id before writing it, because a mis-transcribed id permanently masks that ticket from loop-next.sh (it greps built.md by literal id token). If the gate fails and you cannot fix it this cycle, `git checkout -- .` / revert and report the blocker — do not push red.
+5. REVIEW GATE — BLOCKING, and part of THIS cycle. The group is not done when it is green; it is done when it has been reviewed and the findings are fixed. Nothing else is dispatched until you finish this step.
+   a. AUDIT the group you just built, as a demanding senior engineer reviewing someone else's work. Read your handoff block FIRST as an INDEX, never as evidence — you wrote it about your own work, so a claim-vs-diff MISMATCH is the highest-signal finding there is. Then read the actual diff (`git diff <first-sha>~1..HEAD`), the changed files and the tests. Does each member do what its ticket said, fully, not a stub? Do the tests ASSERT real behaviour — MUTATE one and confirm it fails, because a test that passes under a broken implementation is not a test. Are spec.md's invariants honoured? Regressions? Destructive operations? Numbers published in more than one place that now disagree?
+   b. FIX WHAT YOU FOUND, NOW, IN THIS CYCLE. Edit the code, add the missing test, correct the wrong number at every site that publishes it, and keep the gate green at every commit. Two hard limits: fix ONLY defects in the group you just built — never refactor beyond it, never add features, never touch another group's work — and NEVER open a ticket for a finding. If a defect is genuinely too large to repair here, it is a MEMBER you leave open with the concrete fix and verification written into its backlog line, not a new id.
+   c. RECORD in docs/tui-redesign/review.md: ONE line per group, `- reviewed <id> <sha>: CLEAN` or `: REPAIRED — <what was wrong, what you changed>`. That file is this codebase's memory of what it gets wrong; read it before you build.
+   d. RELEASE THE QUEUE: only after c is committed green does the group count as closed and the next group become dispatchable.
+6. SELF-IMPROVE: if THIS cycle taught a durable lesson (a gate invocation that actually works here, a repo gotcha, a class of ticket that keeps failing and its cause), append ONE short bullet to docs/tui-redesign/lessons.md and commit it with your change. It is read every cycle, so keep it tight; do NOT log one-off noise.
+7. One group per cycle. Keep diffs reviewable. Work SERIALLY: no multi-agent fan-out unless this prompt explicitly authorizes Workflows AND the ticket is itself a genuine fan-out; parallelism costs extra tokens (per-agent orientation, lost prompt-cache reuse) and buys only wall-clock, which an unattended loop does not need, it can always wait.
+
+End with ONE line: the group id you built and reviewed, or "refined backlog", or "backlog empty".

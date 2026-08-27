@@ -55,6 +55,20 @@ type Client struct {
 	// chatModelIDs caches configured-model to invocable-id resolutions (see resolveChatModel), so a question doesn't re-list inference profiles every time.
 	chatModelsMu sync.Mutex
 	chatModelIDs map[string]string
+	// instanceTypes caches DescribeInstanceTypes answers (see GetInstanceTypeInfo): a type's vCPU, memory and network performance are properties of the type, not of any instance, so re-asking can only return what is already held.
+	instanceTypesMu sync.Mutex
+	instanceTypes   map[string]InstanceTypeInfo
+	// clusterInsights records each cluster's containerInsights setting as the last cluster list read it, so a service metrics fetch can decide whether the Insights namespace is worth querying without a describe of its own.
+	// It is a record, not a cache: nothing reads it to skip an API call, so a setting changed since the last list costs at most one refresh of an additive extra.
+	clusterInsightsMu sync.Mutex
+	clusterInsights   map[string]string
+	// taskDefs caches task definition revisions (see DescribeTaskDefinitionDetail), which are immutable once registered, so the overview refresh tier does not re-describe the same revision every tick.
+	taskDefsMu sync.Mutex
+	taskDefs   map[string]*ECSTaskDefinitionDetail
+	// The metrics tier's memos, one per pane that reads CloudWatch (see metricsMemo): an overview redraws every couple of seconds and its metrics refetch on their own, much slower interval, because GetMetricData is the one call here that is billed per metric requested.
+	instanceMetrics metricsMemo[*InstanceMetrics]
+	clusterMetrics  metricsMemo[*ECSClusterMetrics]
+	serviceMetrics  metricsMemo[*ECSServiceMetrics]
 	// identityErr is why the STS caller-identity probe last failed, kept so the bootstrap can refuse to start rather than let every panel discover the same expired token on its own.
 	identityErr error
 	Region      string
@@ -62,9 +76,11 @@ type Client struct {
 }
 
 func newClientFromConfig(cfg aws.Config) *Client {
-	// Every client is built here, including the cached-credentials path that never calls
-	// LoadDefaultConfig, so this is the only place the SDK logger cannot be bypassed.
+	// Every client is built here, including the cached-credentials path that never calls LoadDefaultConfig, so this is the only place the SDK logger and the retry mode cannot be bypassed.
 	cfg.Logger = sdkLogger{}
+	// A retry mode set only through load options is skipped on the cached path, which is the path taken in normal operation.
+	// Each service client resolves cfg.RetryMode into its own retryer as it is constructed, so this has to be assigned before the clients below are built. An explicit cfg.Retryer still wins: the SDK resolves that first and leaves the mode unread.
+	cfg.RetryMode = retryMode
 
 	return &Client{
 		EC2:                    ec2.NewFromConfig(cfg),
@@ -262,5 +278,10 @@ func (sdkLogger) Logf(classification logging.Classification, format string, v ..
 func baseLoadOptions() []func(*awsconfig.LoadOptions) error {
 	return []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithLogger(sdkLogger{}),
+		awsconfig.WithRetryMode(retryMode),
 	}
 }
+
+// retryMode adds client-side rate limiting on top of the standard retryer: after a throttle response the adaptive retryer slows the send rate itself instead of retrying into the same limit.
+// Refreshing eight panels and an open overview on a timer is many small reads against per-account API quotas, and the standard retryer answers a throttle by retrying, which is what turns one throttled call into a burst.
+const retryMode = aws.RetryModeAdaptive

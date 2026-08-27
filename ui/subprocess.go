@@ -16,7 +16,7 @@ func (gui *Gui) runSubprocess(cmd *exec.Cmd) error {
 	if err := gui.g.Suspend(); err != nil {
 		return err
 	}
-	gui.PauseBackgroundThreads = true
+	gui.PauseBackgroundThreads.Store(true)
 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -26,12 +26,11 @@ func (gui *Gui) runSubprocess(cmd *exec.Cmd) error {
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 
-	gui.PauseBackgroundThreads = false
+	gui.PauseBackgroundThreads.Store(false)
 	if err := gui.g.Resume(); err != nil {
 		return err
 	}
-	// The child owned the tty and almost certainly scrolled it, so tcell's cell model no longer
-	// describes the screen and a differential redraw would leave the child's output stranded.
+	// The child owned the tty and almost certainly scrolled it, so tcell's cell model no longer describes the screen and a differential redraw would leave the child's output stranded.
 	forceRepaint()
 
 	return runErr

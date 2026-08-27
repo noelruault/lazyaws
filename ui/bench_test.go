@@ -1,10 +1,15 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/fatih/color"
+
+	"github.com/noelruault/lazyaws/apps/aws"
+	"github.com/noelruault/lazyaws/ui/presentation"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
 
 // The chat re-renders the whole accumulated transcript on every streamed line, so these costs are paid per token received, and they grow with conversation length.
@@ -120,6 +125,37 @@ func BenchmarkWrapLineWideRunes(b *testing.B) {
 
 	for b.Loop() {
 		_ = wrapLine(line, 40)
+	}
+}
+
+// The list rerender is what a refresh tick costs when nothing changed, and it runs inside the gocui update closure, so it is paid on the UI thread.
+// It mirrors SideListPanel.renderTable rather than calling it: driving the panel needs a view with a width, and what is being measured is the cells-plus-fit composition, not gocui.
+func BenchmarkRerenderListEC2(b *testing.B) {
+	benchForceColor(b)
+
+	instances := make([]*aws.Instance, 100)
+	for i := range instances {
+		instances[i] = &aws.Instance{
+			ID:           "i-0abcdef12345678" + strconv.Itoa(i),
+			Name:         "service-with-a-fairly-long-name-" + strconv.Itoa(i),
+			State:        "running",
+			InstanceType: "t3a.micro",
+			AZ:           "eu-west-1a",
+		}
+	}
+	// A side panel is 30-60 cells, never the 120 an exact-string test tends to assume.
+	const panelWidth = 40
+	weights := presentation.InstanceWeights()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		table := make([][]utils.Cell, len(instances))
+		for i, instance := range instances {
+			table[i] = presentation.GetInstanceDisplayCells(instance)
+		}
+		if _, err := utils.RenderTableFit(table, panelWidth, weights); err != nil {
+			b.Fatalf("RenderTableFit: %v", err)
+		}
 	}
 }
 

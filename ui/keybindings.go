@@ -248,8 +248,12 @@ func (gui *Gui) GetInitialKeybindings() []*Binding {
 	}
 
 	// A global colon binding would swallow input in chat, filters, and prompts, so only non-input views register it.
-	for _, name := range append(sidePanelViewNames(gui.allSidePanels()), "main") {
-		bindings = append(bindings, gui.key(name, KeyCommandBar, wrappedHandler(gui.handleOpenCommandBar)))
+	// The copy key is scoped the same way for a second reason: the menu and confirmation popups bind y as "yes", and a global binding there would be shadowed on exactly the views that already answer to it.
+	for _, name := range resourceViewNames(gui.allSidePanels()) {
+		bindings = append(bindings,
+			gui.key(name, KeyCommandBar, wrappedHandler(gui.handleOpenCommandBar)),
+			gui.key(name, KeyCopyID, wrappedHandler(gui.handleCopySelected)),
+		)
 	}
 
 	for _, panel := range gui.allListPanels() {

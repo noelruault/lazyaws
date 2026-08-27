@@ -77,3 +77,38 @@ func TestEksUpgradeQuestionNamesTheClusterAndItsVersion(t *testing.T) {
 		t.Errorf("expected the cluster name and its current version in the question, got: %s", question)
 	}
 }
+
+// An empty side panel used to render as a blank box, with its explanation only in the main panel and only while that panel had focus.
+func TestRerenderListShowsTheEmptyMessageInTheSideView(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+
+	run(t, g, func() error {
+		gui.Panels.EKS.SetItems(nil)
+		return gui.Panels.EKS.RerenderList()
+	})
+
+	buffer := ask(g, func() string { return gui.Views.EKS.Buffer() })
+	if !strings.Contains(buffer, "no EKS clusters") {
+		t.Errorf("EKS view = %q, want the panel's empty message", buffer)
+	}
+}
+
+// A panel with rows must not gain the empty message, and the rows themselves must still be there.
+func TestRerenderListDropsTheEmptyMessageOnceRowsArrive(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	// The EKS panel lays out with RenderTableFit, and a headless view keeps the 10-cell placeholder createAllViews gives it, which cuts every row to "▶ AC…".
+	resizeView(t, g, "eks", 60, 20)
+
+	run(t, g, func() error {
+		gui.Panels.EKS.SetItems([]*aws.EKSCluster{{Name: "prod", Status: "ACTIVE"}})
+		return gui.Panels.EKS.RerenderList()
+	})
+
+	buffer := stripANSIForTest(ask(g, func() string { return gui.Views.EKS.Buffer() }))
+	if strings.Contains(buffer, "no EKS clusters") {
+		t.Errorf("EKS view = %q, want no empty message when a cluster is listed", buffer)
+	}
+	if !strings.Contains(buffer, "prod") {
+		t.Errorf("EKS view = %q, want the cluster row", buffer)
+	}
+}

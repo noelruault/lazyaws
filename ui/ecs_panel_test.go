@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jesseduffield/gocui"
+	"github.com/mattn/go-runewidth"
+
 	"github.com/noelruault/lazyaws/apps/aws"
 )
 
@@ -98,7 +101,7 @@ func TestFormatECSServiceConfigWithTargetHealth(t *testing.T) {
 		},
 	}
 
-	out := formatECSServiceConfig(s, nil, health)
+	out := formatECSServiceConfig(s, nil, aws.ECSServiceImage{}, health)
 
 	for _, want := range []string{"web-tg", "10.0.0.1", "Target.Timeout"} {
 		if !strings.Contains(out, want) {
@@ -110,10 +113,82 @@ func TestFormatECSServiceConfigWithTargetHealth(t *testing.T) {
 func TestFormatECSServiceConfigNoLoadBalancers(t *testing.T) {
 	s := &aws.ECSService{Name: "web"}
 
-	out := formatECSServiceConfig(s, nil, nil)
+	out := formatECSServiceConfig(s, nil, aws.ECSServiceImage{}, nil)
 
 	if !strings.Contains(out, "none") {
 		t.Errorf("formatECSServiceConfig() with no load balancers should mention \"none\", got:\n%s", out)
+	}
+}
+
+// An idle service reads 0.0%, and a service CloudWatch never answered for reads "no data"; the old Insights percentages could not tell those apart because the reservation they divided by was absent exactly when the data was.
+func TestFormatECSServiceConfigSeparatesAnIdleServiceFromAnUnmeasuredOne(t *testing.T) {
+	s := &aws.ECSService{Name: "web"}
+	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+
+	out := formatECSServiceConfig(s, &aws.ECSServiceMetrics{
+		CPUUtilization: aws.MetricPoint{Value: 0, At: at, OK: true},
+	}, aws.ECSServiceImage{}, nil)
+
+	if !strings.Contains(out, "0.0% (1-min avg @ 17:43Z)") {
+		t.Errorf("formatECSServiceConfig() should stamp a measured zero with its publish time, got:\n%s", out)
+	}
+	if !strings.Contains(out, "no data") {
+		t.Errorf("formatECSServiceConfig() should render the unanswered memory metric as \"no data\", got:\n%s", out)
+	}
+}
+
+// The reservations only exist where Container Insights is on; a service without them must not grow empty rows for them.
+func TestFormatECSServiceConfigAddsInsightsRowsOnlyWhenPresent(t *testing.T) {
+	s := &aws.ECSService{Name: "web"}
+	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+
+	without := formatECSServiceConfig(s, &aws.ECSServiceMetrics{CPUUtilization: aws.MetricPoint{Value: 1.12, At: at, OK: true}}, aws.ECSServiceImage{}, nil)
+	for _, absent := range []string{"CPU reserved", "Mem reserved", "vCPU", "MiB"} {
+		if strings.Contains(without, absent) {
+			t.Errorf("formatECSServiceConfig() shows %q with no Insights data, got:\n%s", absent, without)
+		}
+	}
+
+	with := formatECSServiceConfig(s, &aws.ECSServiceMetrics{
+		CPUUtilization:   aws.MetricPoint{Value: 1.12, At: at, OK: true},
+		InsightsCPUUsed:  aws.MetricPoint{Value: 11.5, At: at, OK: true},
+		InsightsCPUTotal: aws.MetricPoint{Value: 1024, At: at, OK: true},
+		InsightsMemUsed:  aws.MetricPoint{Value: 285, At: at, OK: true},
+		InsightsMemTotal: aws.MetricPoint{Value: 2048, At: at, OK: true},
+	}, aws.ECSServiceImage{}, nil)
+	for _, want := range []string{"1024 (1.00 vCPU)", "12 (0.01 vCPU)", "2048 MiB", "285 MiB"} {
+		if !strings.Contains(with, want) {
+			t.Errorf("formatECSServiceConfig() missing %q with Insights data, got:\n%s", want, with)
+		}
+	}
+}
+
+// The pane must never let an intended image read as a live one, and the label is the only thing that says which it is.
+func TestFormatECSServiceConfigLabelsTheImageRunningOrDesired(t *testing.T) {
+	s := &aws.ECSService{Name: "web"}
+
+	running := formatECSServiceConfig(s, nil, aws.ECSServiceImage{Image: "app-auth:v1.2.0-develop.0", Sidecars: 1}, nil)
+	if !strings.Contains(running, "Running image") || !strings.Contains(running, "app-auth:v1.2.0-develop.0 (+1 sidecar)") {
+		t.Errorf("formatECSServiceConfig() should label a live image as running and summarize its sidecar, got:\n%s", running)
+	}
+	if strings.Contains(running, "Desired image") {
+		t.Errorf("formatECSServiceConfig() labelled a running image as desired, got:\n%s", running)
+	}
+
+	desired := formatECSServiceConfig(s, nil, aws.ECSServiceImage{Image: "app-auth:v1.2.0-develop.0", Desired: true}, nil)
+	if !strings.Contains(desired, "Desired image") {
+		t.Errorf("formatECSServiceConfig() should label a task-definition image as desired, got:\n%s", desired)
+	}
+	if strings.Contains(desired, "Running image") {
+		t.Errorf("formatECSServiceConfig() labelled a desired image as running; a service with nothing up is not serving it, got:\n%s", desired)
+	}
+}
+
+func TestFormatECSServiceConfigWithoutMetrics(t *testing.T) {
+	out := formatECSServiceConfig(&aws.ECSService{Name: "web"}, nil, aws.ECSServiceImage{}, nil)
+
+	if !strings.Contains(out, "n/a") {
+		t.Errorf("formatECSServiceConfig() with a failed metrics fetch should show \"n/a\", got:\n%s", out)
 	}
 }
 
@@ -318,5 +393,54 @@ func TestFormatECSTaskDefDiffNoPrevious(t *testing.T) {
 
 	if !strings.Contains(out, "no previous revision") {
 		t.Errorf("formatECSTaskDefDiff() = %q, want a \"no previous revision\" message", out)
+	}
+}
+
+// resizeView gives a view a real width, which the headless harness otherwise leaves at the 10-cell placeholder createAllViews sets, too narrow for any row assertion to mean anything.
+func resizeView(t *testing.T, g *gocui.Gui, name string, width, height int) {
+	t.Helper()
+
+	set := func(x1, y1 int) error {
+		_, err := g.SetView(name, 0, 0, x1, y1, 0)
+		if err != nil && err.Error() != gocui.ErrUnknownView.Error() {
+			return err
+		}
+		return nil
+	}
+	run(t, g, func() error { return set(width+1, height+1) })
+	t.Cleanup(func() { run(t, g, func() error { return set(10, 10) }) })
+}
+
+// The whole point of laying the side panels out with RenderTableFit is that a long name cannot push the columns that identify a row off the right-hand edge.
+func TestECSPanelRendersClusterRowsInsideTheViewWidth(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	resizeView(t, g, "ecs", 60, 20)
+
+	run(t, g, func() error {
+		gui.Panels.ECS.SetItems([]*ecsRow{
+			{Kind: ecsRowKindCluster, Cluster: &aws.ECSCluster{Name: "prod", Status: "ACTIVE", RunningTasksCount: 3, ActiveServicesCount: 2}},
+			{Kind: ecsRowKindCluster, Cluster: &aws.ECSCluster{
+				Name: strings.Repeat("very-long-cluster-name-", 5), Status: "ACTIVE", PendingTasksCount: 1, ActiveServicesCount: 9,
+			}},
+		})
+		return gui.Panels.ECS.RerenderList()
+	})
+
+	width := ask(g, func() int { return gui.Views.ECS.InnerWidth() })
+	buffer := ask(g, func() string { return gui.Views.ECS.Buffer() })
+
+	for _, line := range strings.Split(strings.TrimRight(buffer, "\n"), "\n") {
+		if got := runewidth.StringWidth(line); got > width {
+			t.Errorf("line %q is %d cells wide, want at most %d", line, got, width)
+		}
+	}
+	// The badge is the rightmost column, so it is the first thing an overrunning name would have cost.
+	for _, want := range []string{"prod", "● healthy", "● deploying", "3 running / 0 pending"} {
+		if !strings.Contains(buffer, want) {
+			t.Errorf("ECS view = %q, want it to still show %q", buffer, want)
+		}
+	}
+	if !strings.Contains(buffer, "…") {
+		t.Errorf("ECS view = %q, want the over-long name cut with an ellipsis", buffer)
 	}
 }

@@ -2,9 +2,52 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	secretsmanagertypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 )
+
+// The empty policy is both states, so a read that failed has to leave the error behind: dropping it is what made the pane call an unreadable policy an absent one, and the drop is invisible from the field alone.
+func TestResourcePolicyResultTellsAFailedReadFromAnAbsentPolicy(t *testing.T) {
+	readErr := errors.New("AccessDenied")
+
+	for _, tt := range []struct {
+		name    string
+		out     *secretsmanager.GetResourcePolicyOutput
+		err     error
+		want    string
+		wantErr error
+	}{
+		{name: "the read failed", err: readErr, wantErr: readErr},
+		{name: "a policy that failed to read is never kept", out: &secretsmanager.GetResourcePolicyOutput{ResourcePolicy: aws.String(`{"Version":"2012-10-17"}`)}, err: readErr, wantErr: readErr},
+		{name: "no policy attached", out: &secretsmanager.GetResourcePolicyOutput{}},
+		{name: "a policy is attached", out: &secretsmanager.GetResourcePolicyOutput{ResourcePolicy: aws.String(`{"Version":"2012-10-17"}`)}, want: `{"Version":"2012-10-17"}`},
+	} {
+		policy, err := resourcePolicyResult(tt.out, tt.err)
+		if policy != tt.want || !errors.Is(err, tt.wantErr) {
+			t.Errorf("resourcePolicyResult(%s) = (%q, %v), want (%q, %v)", tt.name, policy, err, tt.want, tt.wantErr)
+		}
+	}
+}
+
+// RotationRules is absent on every secret that has never had rotation configured, and AutomaticallyAfterDays is absent again on one scheduled by a cron() or rate() expression that has not rotated yet.
+func TestRotationDaysIsNilSafe(t *testing.T) {
+	if got := rotationDays(nil); got != 0 {
+		t.Errorf("rotationDays(nil) = %d, want 0", got)
+	}
+	if got := rotationDays(&secretsmanagertypes.RotationRulesType{}); got != 0 {
+		t.Errorf("rotationDays with no cadence = %d, want 0", got)
+	}
+
+	days := int64(7)
+	if got := rotationDays(&secretsmanagertypes.RotationRulesType{AutomaticallyAfterDays: &days}); got != 7 {
+		t.Errorf("rotationDays = %d, want 7", got)
+	}
+}
 
 // An RDS-managed password is generated from a charset that includes & < >, and a secret's value has to be reproduced byte for byte: a displayed password that was re-encoded on the way out cannot be pasted anywhere.
 func TestPrettySecretJSONPreservesTheValueVerbatim(t *testing.T) {

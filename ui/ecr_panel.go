@@ -18,6 +18,7 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 		ContextState: &panels.ContextState[*aws.ECRRepository]{
 			GetMainTabs: func() []panels.MainTab[*aws.ECRRepository] {
 				return []panels.MainTab[*aws.ECRRepository]{
+					staticOverviewTab(gui, gui.ecrRepositoryOverview),
 					{Key: "config", Title: "Config", Render: gui.renderECRConfig},
 					{Key: "images", Title: "Images", Render: gui.renderECRImages},
 					{Key: "scan", Title: "Scan", Render: gui.renderECRScan},
@@ -32,15 +33,17 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 			List: panels.NewFilteredList[*aws.ECRRepository](),
 			View: gui.Views.ECR,
 		},
-		NoItemsMessage: "no ECR repositories found",
+		NoItemsMessage: "no ECR repositories",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *aws.ECRRepository) bool {
 			return a.Name < b.Name
 		},
-		GetTableCells: func(r *aws.ECRRepository) []string {
-			return presentation.GetECRRepositoryDisplayStrings(r)
+		GetTableCellsFit: func(r *aws.ECRRepository) []utils.Cell {
+			return presentation.GetECRRepositoryDisplayCells(r)
 		},
+		Weights:   func(*aws.ECRRepository) []int { return presentation.ECRRepositoryWeights() },
+		CopyValue: func(r *aws.ECRRepository) string { return arnOrName(r.Arn, r.Name) },
 	}
 }
 
@@ -67,9 +70,33 @@ func (gui *Gui) loadECRList() error {
 		for i := range repos {
 			rows[i] = &repos[i]
 		}
-		gui.Panels.ECR.SetItems(rows)
+		gui.Panels.ECR.SetItemsKeepSelection(rows, ecrSelectionKey)
 		return gui.Panels.ECR.RerenderList()
 	})
+}
+
+// ecrSelectionKey identifies a repository across reloads; repository names are unique per registry.
+func ecrSelectionKey(repo *aws.ECRRepository) string { return repo.Name }
+
+// ecrRepositoryOverview reads the repository off the list row and fetches only the images, which is the one thing the row does not carry.
+// The image list is what keeps this off the refresh ticker: DescribeImages pages the whole repository, so its cost grows with the repository rather than staying flat.
+func (gui *Gui) ecrRepositoryOverview(ctx context.Context, repo *aws.ECRRepository, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("repository")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	images, err := gui.Client.ListECRImages(fetchCtx, repo.Name)
+	gui.throttles.observe(ecrOverviewErrs(repo, err)...)
+
+	return presentation.FormatECRRepositoryOverview(repo, images, err, width, time.Now())
+}
+
+// ecrOverviewErrs is everything one repository Overview can be throttled on, which is not the same as everything that can fail it: the two policy reads happen per repository inside the list fetch and do not surface as its error, so a throttle on either would otherwise never reach the backoff engine and this pane would keep asking at full rate.
+func ecrOverviewErrs(repo *aws.ECRRepository, err error) []error {
+	return []error{err, repo.PolicyErr, repo.LifecyclePolicyErr}
 }
 
 // renderECRConfig reuses policy data already fetched with the repository row.
@@ -96,16 +123,22 @@ func formatECRConfig(repo *aws.ECRRepository) string {
 	})
 
 	out += "\nRepository Policy:\n"
-	if repo.PolicyText == "" {
+	switch {
+	case repo.PolicyErr != nil:
+		out += "unavailable: " + repo.PolicyErr.Error() + "\n"
+	case repo.PolicyText == "":
 		out += "not configured\n"
-	} else {
+	default:
 		out += repo.PolicyText + "\n"
 	}
 
 	out += "\nLifecycle Policy:\n"
-	if repo.LifecyclePolicy == "" {
+	switch {
+	case repo.LifecyclePolicyErr != nil:
+		out += "unavailable: " + repo.LifecyclePolicyErr.Error() + "\n"
+	case repo.LifecyclePolicy == "":
 		out += "not configured\n"
-	} else {
+	default:
 		out += repo.LifecyclePolicy + "\n"
 		if repo.LifecycleEvaluated != nil {
 			out += fmt.Sprintf("last evaluated: %s\n", repo.LifecycleEvaluated.Format(time.RFC3339))
@@ -164,13 +197,9 @@ func formatECRImages(images []aws.ECRImage) string {
 	return out
 }
 
-// shortDigest follows Docker's convention to keep identity recognizable.
+// shortDigest is presentation.ShortDigest under this package's older name, kept so the four call sites here read as they did.
 func shortDigest(digest string) string {
-	d := strings.TrimPrefix(digest, "sha256:")
-	if len(d) > 12 {
-		return d[:12]
-	}
-	return d
+	return presentation.ShortDigest(digest)
 }
 
 // renderECRScan relies on newest-tagged-first ordering because ECR scans require a tag.

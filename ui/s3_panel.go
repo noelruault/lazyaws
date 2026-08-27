@@ -20,6 +20,7 @@ func (gui *Gui) getS3Panel() *panels.SideListPanel[*aws.Bucket] {
 		ContextState: &panels.ContextState[*aws.Bucket]{
 			GetMainTabs: func() []panels.MainTab[*aws.Bucket] {
 				return []panels.MainTab[*aws.Bucket]{
+					staticOverviewTab(gui, gui.bucketOverview),
 					{Key: "config", Title: "Config", Render: gui.renderS3Config},
 					{
 						Key:    "objects",
@@ -39,15 +40,18 @@ func (gui *Gui) getS3Panel() *panels.SideListPanel[*aws.Bucket] {
 			List: panels.NewFilteredList[*aws.Bucket](),
 			View: gui.Views.S3,
 		},
-		NoItemsMessage: "no S3 buckets found",
+		NoItemsMessage: "no S3 buckets",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *aws.Bucket) bool {
 			return a.Name < b.Name
 		},
-		GetTableCells: func(b *aws.Bucket) []string {
-			return presentation.GetBucketDisplayStrings(b)
+		GetTableCellsFit: func(b *aws.Bucket) []utils.Cell {
+			return presentation.GetBucketDisplayCells(b)
 		},
+		Weights: func(*aws.Bucket) []int { return presentation.BucketWeights() },
+		// A bucket ARN is derivable from the name, but ListBuckets does not answer one and inventing the string here would publish a guess.
+		CopyValue: func(b *aws.Bucket) string { return b.Name },
 	}
 }
 
@@ -74,9 +78,24 @@ func (gui *Gui) loadS3List() error {
 		for i := range buckets {
 			rows[i] = &buckets[i]
 		}
-		gui.Panels.S3.SetItems(rows)
+		gui.Panels.S3.SetItemsKeepSelection(rows, s3SelectionKey)
 		return gui.Panels.S3.RerenderList()
 	})
+}
+
+// s3SelectionKey identifies a bucket across reloads; bucket names are globally unique.
+func s3SelectionKey(bucket *aws.Bucket) string { return bucket.Name }
+
+// bucketOverview re-lays the Config tab's data, minus the size: GetBucketSize scans every object in the bucket, and the overview is the tab a selection opens on.
+func (gui *Gui) bucketOverview(ctx context.Context, bucket *aws.Bucket, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("bucket")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	return presentation.FormatBucketOverview(bucket, gui.Client.GetBucketOverview(fetchCtx, bucket.Name), width, time.Now())
 }
 
 // renderS3Config defers the full bucket scan so slow size calculation cannot block other metadata.

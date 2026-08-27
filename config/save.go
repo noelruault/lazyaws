@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -24,6 +25,11 @@ func SetBoolSetting(path []string, value bool) error {
 
 func SetStringSetting(path []string, value string) error {
 	return setScalarSetting(path, value, "!!str")
+}
+
+// SetIntSetting writes a number, not a quoted one: an int field unmarshals from !!int and rejects the !!str a string write would leave behind, so the next load of the file would fail on the key the Settings screen had just saved.
+func SetIntSetting(path []string, value int) error {
+	return setScalarSetting(path, strconv.Itoa(value), "!!int")
 }
 
 // setScalarSetting edits YAML nodes so comments, ordering, and unknown keys survive.

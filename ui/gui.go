@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jesseduffield/gocui"
@@ -41,7 +42,8 @@ type Gui struct {
 	Version string
 
 	// PauseBackgroundThreads protects subprocess ownership of the tty.
-	PauseBackgroundThreads bool
+	// Atomic because the refresh tiers read it from their own goroutines while the subprocess helper sets it from the UI loop.
+	PauseBackgroundThreads atomic.Bool
 
 	Mutexes
 
@@ -78,6 +80,20 @@ type Gui struct {
 
 	// panelThrottles bound goroutine creation from repeated refresh keys.
 	panelThrottles map[string]*throttle
+
+	// panelReloads holds each panel's loader behind its single-flight guard, keyed as panelReloaders keys them.
+	panelReloads map[string]func() error
+
+	// throttles carries a throttled fetch from the overview that saw it to the pane gate that has to slow down because of it.
+	throttles throttleWatch
+
+	// mainWidth is main's inner width as of the last layout pass, so a resize can be told from the many layout passes that change nothing.
+	mainWidth int
+
+	ec2Extras ec2OverviewExtras
+
+	// rerenderMainTab collapses a drag-resize into one re-render per 50ms window.
+	rerenderMainTab *throttle
 }
 
 type Panels struct {
@@ -170,9 +186,10 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 	gui.Registry = gui.newRegistry()
 	gui.Keys, gui.startupProblems = buildKeymap(cfg.User.Keybindings)
 	gui.throttledRefresh = newThrottle(50*time.Millisecond, gui.refresh)
+	gui.rerenderMainTab = newThrottle(50*time.Millisecond, gui.rerenderCurrentMainTab)
+	gui.panelReloads = guardedReloaders(gui.panelReloaders())
 	gui.panelThrottles = make(map[string]*throttle)
-	for name, reload := range gui.panelReloaders() {
-		reload := reload
+	for name, reload := range gui.panelReloads {
 		gui.panelThrottles[name] = newThrottle(50*time.Millisecond, func() { go func() { _ = reload() }() })
 	}
 
@@ -182,30 +199,39 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 // panelReloaders keeps full and focused refresh paths aligned.
 func (gui *Gui) panelReloaders() map[string]func() error {
 	return map[string]func() error{
-		"profile": gui.refreshProfile,
-		"ecs":     gui.loadECSList,
-		"ec2":     gui.loadEC2List,
-		"s3":      gui.loadS3List,
-		"eks":     gui.loadEKSList,
-		"ecr":     gui.loadECRList,
-		"secrets": gui.loadSecretsList,
-		"vpc":     gui.loadVPCList,
+		profileReloader: gui.refreshProfile,
+		"ecs":           gui.loadECSList,
+		"ec2":           gui.loadEC2List,
+		"s3":            gui.loadS3List,
+		"eks":           gui.loadEKSList,
+		"ecr":           gui.loadECRList,
+		"secrets":       gui.loadSecretsList,
+		"vpc":           gui.loadVPCList,
 	}
 }
 
 // refresh runs loaders concurrently because each rejects stale profile results.
+// It goes through the single-flighted loaders rather than panelReloaders, so a full refresh landing on top of a panel tier's tick reloads each list once instead of twice.
 func (gui *Gui) refresh() {
 	// The profile panel needs no AWS credentials and must remain available as the recovery path.
 	if gui.authProblem != nil || !gui.Client.Ready() {
-		go func() { _ = gui.refreshProfile() }()
+		go func() { _ = gui.reloadProfilePanel() }()
 		gui.showAuthProblem()
 		return
 	}
 
-	for _, reload := range gui.panelReloaders() {
-		reload := reload
+	for _, reload := range gui.panelReloads {
 		go func() { _ = reload() }()
 	}
+}
+
+// reloadProfilePanel reloads the profile list through its single-flight guard, falling back to the loader itself if the guard was never built (a Gui assembled outside NewGui).
+func (gui *Gui) reloadProfilePanel() error {
+	if reload, ok := gui.panelReloads[profileReloader]; ok {
+		return reload()
+	}
+
+	return gui.refreshProfile()
 }
 
 func (gui *Gui) showAuthProblem() {
@@ -241,7 +267,7 @@ func (gui *Gui) goEvery(interval time.Duration, function func() error) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			if !gui.PauseBackgroundThreads {
+			if !gui.PauseBackgroundThreads.Load() {
 				_ = function()
 			}
 		}
@@ -305,6 +331,7 @@ func (gui *Gui) Run() error {
 	gui.reportStartupProblems()
 
 	gui.throttledRefresh.Trigger()
+	gui.startAutoRefresh()
 
 	err = g.MainLoop()
 	if err == gocui.ErrQuit {

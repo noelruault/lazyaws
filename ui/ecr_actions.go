@@ -80,6 +80,10 @@ func ecrToggleLabel(turningOn bool, what string) string {
 
 func (gui *Gui) ecrPreviewLifecyclePolicy(repo *aws.ECRRepository) func(context.Context, string) error {
 	return func(ctx context.Context, _ string) error {
+		// The empty policy is also what an unreadable one leaves behind, and telling an operator a repository has no policy is how they come to write a second one over it.
+		if repo.LifecyclePolicyErr != nil {
+			return fmt.Errorf("%s: lifecycle policy could not be read: %w", repo.Name, repo.LifecyclePolicyErr)
+		}
 		if repo.LifecyclePolicy == "" {
 			return fmt.Errorf("%s has no lifecycle policy to preview", repo.Name)
 		}

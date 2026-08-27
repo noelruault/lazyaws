@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release clean
+.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release clean ui-test
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -32,6 +32,9 @@ install: ## Install lazyaws into GOBIN (or GOPATH/bin) so it runs anywhere
 test: ## Run the test suite
 	go test ./...
 
+ui-test: ## Drive the built TUI in ttyd against a seeded fake AWS with Playwright (needs docker, ttyd, aws, bun; one-off: cd test/ui && bun install && bunx playwright install chromium)
+	bash test/ui/run.sh $(JOURNEYS)
+
 lint: ## Vet the code and fail on unformatted files
 	go vet ./...
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "$$out"; echo "gofmt: files need formatting"; exit 1; fi
@@ -59,8 +62,8 @@ publish-check: ## Refuse ignored tracked files or source files missing from the 
 		if [ -n "$$missing" ]; then echo "source files missing from the Git index:"; echo "$$missing"; exit 1; fi; \
 	fi
 
-bench: ## Run the hot-path benchmarks (command bar, fuzzy ranking, chat render)
-	go test ./ui/ ./ui/resources/ ./ui/fuzzy/ -run '^$$' -bench . -benchmem -count 3
+bench: ## Run the hot-path benchmarks (list rerender, fit table, overview formatters, command bar, fuzzy ranking, chat render)
+	go test ./ui/ ./ui/utils/ ./ui/presentation/ ./ui/resources/ ./ui/fuzzy/ -run '^$$' -bench . -benchmem -count 3
 
 cover: ## Run tests with coverage, print the total, open the HTML report
 	go test -coverprofile=coverage.out ./...

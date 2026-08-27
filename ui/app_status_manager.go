@@ -106,10 +106,67 @@ func (gui *Gui) getInformationContent() string {
 }
 
 func (gui *Gui) renderGlobalOptions() error {
-	return gui.renderOptionsMap(map[string]string{
-		"PgUp/PgDn": "Scroll",
-		"← → ↑ ↓":   "Navigate",
-		"q":         "Quit",
-		"x":         "Menu",
-	})
+	return gui.renderString(gui.g, "options", optionsToString(gui.dashboardOptions(gui.currentViewName())))
+}
+
+// dashboardOptions is the options line for the eight lists and the main pane, in reading order rather than alphabetically by keycap.
+// Every rebindable label resolves through the keymap, so a user who moves a key sees the key they bound; the arrow, tab and page keys are literals no config can move, which is why those keycaps are written out.
+// It is deliberately shorter than the set of keys that work here: the line is one row of a shared bottom line, and the menu (x / ?) is where the full list lives.
+func (gui *Gui) dashboardOptions(viewName string) []option {
+	named := func(name KeyName, label string) option {
+		return option{key: describeKey(gui.Keys.Get(name).Key), label: label}
+	}
+
+	panel, isList := gui.sidePanelNamed(viewName)
+	onMain := viewName == "main"
+
+	// The chat screen hands focus to main, and there the dashboard's keys do nothing: the lists are hidden, so there is no selection to inspect, copy or act on, and main holds a conversation rather than tabs.
+	if onMain && gui.mainBelongsToQ() {
+		return []option{
+			{key: "←→↑↓", label: "scroll"},
+			{key: "tab", label: "next pane"},
+			{key: "esc", label: "dashboard"},
+			named(KeyQuit, "quit"),
+		}
+	}
+
+	options := []option{{key: "←→↑↓", label: "navigate"}}
+	if onMain {
+		options = []option{{key: "←→↑↓", label: "scroll"}, {key: "[ ]", label: "tabs"}}
+	}
+
+	switch {
+	case onMain:
+		options = append(options, option{key: "enter", label: "select"})
+	case viewName == "profile":
+		options = append(options, option{key: "enter", label: "switch"})
+	case viewName == "ecs":
+		options = append(options, option{key: "enter", label: "drill down"})
+	case isList:
+		options = append(options, option{key: "enter", label: "inspect"})
+	}
+
+	if isList || onMain {
+		options = append(options, named(KeyCopyID, "copy"))
+	}
+	options = append(options, named(KeyRefreshPanel, "refresh"))
+
+	// The filter label follows the same condition as the filter BINDING, so a panel that cannot be filtered never advertises it.
+	if isList && !panel.IsFilterDisabled() {
+		options = append(options, named(KeyFilter, "filter"))
+	}
+	if isList || onMain {
+		options = append(options, named(KeyActions, "actions"))
+	}
+
+	switch viewName {
+	case "ecs":
+		options = append(options, named(KeyECSExec, "exec"))
+	case "ec2":
+		options = append(options, named(KeyEC2Connect, "connect"))
+	case "secrets":
+		options = append(options, named(KeySecretsReveal, "reveal"))
+	}
+
+	return append(options, named(KeyQuit, "quit"))
 }

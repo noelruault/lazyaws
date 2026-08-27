@@ -91,6 +91,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 				switch gui.ecsDrill.level {
 				case ecsLevelServices:
 					return []panels.MainTab[*ecsRow]{
+						overviewTab(gui, gui.ecsServiceOverview),
 						{Key: "config", Title: "Config", Render: gui.renderECSServiceConfig},
 						{Key: "deployments", Title: "Deployments", Render: gui.renderECSServiceDeployments},
 						{Key: "events", Title: "Events", Render: gui.renderECSServiceEvents},
@@ -109,6 +110,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 					}
 				default:
 					return []panels.MainTab[*ecsRow]{
+						overviewTab(gui, gui.ecsClusterOverview),
 						{Key: "config", Title: "Config", Render: gui.renderECSClusterConfig},
 						{Key: "instances", Title: "Instances", Render: gui.renderECSClusterInstances},
 						{Key: "tags", Title: "Tags", Render: gui.renderECSClusterTags},
@@ -124,21 +126,65 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 			List: panels.NewFilteredList[*ecsRow](),
 			View: gui.Views.ECS,
 		},
-		NoItemsMessage: "no ECS resources found",
+		NoItemsMessage: "no ECS resources",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *ecsRow) bool { return a.name() < b.name() },
-		GetTableCells: func(row *ecsRow) []string {
+		GetTableCellsFit: func(row *ecsRow) []utils.Cell {
 			switch row.Kind {
 			case ecsRowKindService:
-				return presentation.GetECSServiceDisplayStrings(row.Service)
+				return presentation.GetECSServiceDisplayCells(row.Service)
 			case ecsRowKindTask:
-				return presentation.GetECSTaskDisplayStrings(row.Task)
+				return presentation.GetECSTaskDisplayCells(row.Task)
 			default:
-				return presentation.GetECSClusterDisplayStrings(row.Cluster)
+				return presentation.GetECSClusterDisplayCells(row.Cluster)
 			}
 		},
+		// The three drill levels are three different tables, so the weights come off the row being rendered rather than off the drill state, which a queued rerender can find already changed.
+		Weights: func(row *ecsRow) []int {
+			switch row.Kind {
+			case ecsRowKindService:
+				return presentation.ECSServiceWeights()
+			case ecsRowKindTask:
+				return presentation.ECSTaskWeights()
+			default:
+				return presentation.ECSClusterWeights()
+			}
+		},
+		// Every ECS row carries an ARN at every drill level, so the copy value is the ARN whichever table is on screen.
+		CopyValue: func(row *ecsRow) string { return row.arn() },
 	}
+}
+
+// ecsClusterOverview consolidates the cluster's detail tabs into one pane, refetching its services and tasks on each render and its metrics on the slower metrics tier.
+func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("cluster")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	overview := gui.Client.GetECSClusterOverview(fetchCtx, row.Cluster, gui.metricsMaxAge())
+	gui.throttles.observeSections(overview.Errs)
+
+	return presentation.FormatECSClusterOverview(row.Cluster, overview, width)
+}
+
+// ecsServiceOverview consolidates the service's detail tabs into one pane, refetching its running image on each render and its metrics on the slower metrics tier.
+// The row is checked as well as the client: a rerender queued before a drill level changed arrives with the tab set of one level and the row of another, and the formatter reads the service unguarded.
+func (gui *Gui) ecsServiceOverview(ctx context.Context, row *ecsRow, width int) string {
+	if gui.Client == nil || row.Service == nil {
+		return overviewUnavailable("service")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	overview := gui.Client.GetECSServiceOverview(fetchCtx, row.Service, gui.metricsMaxAge())
+	gui.throttles.observeSections(overview.Errs)
+
+	return presentation.FormatECSServiceOverview(row.Service, overview, width, time.Now())
 }
 
 func (gui *Gui) renderECSClusterConfig(row *ecsRow) tasks.TaskFunc {
@@ -206,6 +252,19 @@ func formatECSClusterConfig(c *aws.ECSCluster, data *aws.ECSClusterData, insight
 	}
 	return out + table + "\n"
 }
+
+// formatServiceMetric distinguishes a service CloudWatch has not answered for from one measured at zero, which the Insights-derived percentages could not: they divided by a reservation that is absent exactly when the data is.
+func formatServiceMetric(m *aws.ECSServiceMetrics, get func(*aws.ECSServiceMetrics) aws.MetricPoint) string {
+	if m == nil {
+		return "n/a"
+	}
+	return presentation.MetricReading(get(m), "1-min avg", func(v float64) string { return fmt.Sprintf("%.1f%%", v) })
+}
+
+// Container Insights reports CPU in the same 1024-per-vCPU units a task definition reserves in, and memory in MiB.
+func formatCPUUnits(v float64) string { return fmt.Sprintf("%.0f (%.2f vCPU)", v, v/1024) }
+
+func formatMebibytes(v float64) string { return fmt.Sprintf("%.0f MiB", v) }
 
 // formatUtilizationPercent renders zero as unavailable because disabled Insights has no reservation denominator.
 func formatUtilizationPercent(insights *aws.ECSContainerInsights, get func(*aws.ECSContainerInsights) float64) string {
@@ -290,7 +349,9 @@ func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
-		insights, _ := gui.Client.GetECSContainerInsights(fetchCtx, s.Cluster, s.Name)
+		// Best-effort: a service whose metrics or image fail to load still has load balancers and target health worth rendering.
+		metrics, _ := gui.Client.GetECSServiceMetrics(fetchCtx, s.Cluster, s.Name)
+		image, _ := gui.Client.ResolveECSServiceImage(fetchCtx, s)
 
 		health := make(map[string][]aws.ECSTargetHealth, len(s.LoadBalancers))
 		for _, lb := range s.LoadBalancers {
@@ -305,23 +366,35 @@ func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 		if gen != gui.Gen {
 			return
 		}
-		gui.RenderStringMain(formatECSServiceConfig(s, insights, health))
+		gui.RenderStringMain(formatECSServiceConfig(s, metrics, image, health))
 	}})
 }
 
-func formatECSServiceConfig(s *aws.ECSService, insights *aws.ECSContainerInsights, health map[string][]aws.ECSTargetHealth) string {
-	out := utils.FormatMap(0, map[string]string{
-		"Name":            s.Name,
-		"Status":          s.Status,
-		"Task definition": s.TaskDefinition,
-		"Launch type":     s.LaunchType,
-		"Desired":         strconv.Itoa(int(s.DesiredCount)),
-		"Running":         strconv.Itoa(int(s.RunningCount)),
-		"Pending":         strconv.Itoa(int(s.PendingCount)),
-		"CPU utilization": formatUtilizationPercent(insights, func(i *aws.ECSContainerInsights) float64 { return i.CPUPercent }),
-		"Mem utilization": formatUtilizationPercent(insights, func(i *aws.ECSContainerInsights) float64 { return i.MemPercent }),
-		"Console":         s.ConsoleURL,
-	})
+func formatECSServiceConfig(s *aws.ECSService, metrics *aws.ECSServiceMetrics, image aws.ECSServiceImage, health map[string][]aws.ECSTargetHealth) string {
+	fields := map[string]string{
+		"Name":   s.Name,
+		"Status": s.Status,
+		// The image is labelled running or desired rather than shown under one heading, so a service with nothing up cannot read as one that is serving this image.
+		presentation.ECSImageLabel(image): presentation.ECSImageSummary(image),
+		"Task definition":                 s.TaskDefinition,
+		"Launch type":                     s.LaunchType,
+		"Desired":                         strconv.Itoa(int(s.DesiredCount)),
+		"Running":                         strconv.Itoa(int(s.RunningCount)),
+		"Pending":                         strconv.Itoa(int(s.PendingCount)),
+		"CPU utilization":                 formatServiceMetric(metrics, func(m *aws.ECSServiceMetrics) aws.MetricPoint { return m.CPUUtilization }),
+		"Mem utilization":                 formatServiceMetric(metrics, func(m *aws.ECSServiceMetrics) aws.MetricPoint { return m.MemoryUtilization }),
+		"Console":                         s.ConsoleURL,
+	}
+	// The reservations exist only where Container Insights is on, so they are added rather than shown empty everywhere else.
+	if metrics != nil && metrics.InsightsCPUTotal.OK {
+		fields["CPU reserved"] = presentation.MetricReading(metrics.InsightsCPUTotal, "1-min avg", formatCPUUnits)
+		fields["CPU used"] = presentation.MetricReading(metrics.InsightsCPUUsed, "1-min avg", formatCPUUnits)
+	}
+	if metrics != nil && metrics.InsightsMemTotal.OK {
+		fields["Mem reserved"] = presentation.MetricReading(metrics.InsightsMemTotal, "1-min avg", formatMebibytes)
+		fields["Mem used"] = presentation.MetricReading(metrics.InsightsMemUsed, "1-min avg", formatMebibytes)
+	}
+	out := utils.FormatMap(0, fields)
 
 	out += "\nLoad balancers:\n"
 	if len(s.LoadBalancers) == 0 {
@@ -856,10 +929,13 @@ func (gui *Gui) loadECSList() error {
 			return nil
 		}
 
-		gui.Panels.ECS.SetItems(rows)
+		gui.Panels.ECS.SetItemsKeepSelection(rows, ecsSelectionKey)
 		return gui.Panels.ECS.RerenderList()
 	})
 }
+
+// ecsSelectionKey identifies a cluster, service or task row across reloads. The drill level is not part of it because drillECS empties the list before loading the next level.
+func ecsSelectionKey(row *ecsRow) string { return row.arn() }
 
 func (gui *Gui) fetchECSRows(ctx context.Context, level ecsDrillLevel, cluster, service string) ([]*ecsRow, error) {
 	switch level {

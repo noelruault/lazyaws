@@ -146,6 +146,30 @@ func getString(s *string) string {
 }
 
 func (c *Client) GetInstanceDetails(ctx context.Context, instanceID string) (*InstanceDetails, error) {
+	details, err := c.describeInstance(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Best effort, as before: an unreadable address list costs the Elastic IP section rather than the instance.
+	if eips, err := c.DescribeInstanceAddresses(ctx, instanceID); err == nil {
+		details.ElasticIPs = eips
+	}
+
+	return details, nil
+}
+
+// describeInstance is GetInstanceDetails without the DescribeAddresses call that fills ElasticIPs.
+// The overview refetches this on a ticker and an instance's Elastic IP associations are a selection-time lookup, so the two are separable; every other caller wants them together and goes through GetInstanceDetails.
+func (c *Client) describeInstance(ctx context.Context, instanceID string) (*InstanceDetails, error) {
+	// The overview fans this out into its own goroutine, where a nil-client dereference inside the SDK is an unrecoverable panic rather than a failed tab.
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance id required")
+	}
+
 	input := &ec2.DescribeInstancesInput{
 		InstanceIds: []string{instanceID},
 	}
@@ -212,25 +236,13 @@ func (c *Client) GetInstanceDetails(ctx context.Context, instanceID string) (*In
 		if bd.Ebs != nil {
 			device.VolumeID = getString(bd.Ebs.VolumeId)
 			device.DeleteOnTermination = bd.Ebs.DeleteOnTermination != nil && *bd.Ebs.DeleteOnTermination
-
-			if device.VolumeID != "" {
-				volInput := &ec2.DescribeVolumesInput{
-					VolumeIds: []string{device.VolumeID},
-				}
-				volResult, err := c.EC2.DescribeVolumes(ctx, volInput)
-				if err == nil && len(volResult.Volumes) > 0 {
-					vol := volResult.Volumes[0]
-					if vol.Size != nil {
-						device.VolumeSize = *vol.Size
-					}
-					device.VolumeType = string(vol.VolumeType)
-					device.Iops = getInt32Value(vol.Iops)
-					device.Throughput = getInt32Value(vol.Throughput)
-					device.Encrypted = vol.Encrypted != nil && *vol.Encrypted
-				}
-			}
 		}
 		details.BlockDevices = append(details.BlockDevices, device)
+	}
+
+	// Volume detail stays best effort: a volume the caller cannot read must not cost the whole instance view.
+	if volumes, err := c.DescribeVolumes(ctx, volumeIDs(details.BlockDevices)); err == nil {
+		applyVolumes(details.BlockDevices, volumes)
 	}
 
 	for _, ni := range inst.NetworkInterfaces {
@@ -259,11 +271,6 @@ func (c *Client) GetInstanceDetails(ctx context.Context, instanceID string) (*In
 	typeInfo, err := c.GetInstanceTypeInfo(ctx, details.InstanceType)
 	if err == nil {
 		details.InstanceTypeInfo = typeInfo
-	}
-
-	eips, err := c.DescribeInstanceAddresses(ctx, instanceID)
-	if err == nil {
-		details.ElasticIPs = eips
 	}
 
 	return details, nil
@@ -383,6 +390,14 @@ type ScheduledEvent struct {
 }
 
 func (c *Client) GetInstanceStatus(ctx context.Context, instanceID string) (*InstanceStatus, error) {
+	// Guarded for the same reason as GetInstanceDetails: the overview calls this off the UI goroutine.
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance id required")
+	}
+
 	input := &ec2.DescribeInstanceStatusInput{
 		InstanceIds:         []string{instanceID},
 		IncludeAllInstances: &[]bool{true}[0], // Otherwise stopped instances disappear from status results.
@@ -431,23 +446,58 @@ func (c *Client) GetInstanceStatus(ctx context.Context, instanceID string) (*Ins
 	return instanceStatus, nil
 }
 
-func (c *Client) GetInstanceTypeInfo(ctx context.Context, instanceType string) (*InstanceTypeInfo, error) {
-	input := &ec2.DescribeInstanceTypesInput{
-		InstanceTypes: []types.InstanceType{types.InstanceType(instanceType)},
+// volumeIDs collects the EBS volumes worth asking about; a device backed by instance store has none.
+func volumeIDs(devices []BlockDevice) []string {
+	var ids []string
+	for _, d := range devices {
+		if d.VolumeID != "" {
+			ids = append(ids, d.VolumeID)
+		}
+	}
+	return ids
+}
+
+// applyVolumes fills each block device from its volume, matched by id.
+// DescribeVolumes does not answer in request order, so position carries no meaning and a volume missing from the answer leaves its device as it was.
+func applyVolumes(devices []BlockDevice, volumes []types.Volume) {
+	byID := make(map[string]types.Volume, len(volumes))
+	for _, v := range volumes {
+		byID[getString(v.VolumeId)] = v
+	}
+	for i := range devices {
+		vol, ok := byID[devices[i].VolumeID]
+		if !ok {
+			continue
+		}
+		if vol.Size != nil {
+			devices[i].VolumeSize = *vol.Size
+		}
+		devices[i].VolumeType = string(vol.VolumeType)
+		devices[i].Iops = getInt32Value(vol.Iops)
+		devices[i].Throughput = getInt32Value(vol.Throughput)
+		devices[i].Encrypted = vol.Encrypted != nil && *vol.Encrypted
+	}
+}
+
+// DescribeVolumes reads every requested volume in one call.
+// The API takes the whole id list, and one call per device spent a round trip each against the smaller bucket EC2 meters unfiltered Describe calls under.
+func (c *Client) DescribeVolumes(ctx context.Context, volumeIDs []string) ([]types.Volume, error) {
+	if len(volumeIDs) == 0 {
+		return nil, nil
+	}
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
 	}
 
-	result, err := c.EC2.DescribeInstanceTypes(ctx, input)
+	result, err := c.EC2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: volumeIDs})
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe instance type: %w", err)
+		return nil, fmt.Errorf("failed to describe volumes: %w", err)
 	}
+	return result.Volumes, nil
+}
 
-	if len(result.InstanceTypes) == 0 {
-		return nil, fmt.Errorf("instance type %s not found", instanceType)
-	}
-
-	typeInfo := result.InstanceTypes[0]
-
-	info := &InstanceTypeInfo{
+func mapInstanceTypeInfo(typeInfo types.InstanceTypeInfo) InstanceTypeInfo {
+	info := InstanceTypeInfo{
 		InstanceType: string(typeInfo.InstanceType),
 	}
 
@@ -485,11 +535,71 @@ func (c *Client) GetInstanceTypeInfo(ctx context.Context, instanceType string) (
 		info.StorageType = "EBS Only"
 	}
 
-	for _, arch := range typeInfo.ProcessorInfo.SupportedArchitectures {
-		info.SupportedArchitectures = append(info.SupportedArchitectures, string(arch))
+	if typeInfo.ProcessorInfo != nil {
+		for _, arch := range typeInfo.ProcessorInfo.SupportedArchitectures {
+			info.SupportedArchitectures = append(info.SupportedArchitectures, string(arch))
+		}
 	}
 
-	return info, nil
+	return info
+}
+
+// GetInstanceTypeInfo answers from the Client's cache when it can.
+// A type's vCPU count, memory and network performance are properties of the type itself, so the first answer stays true for the life of the process.
+func (c *Client) GetInstanceTypeInfo(ctx context.Context, instanceType string) (*InstanceTypeInfo, error) {
+	if instanceType == "" {
+		return nil, fmt.Errorf("instance type required")
+	}
+
+	if cached, ok := c.cachedInstanceType(instanceType); ok {
+		return &cached, nil
+	}
+
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
+
+	input := &ec2.DescribeInstanceTypesInput{
+		InstanceTypes: []types.InstanceType{types.InstanceType(instanceType)},
+	}
+
+	result, err := c.EC2.DescribeInstanceTypes(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe instance type: %w", err)
+	}
+
+	if len(result.InstanceTypes) == 0 {
+		return nil, fmt.Errorf("instance type %s not found", instanceType)
+	}
+
+	info := c.rememberInstanceType(instanceType, result.InstanceTypes[0])
+
+	return &info, nil
+}
+
+// rememberInstanceType maps a response and caches it as one step.
+// Mapping and storing as two statements let either be dropped on its own, and with no seam to serve DescribeInstanceTypes nothing here can notice.
+func (c *Client) rememberInstanceType(instanceType string, typeInfo types.InstanceTypeInfo) InstanceTypeInfo {
+	info := mapInstanceTypeInfo(typeInfo)
+	c.cacheInstanceType(instanceType, info)
+	return info
+}
+
+// The cache stores and returns values rather than the pointer callers hold, so a caller editing its copy cannot rewrite what the next one reads.
+func (c *Client) cachedInstanceType(instanceType string) (InstanceTypeInfo, bool) {
+	c.instanceTypesMu.Lock()
+	defer c.instanceTypesMu.Unlock()
+	info, ok := c.instanceTypes[instanceType]
+	return info, ok
+}
+
+func (c *Client) cacheInstanceType(instanceType string, info InstanceTypeInfo) {
+	c.instanceTypesMu.Lock()
+	defer c.instanceTypesMu.Unlock()
+	if c.instanceTypes == nil {
+		c.instanceTypes = map[string]InstanceTypeInfo{}
+	}
+	c.instanceTypes[instanceType] = info
 }
 
 func (c *Client) CreateImageFromInstance(ctx context.Context, instanceID, imageName string) (string, error) {
@@ -564,6 +674,14 @@ func (c *Client) CreateVolumeSnapshot(ctx context.Context, volumeID, description
 }
 
 func (c *Client) DescribeInstanceAddresses(ctx context.Context, instanceID string) ([]ElasticIP, error) {
+	// The overview calls this outside GetInstanceDetails, so it no longer inherits that function's guards.
+	if c.EC2 == nil {
+		return nil, fmt.Errorf("EC2 client not initialized")
+	}
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance id required")
+	}
+
 	result, err := c.EC2.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{
 		Filters: []types.Filter{
 			{Name: &[]string{"instance-id"}[0], Values: []string{instanceID}},
@@ -649,21 +767,34 @@ func (c *Client) SetInstanceUserData(ctx context.Context, instanceID, userData s
 	return nil
 }
 
-// GetConsoleOutput returns the instance's console output still base64-encoded, or "" when none is available.
-func (c *Client) GetConsoleOutput(ctx context.Context, instanceID string) (string, error) {
+// ConsoleOutput is the instance's console log with the time AWS last captured it.
+// The two travel together because the capture is boot-time on a long-running instance: a size on its own reads as a fresh log when it can be months old.
+type ConsoleOutput struct {
+	Content string
+	At      time.Time
+}
+
+// GetConsoleOutput returns the instance's console output still base64-encoded, with an empty Content when none is available.
+func (c *Client) GetConsoleOutput(ctx context.Context, instanceID string) (ConsoleOutput, error) {
 	input := &ec2.GetConsoleOutputInput{
 		InstanceId: &instanceID,
 	}
 
 	result, err := c.EC2.GetConsoleOutput(ctx, input)
 	if err != nil {
-		return "", fmt.Errorf("failed to get console output: %w", err)
+		return ConsoleOutput{}, fmt.Errorf("failed to get console output: %w", err)
 	}
 
 	if result.Output == nil {
-		return "", nil
+		return ConsoleOutput{}, nil
 	}
-	return *result.Output, nil
+
+	out := ConsoleOutput{Content: *result.Output}
+	if result.Timestamp != nil {
+		out.At = *result.Timestamp
+	}
+
+	return out, nil
 }
 
 // GetConsoleScreenshot returns the instance console screenshot as base64-encoded PNG bytes, or "" when not available.

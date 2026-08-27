@@ -45,6 +45,7 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 		ContextState: &panels.ContextState[*aws.SecretSummary]{
 			GetMainTabs: func() []panels.MainTab[*aws.SecretSummary] {
 				return []panels.MainTab[*aws.SecretSummary]{
+					overviewTab(gui, gui.secretOverview),
 					{Key: "config", Title: "Config", Render: gui.renderSecretsConfig},
 					{Key: "value", Title: "Value", Render: gui.renderSecretValue},
 				}
@@ -59,7 +60,7 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 			List: panels.NewFilteredList[*aws.SecretSummary](),
 			View: gui.Views.Secrets,
 		},
-		NoItemsMessage: "no secrets found",
+		NoItemsMessage: "no secrets",
 		Gui:            gui.intoInterface(),
 
 		OnSelect: func(s *aws.SecretSummary) error {
@@ -70,9 +71,11 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 		Sort: func(a, b *aws.SecretSummary) bool {
 			return a.Name < b.Name
 		},
-		GetTableCells: func(s *aws.SecretSummary) []string {
-			return presentation.GetSecretDisplayStrings(s)
+		GetTableCellsFit: func(s *aws.SecretSummary) []utils.Cell {
+			return presentation.GetSecretDisplayCells(s)
 		},
+		Weights:   func(*aws.SecretSummary) []int { return presentation.SecretWeights() },
+		CopyValue: func(s *aws.SecretSummary) string { return arnOrName(s.Arn, s.Name) },
 	}
 }
 
@@ -99,14 +102,44 @@ func (gui *Gui) loadSecretsList() error {
 		for i := range secrets {
 			rows[i] = &secrets[i]
 		}
-		gui.Panels.Secrets.SetItems(rows)
+		gui.Panels.Secrets.SetItemsKeepSelection(rows, secretsSelectionKey)
 		return gui.Panels.Secrets.RerenderList()
 	})
 }
 
+// secretsSelectionKey identifies a secret across reloads by name rather than ARN, because the same name reappears with a new ARN after a delete and recreate.
+func secretsSelectionKey(secret *aws.SecretSummary) string { return secret.Name }
+
 func (gui *Gui) handleSecretsToggleDeleted(g *gocui.Gui, v *gocui.View) error {
 	gui.secretsShowDeleted = !gui.secretsShowDeleted
 	return gui.loadSecretsList()
+}
+
+// secretOverview reads the same metadata the Config tab does and never the value, so an overview that re-renders on its own interval still emits no GetSecretValue CloudTrail event.
+func (gui *Gui) secretOverview(ctx context.Context, secret *aws.SecretSummary, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("secret")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	details, err := gui.Client.GetSecretDetails(fetchCtx, secret.Name)
+	gui.throttles.observe(secretOverviewErrs(details, err)...)
+	if err != nil {
+		return overviewUnavailableBecause("secret", err)
+	}
+
+	return presentation.FormatSecretOverview(details, width, time.Now())
+}
+
+// secretOverviewErrs is everything one overview fetch can be throttled on, which is not the same as everything that can fail it: the best-effort resource-policy read is dropped by GetSecretDetails' own error, so a throttle on it would otherwise never reach the backoff engine and the pane would keep asking at full rate.
+func secretOverviewErrs(details *aws.SecretDetails, err error) []error {
+	if err != nil || details == nil {
+		return []error{err}
+	}
+
+	return []error{details.ResourcePolicyErr}
 }
 
 // renderSecretsConfig avoids GetSecretValue so browsing emits no value-read CloudTrail event.
@@ -195,9 +228,12 @@ func formatSecretsConfig(d *aws.SecretDetails) string {
 	}
 
 	out += "\nResource Policy:\n"
-	if d.ResourcePolicy == "" {
+	switch {
+	case d.ResourcePolicyErr != nil:
+		out += "unavailable: " + d.ResourcePolicyErr.Error() + "\n"
+	case d.ResourcePolicy == "":
 		out += "not configured\n"
-	} else {
+	default:
 		out += d.ResourcePolicy + "\n"
 	}
 

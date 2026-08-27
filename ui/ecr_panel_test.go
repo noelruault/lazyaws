@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,39 @@ func TestFormatECRConfigNoLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(out, "Lifecycle Policy:\nnot configured") {
 		t.Errorf("expected 'not configured' lifecycle, got:\n%s", out)
+	}
+}
+
+// The Config tab publishes the same two policy fields the Overview does, so it has the same two states to keep apart: "not configured" is a claim only a successful read supports.
+func TestFormatECRConfigTellsAFailedPolicyReadFromAnAbsentPolicy(t *testing.T) {
+	out := formatECRConfig(&aws.ECRRepository{
+		Name:               "svc-api",
+		PolicyErr:          errors.New("ThrottlingException"),
+		LifecyclePolicyErr: errors.New("AccessDenied"),
+	})
+
+	for _, want := range []string{"Repository Policy:\nunavailable: ThrottlingException", "Lifecycle Policy:\nunavailable: AccessDenied"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "not configured") {
+		t.Errorf("an unreadable policy still reads as not configured:\n%s", out)
+	}
+}
+
+// Every policy read the list fetch makes has to reach the backoff engine, or the pane keeps asking at the rate that earned the throttle.
+// The two policy calls run per repository inside the list fetch and never surface as its error, so the Overview's own error is not enough.
+func TestECROverviewErrsCarriesEveryThrottleableRead(t *testing.T) {
+	imagesErr := errors.New("DescribeImages")
+	policyErr := errors.New("GetRepositoryPolicy")
+	lifecycleErr := errors.New("GetLifecyclePolicy")
+
+	got := ecrOverviewErrs(&aws.ECRRepository{PolicyErr: policyErr, LifecyclePolicyErr: lifecycleErr}, imagesErr)
+	for _, want := range []error{imagesErr, policyErr, lifecycleErr} {
+		if !slices.ContainsFunc(got, func(err error) bool { return errors.Is(err, want) }) {
+			t.Errorf("ecrOverviewErrs() does not carry %v, got %v", want, got)
+		}
 	}
 }
 

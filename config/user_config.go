@@ -65,6 +65,29 @@ type ThemeConfig struct {
 type RefreshConfig struct {
 	ECSLogsSeconds   int `yaml:"ecsLogsSeconds"`
 	EC2StatusSeconds int `yaml:"ec2StatusSeconds"`
+
+	// OverviewSeconds turns the overview's auto-refresh OFF at 0, so it must not go through RefreshInterval, which substitutes a fallback for every non-positive value.
+	OverviewSeconds int `yaml:"overviewSeconds"`
+
+	// PanelSeconds is how often the FOCUSED side panel's list reloads; the same 0-means-off rule as OverviewSeconds.
+	PanelSeconds int `yaml:"panelSeconds"`
+
+	// MetricsSeconds is a separate, slower tier because GetMetricData is billed per metric requested, so this interval is the one with a price attached. Read it through MetricsInterval, which applies the floor.
+	MetricsSeconds int `yaml:"metricsSeconds"`
+}
+
+// MetricsFloorSeconds is the shortest metrics refresh the app will use, whatever the config file asks for.
+// CloudWatch charges per metric per GetMetricData request and publishes most metrics at 60-second resolution anyway, so a shorter interval buys repeated readings of an unchanged datapoint and bills for each one.
+const MetricsFloorSeconds = 10
+
+// MetricsInterval reports how often metrics may be refetched, 0 meaning never.
+// The floor is applied on READ rather than clamped on load, so a hand-edited 1 stays visible in the file as what was asked for while the app still refuses to spend at that rate.
+func (r RefreshConfig) MetricsInterval() time.Duration {
+	if r.MetricsSeconds <= 0 {
+		return 0
+	}
+
+	return time.Duration(max(r.MetricsSeconds, MetricsFloorSeconds)) * time.Second
 }
 
 // DefaultUserConfig starts complete so partial or missing configuration remains usable.
@@ -88,6 +111,9 @@ func DefaultUserConfig() UserConfig {
 		Refresh: RefreshConfig{
 			ECSLogsSeconds:   5,
 			EC2StatusSeconds: 10,
+			OverviewSeconds:  2,
+			PanelSeconds:     2,
+			MetricsSeconds:   60,
 		},
 		// Chat is opt-in because Kiro can act on AWS; Bedrock is the default because it needs no second installation or login.
 		Chat: ChatConfig{

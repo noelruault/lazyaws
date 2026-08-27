@@ -20,6 +20,7 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 		ContextState: &panels.ContextState[*aws.VPC]{
 			GetMainTabs: func() []panels.MainTab[*aws.VPC] {
 				return []panels.MainTab[*aws.VPC]{
+					staticOverviewTab(gui, gui.vpcOverview),
 					{Key: "config", Title: "Config", Render: gui.renderVPCConfig},
 					{Key: "subnets", Title: "Subnets", Render: gui.renderVPCSubnets},
 					{Key: "routes", Title: "Routes", Render: gui.renderVPCRoutes},
@@ -42,7 +43,7 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 			List: panels.NewFilteredList[*aws.VPC](),
 			View: gui.Views.VPC,
 		},
-		NoItemsMessage: "no vpcs found",
+		NoItemsMessage: "no VPCs",
 		Gui:            gui.intoInterface(),
 
 		// The default VPC sorts last: every account has one and it is rarely the one being investigated.
@@ -52,9 +53,11 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 			}
 			return a.CIDR < b.CIDR
 		},
-		GetTableCells: func(v *aws.VPC) []string {
-			return presentation.GetVPCDisplayStrings(v)
+		GetTableCellsFit: func(v *aws.VPC) []utils.Cell {
+			return presentation.GetVPCDisplayCells(v)
 		},
+		Weights:   func(*aws.VPC) []int { return presentation.VPCWeights() },
+		CopyValue: func(v *aws.VPC) string { return v.ID },
 	}
 }
 
@@ -81,9 +84,25 @@ func (gui *Gui) loadVPCList() error {
 		for i := range vpcs {
 			rows[i] = &vpcs[i]
 		}
-		gui.Panels.VPC.SetItems(rows)
+		gui.Panels.VPC.SetItemsKeepSelection(rows, vpcSelectionKey)
 		return gui.Panels.VPC.RerenderList()
 	})
+}
+
+// vpcSelectionKey identifies a VPC across reloads. The CIDR is not identity: VPCs in different regions, and peered ones, can share it.
+func vpcSelectionKey(vpc *aws.VPC) string { return vpc.ID }
+
+// vpcOverview consolidates the Config, Subnets, Gateways and Endpoints tabs, reading the VPC's own fields off the list row.
+// Six EC2 describes against the tightest-throttled API this app touches is not a per-tick cost, and a VPC's topology is not a per-tick fact either, so the tab renders once per selection.
+func (gui *Gui) vpcOverview(ctx context.Context, vpc *aws.VPC, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("VPC")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, vpcFetchTimeout)
+	defer cancel()
+
+	return presentation.FormatVPCOverview(vpc, gui.Client.GetVPCOverview(fetchCtx, vpc.ID), width)
 }
 
 // vpcTab runs one tab's fetch under the shared timeout and generation check, leaving each render below as only its query and its formatting.

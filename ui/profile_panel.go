@@ -16,6 +16,7 @@ import (
 	"github.com/noelruault/lazyaws/ui/panels"
 	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/tasks"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
 
 func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
@@ -36,35 +37,38 @@ func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
 			List: panels.NewFilteredList[string](),
 			View: gui.Views.Profile,
 		},
-		NoItemsMessage: "no AWS profiles found in ~/.aws/config",
+		NoItemsMessage: "no AWS profiles in ~/.aws/config",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b string) bool { return a < b },
-		GetTableCells: func(profile string) []string {
+		GetTableCellsFit: func(profile string) []utils.Cell {
 			region, accountID := "", ""
 			if profile == gui.CurrentProfile && gui.Client != nil {
 				region = gui.Client.GetRegion()
 				accountID = gui.Client.GetAccountID()
 			}
-			return presentation.GetProfileDisplayStrings(profile, gui.CurrentProfile, region, accountID)
+			return presentation.GetProfileDisplayCells(profile, gui.CurrentProfile, region, accountID)
 		},
+		Weights: func(string) []int { return []int{1} },
+		// A profile has no ARN; its name is the identifier, and it is what a `--profile` flag wants.
+		CopyValue: func(profile string) string { return profile },
 	}
 }
 
 func (gui *Gui) refreshProfile() error {
-	gui.Panels.Profile.SetItems(listAWSProfiles())
+	firstLoad := gui.Panels.Profile.List.Len() == 0
+	gui.Panels.Profile.SetItemsKeepSelection(listAWSProfiles(), profileSelectionKey)
 
-	if gui.CurrentProfile != "" {
-		for i, p := range gui.Panels.Profile.List.GetItems() {
-			if p == gui.CurrentProfile {
-				gui.Panels.Profile.SetSelectedLineIdx(i)
-				break
-			}
-		}
+	// The panel opens on the connected profile, but this is a reloader: later refreshes must leave the cursor wherever the user moved it.
+	if firstLoad && gui.CurrentProfile != "" {
+		gui.Panels.Profile.SelectByItem(gui.CurrentProfile)
 	}
 
 	return gui.Panels.Profile.RerenderList()
 }
+
+// profileSelectionKey identifies a profile row across reloads; the row IS its name.
+func profileSelectionKey(profile string) string { return profile }
 
 func (gui *Gui) handleProfileSwitch(g *gocui.Gui, v *gocui.View) error {
 	profile, err := gui.Panels.Profile.GetSelectedItem()

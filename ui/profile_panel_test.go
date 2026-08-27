@@ -41,3 +41,32 @@ func TestReadAWSConfigSection(t *testing.T) {
 		t.Error("readAWSConfigSection(\"default\") leaked staging's region")
 	}
 }
+
+// refreshProfile is a reloader: it runs on r/R and on the background refresh, not only at startup.
+// It opens the panel on the connected profile, but once the cursor has moved a later refresh must leave it where the user put it.
+func TestProfileRefreshOpensOnTheCurrentProfileThenLeavesTheCursorAlone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte("[profile alpha]\n[profile staging]\n[profile zeta]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gui, g := newHeadlessGui(t)
+	gui.CurrentProfile = "staging"
+
+	run(t, g, gui.refreshProfile)
+	if got := ask(g, func() int { return gui.Panels.Profile.SelectedIdx }); got != 1 {
+		t.Fatalf("SelectedIdx after the first load = %d, want 1 (the connected profile)", got)
+	}
+
+	run(t, g, func() error {
+		gui.Panels.Profile.SetSelectedLineIdx(2)
+		return gui.refreshProfile()
+	})
+	if got := ask(g, func() int { return gui.Panels.Profile.SelectedIdx }); got != 2 {
+		t.Errorf("SelectedIdx after a refresh = %d, want 2 (the row the cursor was moved to, not the connected profile)", got)
+	}
+}

@@ -21,6 +21,19 @@ type ECSCapacityProviderStrategy struct {
 	Base             int32
 }
 
+// ECSClusterStatistics splits a cluster's task and service counts by launch type.
+// DescribeClusters only fills these when asked for the STATISTICS field; without it every count is zero, which is indistinguishable from an idle cluster.
+type ECSClusterStatistics struct {
+	RunningEC2Tasks         int32
+	RunningFargateTasks     int32
+	PendingEC2Tasks         int32
+	PendingFargateTasks     int32
+	ActiveEC2Services       int32
+	ActiveFargateServices   int32
+	DrainingEC2Services     int32
+	DrainingFargateServices int32
+}
+
 type ECSCluster struct {
 	Name                         string
 	Arn                          string
@@ -32,15 +45,41 @@ type ECSCluster struct {
 	ConsoleURL                   string
 	CapacityProviders            []string
 	DefaultCapacityProviderStrat []ECSCapacityProviderStrategy
+	Statistics                   ECSClusterStatistics
+	// ContainerInsights is the cluster's containerInsights setting verbatim (enabled, enhanced or disabled), empty when the cluster was described without the SETTINGS field.
+	// Empty is not disabled: it means unknown, and the difference decides whether the Insights metric namespace is worth querying at all.
+	ContainerInsights string
+	// ExecuteCommandLogging is where `ecs execute-command` sessions are logged (NONE, DEFAULT or OVERRIDE), empty when the cluster carries no execute-command configuration at all.
+	// It only ever arrives with the CONFIGURATIONS field asked for, which clusterDescribeFields does; without it the value is silently empty rather than an error.
+	ExecuteCommandLogging string
+	// Region is the client's region rather than anything DescribeClusters returns, because a cluster is only ever read through a client already bound to one.
+	Region string
 }
 
 type ECSDeployment struct {
-	Status  string
-	Desired int32
-	Running int32
-	Pending int32
-	Created *time.Time
+	Status         string
+	TaskDefinition string
+	Desired        int32
+	Running        int32
+	Pending        int32
+	Created        *time.Time
+	// RolloutState is the deployment's own progress, which Status cannot report: a deployment is PRIMARY from the moment it starts until the next one replaces it, whether or not it ever finished rolling out.
+	// ECS omits it entirely for a CODE_DEPLOY or EXTERNAL controller, so empty means "this controller does not report one" rather than "not finished".
+	RolloutState string
+	// RolloutStateReason is the sentence ECS gives for the state, and the only thing that says WHY a rollout failed; it is too long for a table cell and belongs on a line of its own.
+	RolloutStateReason string
+	// FailedTasks counts the tasks this deployment started and lost. ECS keeps retrying, so a rollout can sit at IN_PROGRESS indefinitely, and this count is the difference between slow and stuck.
+	FailedTasks int32
 }
+
+// ECS rollout states, matched as literals because the SDK's DeploymentRolloutState is a string enum the UI compares against rather than switches on.
+const (
+	ECSRolloutCompleted = "COMPLETED"
+	ECSRolloutFailed    = "FAILED"
+)
+
+// ECSDeploymentPrimary is the status of the deployment a service is currently trying to reach; every other deployment on the service is one it is draining away from.
+const ECSDeploymentPrimary = "PRIMARY"
 
 type ECSEvent struct {
 	Message string
@@ -67,6 +106,17 @@ type ECSService struct {
 	DeploymentController       string // ECS, CODE_DEPLOY, or EXTERNAL
 	CircuitBreakerEnabled      bool
 	CircuitBreakerRollback     bool
+	// Network is nil for a service whose task definition does not use awsvpc networking, which is a different answer from a service whose subnets could not be read.
+	// ECS requires the configuration for awsvpc and rejects it for every other network mode, so its absence identifies the mode rather than losing the data.
+	Network *ECSAwsVpcConfig
+}
+
+// ECSAwsVpcConfig is the ENI a service's tasks are launched with, under awsvpc networking.
+type ECSAwsVpcConfig struct {
+	Subnets        []string
+	SecurityGroups []string
+	// AssignPublicIP is ENABLED or DISABLED verbatim, and empty when ECS answered with neither: the default depends on how the service was created, so guessing one would be a claim about reachability.
+	AssignPublicIP string
 }
 
 type ECSPortMapping struct {
@@ -87,6 +137,8 @@ type ECSContainer struct {
 	MemorySoftMB int32
 	PrivateIPs   []string
 	Ports        []ECSPortMapping
+	// Essential comes from the task definition, so it is false for a task whose definition could not be read as well as for a genuine sidecar.
+	Essential bool
 }
 
 type ECSAttachment struct {
@@ -180,6 +232,7 @@ type ECSTaskDefinitionContainer struct {
 	Image       string
 	CPU         int32
 	Memory      int32
+	Essential   bool
 	Environment map[string]string
 }
 
@@ -214,36 +267,13 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 
 		descOut, err := c.ECS.DescribeClusters(timeoutCtx, &ecs.DescribeClustersInput{
 			Clusters: out.ClusterArns,
+			Include:  clusterDescribeFields(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to describe ECS clusters: %w", err)
 		}
 
-		for _, cl := range descOut.Clusters {
-			cluster := ECSCluster{
-				Name:   getString(cl.ClusterName),
-				Arn:    getString(cl.ClusterArn),
-				Status: getString(cl.Status),
-			}
-			cluster.RunningTasksCount = cl.RunningTasksCount
-			cluster.PendingTasksCount = cl.PendingTasksCount
-			cluster.ActiveServicesCount = cl.ActiveServicesCount
-			cluster.RegisteredContainerCount = cl.RegisteredContainerInstancesCount
-			if c.Region != "" && c.AccountID != "" {
-				cluster.ConsoleURL = fmt.Sprintf("https://%s.console.aws.amazon.com/ecs/v2/clusters/%s?region=%s", c.Region, cluster.Name, c.Region)
-			}
-
-			cluster.CapacityProviders = cl.CapacityProviders
-			for _, s := range cl.DefaultCapacityProviderStrategy {
-				cluster.DefaultCapacityProviderStrat = append(cluster.DefaultCapacityProviderStrat, ECSCapacityProviderStrategy{
-					CapacityProvider: getString(s.CapacityProvider),
-					Weight:           s.Weight,
-					Base:             s.Base,
-				})
-			}
-
-			clusters = append(clusters, cluster)
-		}
+		clusters = append(clusters, c.ingestECSClusters(descOut.Clusters)...)
 
 		if out.NextToken == nil {
 			break
@@ -252,6 +282,125 @@ func (c *Client) ListECSClusters(ctx context.Context) ([]ECSCluster, error) {
 	}
 
 	return clusters, nil
+}
+
+// clusterDescribeFields names the optional fields the cluster list depends on.
+// All three ride the describe call that already runs; asking for them separately would be a call per page for data the same response can carry, and dropping any of them leaves its data silently empty rather than erroring.
+func clusterDescribeFields() []ecsTypes.ClusterField {
+	return []ecsTypes.ClusterField{
+		ecsTypes.ClusterFieldStatistics,
+		ecsTypes.ClusterFieldSettings,
+		ecsTypes.ClusterFieldConfigurations,
+	}
+}
+
+// ingestECSClusters maps a DescribeClusters page and records what only that response can say.
+// The two are one step because the Insights setting has no other reader: a cluster mapped without being recorded would silently cost every later service metrics fetch its Insights extras, with nothing failing to say so.
+func (c *Client) ingestECSClusters(described []ecsTypes.Cluster) []ECSCluster {
+	clusters := make([]ECSCluster, 0, len(described))
+	for _, cl := range described {
+		clusters = append(clusters, c.mapECSCluster(cl))
+	}
+	c.recordClusterInsights(clusters)
+	return clusters
+}
+
+func (c *Client) mapECSCluster(cl ecsTypes.Cluster) ECSCluster {
+	cluster := ECSCluster{
+		Name:                     getString(cl.ClusterName),
+		Arn:                      getString(cl.ClusterArn),
+		Status:                   getString(cl.Status),
+		RunningTasksCount:        cl.RunningTasksCount,
+		PendingTasksCount:        cl.PendingTasksCount,
+		ActiveServicesCount:      cl.ActiveServicesCount,
+		RegisteredContainerCount: cl.RegisteredContainerInstancesCount,
+		CapacityProviders:        cl.CapacityProviders,
+		Statistics:               mapClusterStatistics(cl.Statistics),
+		ContainerInsights:        containerInsightsSetting(cl.Settings),
+		ExecuteCommandLogging:    executeCommandLogging(cl.Configuration),
+		Region:                   c.Region,
+	}
+	if c.Region != "" && c.AccountID != "" {
+		cluster.ConsoleURL = fmt.Sprintf("https://%s.console.aws.amazon.com/ecs/v2/clusters/%s?region=%s", c.Region, cluster.Name, c.Region)
+	}
+	for _, s := range cl.DefaultCapacityProviderStrategy {
+		cluster.DefaultCapacityProviderStrat = append(cluster.DefaultCapacityProviderStrat, ECSCapacityProviderStrategy{
+			CapacityProvider: getString(s.CapacityProvider),
+			Weight:           s.Weight,
+			Base:             s.Base,
+		})
+	}
+	return cluster
+}
+
+// mapClusterStatistics reads the STATISTICS key-value list into named fields.
+// Keys are matched case-insensitively because AWS documents them with a leading capital while the API answers with a leading lowercase, and a key that misses is silently zero rather than an error.
+func mapClusterStatistics(stats []ecsTypes.KeyValuePair) ECSClusterStatistics {
+	byName := make(map[string]int32, len(stats))
+	for _, kv := range stats {
+		n, err := strconv.ParseInt(getString(kv.Value), 10, 32)
+		if err != nil {
+			continue
+		}
+		byName[strings.ToLower(getString(kv.Name))] = int32(n)
+	}
+	return ECSClusterStatistics{
+		RunningEC2Tasks:         byName["runningec2taskscount"],
+		RunningFargateTasks:     byName["runningfargatetaskscount"],
+		PendingEC2Tasks:         byName["pendingec2taskscount"],
+		PendingFargateTasks:     byName["pendingfargatetaskscount"],
+		ActiveEC2Services:       byName["activeec2servicecount"],
+		ActiveFargateServices:   byName["activefargateservicecount"],
+		DrainingEC2Services:     byName["drainingec2servicecount"],
+		DrainingFargateServices: byName["drainingfargateservicecount"],
+	}
+}
+
+func (c *Client) clusterInsightsSetting(clusterName string) string {
+	c.clusterInsightsMu.Lock()
+	defer c.clusterInsightsMu.Unlock()
+	return c.clusterInsights[clusterName]
+}
+
+func (c *Client) recordClusterInsights(clusters []ECSCluster) {
+	c.clusterInsightsMu.Lock()
+	defer c.clusterInsightsMu.Unlock()
+	if c.clusterInsights == nil {
+		c.clusterInsights = map[string]string{}
+	}
+	for _, cl := range clusters {
+		c.clusterInsights[cl.Name] = cl.ContainerInsights
+	}
+}
+
+// executeCommandLogging reads the execute-command log destination out of the cluster configuration.
+// Both the configuration and its execute-command half are optional pointers on a cluster that has never been configured, so this is nil-safe at each level rather than at the outer one only.
+func executeCommandLogging(cfg *ecsTypes.ClusterConfiguration) string {
+	if cfg == nil || cfg.ExecuteCommandConfiguration == nil {
+		return ""
+	}
+
+	return string(cfg.ExecuteCommandConfiguration.Logging)
+}
+
+func containerInsightsSetting(settings []ecsTypes.ClusterSetting) string {
+	for _, s := range settings {
+		if s.Name == ecsTypes.ClusterSettingNameContainerInsights {
+			return getString(s.Value)
+		}
+	}
+	return ""
+}
+
+// ContainerInsightsEnabled reports whether the Insights metric namespace is worth querying for this cluster.
+// enhanced is the observability tier above enabled, not a different answer to "does ECS/ContainerInsights publish here".
+func ContainerInsightsEnabled(setting string) bool {
+	switch strings.ToLower(setting) {
+	case "enabled", "enhanced":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECSService, error) {
@@ -300,6 +449,8 @@ func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECS
 				HealthCheckGracePeriodSecs: getInt32Value(svc.HealthCheckGracePeriodSeconds),
 			}
 
+			service.Network = awsVpcConfig(svc.NetworkConfiguration)
+
 			if svc.DeploymentController != nil {
 				service.DeploymentController = string(svc.DeploymentController.Type)
 			}
@@ -309,13 +460,7 @@ func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECS
 			}
 
 			for _, dep := range svc.Deployments {
-				service.Deployments = append(service.Deployments, ECSDeployment{
-					Status:  getString(dep.Status),
-					Desired: dep.DesiredCount,
-					Running: dep.RunningCount,
-					Pending: dep.PendingCount,
-					Created: dep.CreatedAt,
-				})
+				service.Deployments = append(service.Deployments, mapECSDeployment(dep))
 			}
 
 			for _, lb := range svc.LoadBalancers {
@@ -356,6 +501,17 @@ func (c *Client) ListECSServices(ctx context.Context, clusterName string) ([]ECS
 	return services, nil
 }
 
+// listTasksInput is a named function rather than a literal at the call site because it carries a decision no test could otherwise reach: ListTasks itself needs a concrete SDK client.
+// An empty service name means every task in the cluster, which is the filter being ABSENT; sending the empty string asks ECS to match a service literally named "", so the cluster-wide listing has to omit the field entirely.
+func listTasksInput(clusterName, serviceName string, nextToken *string) *ecs.ListTasksInput {
+	input := &ecs.ListTasksInput{Cluster: &clusterName, NextToken: nextToken}
+	if serviceName != "" {
+		input.ServiceName = &serviceName
+	}
+
+	return input
+}
+
 func (c *Client) ListECSTasks(ctx context.Context, clusterName, serviceName string) ([]ECSTask, error) {
 	if c.ECS == nil {
 		return nil, fmt.Errorf("ECS client not initialized")
@@ -367,11 +523,7 @@ func (c *Client) ListECSTasks(ctx context.Context, clusterName, serviceName stri
 	var taskArns []string
 	var nextToken *string
 	for {
-		listOut, err := c.ECS.ListTasks(timeoutCtx, &ecs.ListTasksInput{
-			Cluster:     &clusterName,
-			ServiceName: &serviceName,
-			NextToken:   nextToken,
-		})
+		listOut, err := c.ECS.ListTasks(timeoutCtx, listTasksInput(clusterName, serviceName, nextToken))
 		if err != nil {
 			return nil, fmt.Errorf("failed to list ECS tasks: %w", err)
 		}
@@ -502,58 +654,16 @@ func (c *Client) buildECSTask(t ecsTypes.Task, clusterName, serviceName string, 
 		}
 
 		for _, ctn := range t.Containers {
-			container := ECSContainer{
-				Name:         getString(ctn.Name),
-				LastStatus:   getString(ctn.LastStatus),
-				HealthStatus: string(ctn.HealthStatus),
-				ImageURI:     getString(ctn.Image),
-				ImageDigest:  getString(ctn.ImageDigest),
-				RuntimeID:    getString(ctn.RuntimeId),
+			cd, ok := cdByName[getString(ctn.Name)]
+			if !ok {
+				task.Containers = append(task.Containers, mapECSContainer(ctn, nil))
+				continue
 			}
-			if cd, ok := cdByName[getString(ctn.Name)]; ok {
-				if cd.Cpu > 0 {
-					container.CPU = float64(cd.Cpu) / 1024.0
-				}
-				container.MemoryHardMB = getInt32Value(cd.Memory)
-				container.MemorySoftMB = getInt32Value(cd.MemoryReservation)
-			}
-			for _, binding := range ctn.NetworkBindings {
-				container.Ports = append(container.Ports, ECSPortMapping{
-					ContainerPort: getInt32Value(binding.ContainerPort),
-					HostPort:      getInt32Value(binding.HostPort),
-					Protocol:      string(binding.Protocol),
-				})
-			}
-			for _, iface := range ctn.NetworkInterfaces {
-				if iface.PrivateIpv4Address != nil {
-					container.PrivateIPs = append(container.PrivateIPs, *iface.PrivateIpv4Address)
-				}
-			}
-			task.Containers = append(task.Containers, container)
+			task.Containers = append(task.Containers, mapECSContainer(ctn, &cd))
 		}
 	} else {
 		for _, ctn := range t.Containers {
-			container := ECSContainer{
-				Name:         getString(ctn.Name),
-				LastStatus:   getString(ctn.LastStatus),
-				HealthStatus: string(ctn.HealthStatus),
-				ImageURI:     getString(ctn.Image),
-				ImageDigest:  getString(ctn.ImageDigest),
-				RuntimeID:    getString(ctn.RuntimeId),
-			}
-			for _, binding := range ctn.NetworkBindings {
-				container.Ports = append(container.Ports, ECSPortMapping{
-					ContainerPort: getInt32Value(binding.ContainerPort),
-					HostPort:      getInt32Value(binding.HostPort),
-					Protocol:      string(binding.Protocol),
-				})
-			}
-			for _, iface := range ctn.NetworkInterfaces {
-				if iface.PrivateIpv4Address != nil {
-					container.PrivateIPs = append(container.PrivateIPs, *iface.PrivateIpv4Address)
-				}
-			}
-			task.Containers = append(task.Containers, container)
+			task.Containers = append(task.Containers, mapECSContainer(ctn, nil))
 		}
 	}
 
@@ -571,6 +681,82 @@ func (c *Client) buildECSTask(t ecsTypes.Task, clusterName, serviceName string, 
 	}
 
 	return task
+}
+
+// mapECSContainer reads a running container, taking the fields DescribeTasks answers with and, where the task definition could be read, the reservations and the essential flag it alone carries.
+// A nil definition is the ordinary case for a task whose definition failed to load, and it leaves the container non-essential rather than guessing.
+func mapECSContainer(ctn ecsTypes.Container, cd *ecsTypes.ContainerDefinition) ECSContainer {
+	container := ECSContainer{
+		Name:         getString(ctn.Name),
+		LastStatus:   getString(ctn.LastStatus),
+		HealthStatus: string(ctn.HealthStatus),
+		ImageURI:     getString(ctn.Image),
+		ImageDigest:  getString(ctn.ImageDigest),
+		RuntimeID:    getString(ctn.RuntimeId),
+	}
+	if cd != nil {
+		if cd.Cpu > 0 {
+			container.CPU = float64(cd.Cpu) / 1024.0
+		}
+		container.MemoryHardMB = getInt32Value(cd.Memory)
+		container.MemorySoftMB = getInt32Value(cd.MemoryReservation)
+		container.Essential = cd.Essential != nil && *cd.Essential
+	}
+	for _, binding := range ctn.NetworkBindings {
+		container.Ports = append(container.Ports, ECSPortMapping{
+			ContainerPort: getInt32Value(binding.ContainerPort),
+			HostPort:      getInt32Value(binding.HostPort),
+			Protocol:      string(binding.Protocol),
+		})
+	}
+	for _, iface := range ctn.NetworkInterfaces {
+		if iface.PrivateIpv4Address != nil {
+			container.PrivateIPs = append(container.PrivateIPs, *iface.PrivateIpv4Address)
+		}
+	}
+	return container
+}
+
+// awsVpcConfig is nil-safe at both levels because ECS omits the wrapper and the configuration independently: a non-awsvpc service carries no NetworkConfiguration at all, and the wrapper exists to leave room for a second networking shape that does not exist yet.
+func awsVpcConfig(nc *ecsTypes.NetworkConfiguration) *ECSAwsVpcConfig {
+	if nc == nil || nc.AwsvpcConfiguration == nil {
+		return nil
+	}
+
+	return &ECSAwsVpcConfig{
+		Subnets:        nc.AwsvpcConfiguration.Subnets,
+		SecurityGroups: nc.AwsvpcConfiguration.SecurityGroups,
+		AssignPublicIP: string(nc.AwsvpcConfiguration.AssignPublicIp),
+	}
+}
+
+func mapECSDeployment(dep ecsTypes.Deployment) ECSDeployment {
+	return ECSDeployment{
+		Status:             getString(dep.Status),
+		TaskDefinition:     getString(dep.TaskDefinition),
+		Desired:            dep.DesiredCount,
+		Running:            dep.RunningCount,
+		Pending:            dep.PendingCount,
+		Created:            dep.CreatedAt,
+		RolloutState:       string(dep.RolloutState),
+		RolloutStateReason: getString(dep.RolloutStateReason),
+		FailedTasks:        dep.FailedTasks,
+	}
+}
+
+func mapTaskDefinitionContainer(cd ecsTypes.ContainerDefinition) ECSTaskDefinitionContainer {
+	env := make(map[string]string, len(cd.Environment))
+	for _, kv := range cd.Environment {
+		env[getString(kv.Name)] = getString(kv.Value)
+	}
+	return ECSTaskDefinitionContainer{
+		Name:        getString(cd.Name),
+		Image:       getString(cd.Image),
+		CPU:         cd.Cpu,
+		Memory:      getInt32Value(cd.Memory),
+		Essential:   cd.Essential != nil && *cd.Essential,
+		Environment: env,
+	}
 }
 
 // ExecECSTask returns an unstarted command so the caller can attach stdio while the TUI is suspended.
@@ -816,9 +1002,39 @@ func (c *Client) ListTaskDefinitions(ctx context.Context, family string) ([]ECST
 	return revisions, nil
 }
 
+// taskDefIsImmutable reports whether a reference pins one revision.
+// A family name or a revisionless ARN resolves to whatever is latest at the time of the call, so caching one would keep serving a revision that has since been superseded.
+func taskDefIsImmutable(taskDefArn string) bool {
+	return extractTaskDefRevision(taskDefArn) > 0
+}
+
+// The cached detail is shared by pointer and describes an immutable revision, so callers must read it without editing it.
+func (c *Client) cachedTaskDef(taskDefArn string) (*ECSTaskDefinitionDetail, bool) {
+	c.taskDefsMu.Lock()
+	defer c.taskDefsMu.Unlock()
+	detail, ok := c.taskDefs[taskDefArn]
+	return detail, ok
+}
+
+func (c *Client) cacheTaskDef(taskDefArn string, detail *ECSTaskDefinitionDetail) {
+	if !taskDefIsImmutable(taskDefArn) {
+		return
+	}
+	c.taskDefsMu.Lock()
+	defer c.taskDefsMu.Unlock()
+	if c.taskDefs == nil {
+		c.taskDefs = map[string]*ECSTaskDefinitionDetail{}
+	}
+	c.taskDefs[taskDefArn] = detail
+}
+
+// DescribeTaskDefinitionDetail memoizes pinned revisions because a revision never changes, and the overview refresh tier would otherwise re-ask for the same one every couple of seconds.
 func (c *Client) DescribeTaskDefinitionDetail(ctx context.Context, taskDefArn string) (*ECSTaskDefinitionDetail, error) {
 	if c.ECS == nil {
 		return nil, fmt.Errorf("ECS client not initialized")
+	}
+	if detail, ok := c.cachedTaskDef(taskDefArn); ok {
+		return detail, nil
 	}
 	timeoutCtx, cancel := withDefaultTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -836,19 +1052,148 @@ func (c *Client) DescribeTaskDefinitionDetail(ctx context.Context, taskDefArn st
 		Memory:   getString(td.Memory),
 	}
 	for _, cd := range td.ContainerDefinitions {
-		env := make(map[string]string, len(cd.Environment))
-		for _, kv := range cd.Environment {
-			env[getString(kv.Name)] = getString(kv.Value)
-		}
-		detail.Containers = append(detail.Containers, ECSTaskDefinitionContainer{
-			Name:        getString(cd.Name),
-			Image:       getString(cd.Image),
-			CPU:         cd.Cpu,
-			Memory:      getInt32Value(cd.Memory),
-			Environment: env,
-		})
+		detail.Containers = append(detail.Containers, mapTaskDefinitionContainer(cd))
 	}
+	c.cacheTaskDef(taskDefArn, detail)
 	return detail, nil
+}
+
+// ECSServiceImage is the image a service identifies with: the one it is running, or the one it intends to run when nothing is.
+type ECSServiceImage struct {
+	// Image is the primary container's reference with the registry host dropped, or empty when nothing could be resolved.
+	Image string
+	// Sidecars counts the other containers alongside the primary one, whose images are on the task drill level rather than here.
+	Sidecars int
+	// Desired marks an image read from a task definition rather than from a running container, so it is never mistaken for what is actually live.
+	Desired bool
+}
+
+// ShortImageRef drops the registry host so the repository and tag, the part that says what is running, survive a narrow column.
+// The host is told from the first path segment by Docker's own rule: a segment carrying a dot or a port, or the literal localhost, is a registry and anything else is part of the repository name.
+func ShortImageRef(image string) string {
+	slash := strings.Index(image, "/")
+	if slash == -1 {
+		return image
+	}
+	if host := image[:slash]; strings.ContainsAny(host, ".:") || host == "localhost" {
+		return image[slash+1:]
+	}
+	return image
+}
+
+// primaryECSContainer picks the container whose image identifies the task.
+// A task definition marks its application container essential and its sidecars not, so essential is the signal; the first container is the fallback for a task whose definition could not be read, which leaves every container non-essential.
+func primaryECSContainer(containers []ECSContainer) (ECSContainer, bool) {
+	if len(containers) == 0 {
+		return ECSContainer{}, false
+	}
+	for _, ctn := range containers {
+		if ctn.Essential {
+			return ctn, true
+		}
+	}
+	return containers[0], true
+}
+
+// newestECSTask picks which running task speaks for the service.
+// Mid-rollout a service runs two images at once, and the newest task is the one rolling out; taking it is also deterministic, where trusting the order DescribeTasks answered in is not.
+func newestECSTask(tasks []ECSTask) (ECSTask, bool) {
+	var newest ECSTask
+	var found bool
+	for _, t := range tasks {
+		if t.Status != "RUNNING" {
+			continue
+		}
+		if !found || ecsTaskStart(t).After(ecsTaskStart(newest)) {
+			newest, found = t, true
+		}
+	}
+	return newest, found
+}
+
+// ecsTaskStart prefers when the task actually started over when it was created, because a task stuck in provisioning has a creation time and no runtime.
+func ecsTaskStart(t ECSTask) time.Time {
+	if t.StartedAt != nil {
+		return *t.StartedAt
+	}
+	if t.CreatedAt != nil {
+		return *t.CreatedAt
+	}
+	return time.Time{}
+}
+
+// ECSTaskImage names the image ONE task identifies with, for a per-task row; runningECSServiceImage answers the same question for a whole service by choosing a task first.
+func ECSTaskImage(t ECSTask) (ECSServiceImage, bool) {
+	primary, ok := primaryECSContainer(t.Containers)
+	if !ok {
+		return ECSServiceImage{}, false
+	}
+
+	return ECSServiceImage{Image: ShortImageRef(primary.ImageURI), Sidecars: len(t.Containers) - 1}, true
+}
+
+// runningECSServiceImage resolves what a service is running from the tasks DescribeTasks already returned, which carry the image per container and need no task definition call.
+func runningECSServiceImage(tasks []ECSTask) (ECSServiceImage, bool) {
+	task, ok := newestECSTask(tasks)
+	if !ok {
+		return ECSServiceImage{}, false
+	}
+
+	return ECSTaskImage(task)
+}
+
+// desiredECSServiceImage reads the intended image off a task definition, for a service with nothing running to read it from.
+func desiredECSServiceImage(detail *ECSTaskDefinitionDetail) (ECSServiceImage, bool) {
+	if detail == nil || len(detail.Containers) == 0 {
+		return ECSServiceImage{}, false
+	}
+	primary := detail.Containers[0]
+	for _, ctn := range detail.Containers {
+		if ctn.Essential {
+			primary = ctn
+			break
+		}
+	}
+	return ECSServiceImage{Image: ShortImageRef(primary.Image), Sidecars: len(detail.Containers) - 1, Desired: true}, true
+}
+
+// ServiceTaskDefinition prefers the PRIMARY deployment's task definition over the service's own, because during a rollout the service field has already moved to the revision the deployment is still bringing up.
+func ServiceTaskDefinition(s *ECSService) string {
+	for _, dep := range s.Deployments {
+		if dep.Status == ECSDeploymentPrimary && dep.TaskDefinition != "" {
+			return dep.TaskDefinition
+		}
+	}
+	return s.TaskDefinition
+}
+
+// ResolveECSServiceImage answers what a service is running, falling back to what it intends to run when no task is up.
+// The running answer costs nothing beyond the task list the panel already loads: DescribeTasks carries the image per container, so no task definition is described for it.
+func (c *Client) ResolveECSServiceImage(ctx context.Context, s *ECSService) (ECSServiceImage, error) {
+	if s == nil {
+		return ECSServiceImage{}, fmt.Errorf("service required")
+	}
+	tasks, err := c.ListECSTasks(ctx, s.Cluster, s.Name)
+	if err != nil {
+		return ECSServiceImage{}, err
+	}
+	if image, ok := runningECSServiceImage(tasks); ok {
+		return image, nil
+	}
+
+	taskDefArn := ServiceTaskDefinition(s)
+	if taskDefArn == "" {
+		return ECSServiceImage{}, fmt.Errorf("service %s has no running task and no task definition to fall back on", s.Name)
+	}
+	detail, err := c.DescribeTaskDefinitionDetail(ctx, taskDefArn)
+	if err != nil {
+		return ECSServiceImage{}, err
+	}
+	image, ok := desiredECSServiceImage(detail)
+	if !ok {
+		return ECSServiceImage{}, fmt.Errorf("task definition %s defines no containers", taskDefArn)
+	}
+	return image, nil
 }
 
 func TaskDefinitionFamily(taskDefArn string) string {

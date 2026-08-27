@@ -49,6 +49,10 @@ var stateAliases = map[string]statusKind{
 	"active":            statusRunning,
 	"available":         statusRunning,
 	"healthy":           statusRunning,
+	"insync":            statusRunning, // a Secrets Manager replica in step with its primary
+	"inprogress":        statusPending, // a Secrets Manager replica still being created
+	"completed":         statusRunning, // an ECS deployment that finished rolling out
+	"in_progress":       statusPending, // an ECS deployment still rolling out
 	"ok":                statusRunning, // CloudWatch alarm state
 	"stopped":           statusStopped,
 	"inactive":          statusStopped,
@@ -74,13 +78,18 @@ var stateAliases = map[string]statusKind{
 	"alarm":             statusFailed, // CloudWatch alarm state
 }
 
-// StatusCell preserves raw text in long style and falls back to "?" for unknown compact states.
-func StatusCell(rawState string, style StatusStyle) string {
-	kind := statusUnknown
-	if k, ok := stateAliases[strings.ToLower(strings.TrimSpace(rawState))]; ok {
-		kind = k
+// statusKindOf resolves a service's raw state word through the shared aliases, so a state that renders green in one panel cannot render red in another.
+func statusKindOf(rawState string) statusKind {
+	if kind, ok := stateAliases[strings.ToLower(strings.TrimSpace(rawState))]; ok {
+		return kind
 	}
-	row := statusStyleTable[kind]
+	return statusUnknown
+}
+
+// StatusCellFit preserves raw text in long style and falls back to "?" for unknown compact states.
+// The text stays plain so a table can measure and cut it before the colour goes on.
+func StatusCellFit(rawState string, style StatusStyle) utils.Cell {
+	row := statusStyleTable[statusKindOf(rawState)]
 
 	var text string
 	switch style {
@@ -91,13 +100,20 @@ func StatusCell(rawState string, style StatusStyle) string {
 	default:
 		text = rawState
 	}
-	return utils.ColoredString(text, row.color)
+	return utils.Cell{Text: text, Color: row.color}
 }
 
-// GetProfileDisplayStrings adds identity only to the active profile.
-func GetProfileDisplayStrings(profile, currentProfile, region, accountID string) []string {
+// StatusCell is StatusCellFit already coloured, for the panels still rendering rows as strings.
+func StatusCell(rawState string, style StatusStyle) string {
+	cell := StatusCellFit(rawState, style)
+
+	return utils.ColoredString(cell.Text, cell.Color)
+}
+
+// GetProfileDisplayCells adds identity only to the active profile.
+func GetProfileDisplayCells(profile, currentProfile, region, accountID string) []utils.Cell {
 	if profile != currentProfile {
-		return []string{profile}
+		return []utils.Cell{{Text: profile}}
 	}
 
 	display := profile + " ▸ no credentials"
@@ -105,5 +121,5 @@ func GetProfileDisplayStrings(profile, currentProfile, region, accountID string)
 		display = profile + " ▸ " + region + " ▸ " + accountID
 	}
 
-	return []string{utils.ColoredString(display, color.Bold)}
+	return []utils.Cell{{Text: display, Color: color.Bold}}
 }

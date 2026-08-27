@@ -8,7 +8,9 @@ import (
 
 	"github.com/noelruault/lazyaws/apps/aws"
 	"github.com/noelruault/lazyaws/ui/panels"
+	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/tasks"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
 
 // eksLogTypeOrder keeps disabled control-plane log types visible.
@@ -66,6 +68,7 @@ func (gui *Gui) getEKSPanel() *panels.SideListPanel[*aws.EKSCluster] {
 		ContextState: &panels.ContextState[*aws.EKSCluster]{
 			GetMainTabs: func() []panels.MainTab[*aws.EKSCluster] {
 				return []panels.MainTab[*aws.EKSCluster]{
+					staticOverviewTab(gui, gui.eksClusterOverview),
 					{Key: "config", Title: "Config", Render: gui.renderEKSConfig},
 					{Key: "nodegroups", Title: "Node groups", Render: gui.renderEKSNodeGroups},
 					{Key: "addons", Title: "Addons", Render: gui.renderEKSAddons},
@@ -81,19 +84,17 @@ func (gui *Gui) getEKSPanel() *panels.SideListPanel[*aws.EKSCluster] {
 			List: panels.NewFilteredList[*aws.EKSCluster](),
 			View: gui.Views.EKS,
 		},
-		NoItemsMessage: "no EKS clusters found",
+		NoItemsMessage: "no EKS clusters",
 		Gui:            gui.intoInterface(),
 
 		Sort: func(a, b *aws.EKSCluster) bool {
 			return a.Name < b.Name
 		},
-		GetTableCells: func(c *aws.EKSCluster) []string {
-			status := c.Status
-			if status == "" {
-				status = "-"
-			}
-			return []string{c.Name, status, fmt.Sprintf("%d", c.NodeCount), c.CreatedAt}
+		GetTableCellsFit: func(c *aws.EKSCluster) []utils.Cell {
+			return presentation.GetEKSClusterDisplayCells(c)
 		},
+		Weights:   func(*aws.EKSCluster) []int { return presentation.EKSClusterWeights() },
+		CopyValue: func(c *aws.EKSCluster) string { return arnOrName(c.Arn, c.Name) },
 	}
 }
 
@@ -120,9 +121,25 @@ func (gui *Gui) loadEKSList() error {
 		for i := range clusters {
 			rows[i] = &clusters[i]
 		}
-		gui.Panels.EKS.SetItems(rows)
+		gui.Panels.EKS.SetItemsKeepSelection(rows, eksSelectionKey)
 		return gui.Panels.EKS.RerenderList()
 	})
+}
+
+// eksSelectionKey identifies a cluster across reloads; cluster names are unique per region.
+func eksSelectionKey(cluster *aws.EKSCluster) string { return cluster.Name }
+
+// eksClusterOverview consolidates the Config, Node groups and Addons tabs, reading the cluster's own fields off the list row.
+// The tab renders once per selection rather than on a ticker: ListNodeGroups and ListAddons each describe every item they list, so the pane's cost grows with the cluster, and a control plane's version, networking and addon set are not per-tick facts.
+func (gui *Gui) eksClusterOverview(ctx context.Context, cluster *aws.EKSCluster, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("cluster")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	return presentation.FormatEKSClusterOverview(cluster, gui.Client.GetEKSClusterOverview(fetchCtx, cluster.Name), width)
 }
 
 func (gui *Gui) renderEKSConfig(cluster *aws.EKSCluster) tasks.TaskFunc {

@@ -223,6 +223,22 @@ func (gui *Gui) renderOptionsMap(optionsMap map[string]string) error {
 	return gui.renderString(gui.g, "options", gui.optionsMapToString(optionsMap))
 }
 
+// option is one entry of an ORDERED options line, which the popups' alphabetical map cannot express.
+type option struct {
+	key   string
+	label string
+}
+
+// optionsToString reads the line in the order given, so the first thing cut when the terminal is narrow is the last thing listed.
+func optionsToString(options []option) string {
+	parts := make([]string, len(options))
+	for i, opt := range options {
+		parts[i] = opt.key + " " + opt.label
+	}
+
+	return strings.Join(parts, ", ")
+}
+
 func (gui *Gui) GetMainView() *gocui.View {
 	return gui.Views.Main
 }
@@ -372,9 +388,7 @@ func (gui *Gui) CurrentView() *gocui.View {
 	return gui.g.CurrentView()
 }
 
-func (gui *Gui) currentSidePanel() (panels.ISideListPanel, bool) {
-	viewName := gui.currentViewName()
-
+func (gui *Gui) sidePanelNamed(viewName string) (panels.ISideListPanel, bool) {
 	for _, sidePanel := range gui.allSidePanels() {
 		if sidePanel.GetView().Name() == viewName {
 			return sidePanel, true
@@ -384,17 +398,13 @@ func (gui *Gui) currentSidePanel() (panels.ISideListPanel, bool) {
 	return nil, false
 }
 
+func (gui *Gui) currentSidePanel() (panels.ISideListPanel, bool) {
+	return gui.sidePanelNamed(gui.currentViewName())
+}
+
 // sidePanelForMain resolves through focus history so detail tabs survive main focus.
 func (gui *Gui) sidePanelForMain() (panels.ISideListPanel, bool) {
-	viewName := gui.currentSideViewName()
-
-	for _, sidePanel := range gui.allSidePanels() {
-		if sidePanel.GetView().Name() == viewName {
-			return sidePanel, true
-		}
-	}
-
-	return nil, false
+	return gui.sidePanelNamed(gui.currentSideViewName())
 }
 
 func (gui *Gui) currentListPanel() (panels.ISideListPanel, bool) {

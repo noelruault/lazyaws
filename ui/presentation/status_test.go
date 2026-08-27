@@ -3,6 +3,8 @@ package presentation
 import (
 	"testing"
 
+	"github.com/fatih/color"
+
 	"github.com/noelruault/lazyaws/ui/utils"
 )
 
@@ -37,23 +39,23 @@ func TestStatusCell(t *testing.T) {
 	}
 }
 
-func TestGetProfileDisplayStrings(t *testing.T) {
+func TestGetProfileDisplayCells(t *testing.T) {
 	cases := []struct {
 		name                          string
 		profile, current, region, acc string
-		want                          string
+		want                          utils.Cell
 	}{
-		{"not current", "staging", "prod", "us-east-1", "123", "staging"},
-		{"current, no credentials yet", "prod", "prod", "", "", "prod ▸ no credentials"},
-		{"current, connected", "prod", "prod", "us-east-1", "123456789012", "prod ▸ us-east-1 ▸ 123456789012"},
+		{"not current", "staging", "prod", "us-east-1", "123", utils.Cell{Text: "staging"}},
+		{"current, no credentials yet", "prod", "prod", "", "", utils.Cell{Text: "prod \u25b8 no credentials", Color: color.Bold}},
+		{"current, connected", "prod", "prod", "us-east-1", "123456789012", utils.Cell{Text: "prod \u25b8 us-east-1 \u25b8 123456789012", Color: color.Bold}},
 	}
 	for _, c := range cases {
-		cells := GetProfileDisplayStrings(c.profile, c.current, c.region, c.acc)
+		cells := GetProfileDisplayCells(c.profile, c.current, c.region, c.acc)
 		if len(cells) != 1 {
 			t.Fatalf("%s: got %d cells, want 1", c.name, len(cells))
 		}
-		if got := utils.Decolorise(cells[0]); got != c.want {
-			t.Errorf("%s: GetProfileDisplayStrings() = %q, want %q", c.name, got, c.want)
+		if cells[0] != c.want {
+			t.Errorf("%s: GetProfileDisplayCells() = %+v, want %+v", c.name, cells[0], c.want)
 		}
 	}
 }

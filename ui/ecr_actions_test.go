@@ -1,11 +1,33 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/noelruault/lazyaws/apps/aws"
 )
+
+// The preview refuses on an empty policy, which is also what a failed read leaves behind: told a repository has no lifecycle policy, an operator writes one over the policy that is already there.
+// The guard runs before any client call, so the nil Gui is never reached.
+func TestPreviewLifecyclePolicyTellsAFailedReadFromAnAbsentPolicy(t *testing.T) {
+	readErr := errors.New("ThrottlingException")
+	gui := &Gui{}
+
+	err := gui.ecrPreviewLifecyclePolicy(&aws.ECRRepository{Name: "svc-api", LifecyclePolicyErr: readErr})(context.Background(), "")
+	if !errors.Is(err, readErr) {
+		t.Errorf("preview on an unreadable policy = %v, want it to carry %v", err, readErr)
+	}
+	if err != nil && strings.Contains(err.Error(), "has no lifecycle policy") {
+		t.Errorf("preview reports an unreadable policy as an absent one: %v", err)
+	}
+
+	absent := gui.ecrPreviewLifecyclePolicy(&aws.ECRRepository{Name: "svc-api"})(context.Background(), "")
+	if absent == nil || !strings.Contains(absent.Error(), "has no lifecycle policy to preview") {
+		t.Errorf("preview on a repository with no policy = %v, want it to say so", absent)
+	}
+}
 
 func TestFormatECRLifecyclePolicyPreviewNoExpiring(t *testing.T) {
 	preview := &aws.ECRLifecyclePolicyPreview{Status: "COMPLETE", ExpiringImageCount: 0}
