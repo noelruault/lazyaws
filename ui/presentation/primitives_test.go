@@ -22,20 +22,21 @@ func forceColor(t *testing.T) {
 func TestBadge(t *testing.T) {
 	forceColor(t)
 
+	// The dot is fixed and the colour still comes from the state kind: a badge always carries the state word, so the per-kind icon added nothing the word does not say.
 	tests := []struct {
 		name   string
 		status string
 		want   string
 	}{
-		{"running", "running", utils.ColoredString("▶ running", color.FgGreen)},
-		{"alias resolves to the same icon and colour", "ACTIVE", utils.ColoredString("▶ ACTIVE", color.FgGreen)},
-		{"stopped", "stopped", utils.ColoredString("⨯ stopped", color.FgRed)},
-		{"pending", "creating", utils.ColoredString("⟳ creating", color.FgYellow)},
-		{"failed", "unhealthy", utils.ColoredString("! unhealthy", color.FgRed)},
-		// An unknown state keeps its raw word: the icon says the panel could not classify it, the word still says what AWS returned.
-		{"unknown state keeps its word", "some-new-state", "? some-new-state"},
-		{"no state at all is icon only", "", "?"},
-		{"blank state is icon only", "   ", "?"},
+		{"running", "running", utils.ColoredString("● running", color.FgGreen)},
+		{"alias resolves to the same colour", "ACTIVE", utils.ColoredString("● ACTIVE", color.FgGreen)},
+		{"stopped", "stopped", utils.ColoredString("● stopped", color.FgRed)},
+		{"pending", "creating", utils.ColoredString("● creating", color.FgYellow)},
+		{"failed", "unhealthy", utils.ColoredString("● unhealthy", color.FgRed)},
+		// An unknown state keeps its raw word, uncoloured, which is what says the panel could not classify it.
+		{"unknown state keeps its word", "some-new-state", "● some-new-state"},
+		{"no state at all is dot only", "", "●"},
+		{"blank state is dot only", "   ", "●"},
 	}
 
 	for _, tc := range tests {
@@ -51,7 +52,7 @@ func TestBadge(t *testing.T) {
 func TestBadgeReadsWithoutColor(t *testing.T) {
 	forceColor(t)
 
-	if got, want := utils.Decolorise(Badge("running")), "▶ running"; got != want {
+	if got, want := utils.Decolorise(Badge("running")), "● running"; got != want {
 		t.Errorf("decolorised Badge = %q, want %q", got, want)
 	}
 }
@@ -124,8 +125,16 @@ func TestRelTime(t *testing.T) {
 func TestSectionTitle(t *testing.T) {
 	forceColor(t)
 
-	if got, want := SectionTitle("Configuration"), utils.ColoredString("Configuration", color.FgCyan); got != want {
+	if got, want := SectionTitle("Configuration"), utils.ColoredString("▤ Configuration", color.FgCyan); got != want {
 		t.Errorf("SectionTitle = %q, want %q", got, want)
+	}
+	// A count suffix must not hide the icon: the glyph keys on the bare name.
+	if got, want := SectionTitle("Tags (2)"), utils.ColoredString("◇ Tags (2)", color.FgCyan); got != want {
+		t.Errorf("SectionTitle with a count = %q, want %q", got, want)
+	}
+	// A section the mockups never drew renders bare rather than with an invented glyph.
+	if got, want := SectionTitle("Bespoke"), utils.ColoredString("Bespoke", color.FgCyan); got != want {
+		t.Errorf("SectionTitle without an icon = %q, want %q", got, want)
 	}
 }
 
@@ -140,7 +149,7 @@ func TestResourceHeader(t *testing.T) {
 	if got != want {
 		t.Errorf("ResourceHeader =\n%q\nwant\n%q", got, want)
 	}
-	if plain, wantPlain := utils.Decolorise(got), "EC2 instance\nweb-01  ▶ running  i-0abc\nt3.micro · eu-west-1a"; plain != wantPlain {
+	if plain, wantPlain := utils.Decolorise(got), "EC2 instance\nweb-01  ● running  i-0abc\nt3.micro · eu-west-1a"; plain != wantPlain {
 		t.Errorf("decolorised ResourceHeader =\n%q\nwant\n%q", plain, wantPlain)
 	}
 }
@@ -154,10 +163,11 @@ func TestResourceHeaderStaysThreeLines(t *testing.T) {
 		got   string
 		plain string
 	}{
-		{"everything", ResourceHeader("EC2 instance", "web-01", Badge("running"), "i-0abc", "t3.micro"), "EC2 instance\nweb-01  ▶ running  i-0abc\nt3.micro"},
+		{"everything", ResourceHeader("EC2 instance", "web-01", Badge("running"), "i-0abc", "t3.micro"), "EC2 instance\nweb-01  ● running  i-0abc\nt3.micro"},
 		{"no meta", ResourceHeader("S3 bucket", "my-bucket", "", ""), "S3 bucket\nmy-bucket\n"},
 		{"no badge", ResourceHeader("S3 bucket", "my-bucket", "", "arn:aws:s3:::my-bucket", "eu-west-1"), "S3 bucket\nmy-bucket  arn:aws:s3:::my-bucket\neu-west-1"},
-		{"empty meta entries are dropped, not joined", ResourceHeader("VPC", "vpc-1", "", "", "", "10.0.0.0/16", ""), "VPC\nvpc-1\n10.0.0.0/16"},
+		// A kind the mockups drew carries its glyph.
+		{"empty meta entries are dropped, not joined", ResourceHeader("VPC", "vpc-1", "", "", "", "10.0.0.0/16", ""), "⇄ VPC\nvpc-1\n10.0.0.0/16"},
 	}
 
 	for _, tc := range tests {

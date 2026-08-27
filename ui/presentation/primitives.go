@@ -12,18 +12,19 @@ import (
 	"github.com/noelruault/lazyaws/ui/utils"
 )
 
-// Badge renders the state icon next to the state word, so a state is never carried by colour alone.
+// Badge renders the state dot next to the state word, so a state is never carried by colour alone.
 func Badge(status string) string {
 	return BadgeCell(status).Rendered()
 }
 
 // BadgeCell is Badge for a row laid out with RenderTableFit, where the text must stay plain until the table has measured and cut it.
+// The dot is fixed rather than the per-kind icon from statusStyleTable: a badge always carries the state word, so the icon's job of telling states apart is already done, and the mockups spell every badge "● word".
 func BadgeCell(status string) utils.Cell {
 	row := statusStyleTable[statusKindOf(status)]
 	if strings.TrimSpace(status) == "" {
-		return utils.Cell{Text: row.icon, Color: row.color}
+		return utils.Cell{Text: "●", Color: row.color}
 	}
-	return utils.Cell{Text: row.icon + " " + status, Color: row.color}
+	return utils.Cell{Text: "● " + status, Color: row.color}
 }
 
 // Gauge renders a textual meter, "▕████░░░░░░▏ 40.0%". width sizes the bar body only, excluding the brackets and the number.
@@ -73,16 +74,76 @@ func compactDuration(d time.Duration) string {
 	}
 }
 
-// SectionTitle renders an overview section heading.
+// sectionIcons carries the mockups' glyph per section, keyed on the title without any trailing count.
+// A section absent here renders without an icon rather than with an invented one.
+var sectionIcons = map[string]string{
+	"Configuration":         "▤",
+	"Details":               "▤",
+	"Network":               "⇄",
+	"Networking":            "⇄",
+	"Networking & Security": "⌾",
+	"Replication":           "⇄",
+	"Gateways":              "⇄",
+	"DNS":                   "⇄",
+	"Metrics":               "◒",
+	"Status":                "♡",
+	"Health":                "♡",
+	"Storage":               "▣",
+	"Data management":       "▣",
+	"Images":                "▣",
+	"Security":              "⌾",
+	"Access":                "⌾",
+	"Resource policy":       "⌾",
+	"Policies":              "⌾",
+	"Console":               "⌘",
+	"Tags":                  "◇",
+	"Endpoints":             "◇",
+	"Addons":                "◇",
+	"Services":              "▦",
+	"Subnets":               "▦",
+	"Node groups":           "▦",
+	"Capacity":              "⬡",
+	// Not the mockups' ☷: go-runewidth counts it 2 cells while xterm draws 1, and padding built on the former misaligns every title under it.
+	"Tasks":                 "≡",
+	"Versions":              "≡",
+	"Recent events":         "≡",
+	"Control plane logging": "≡",
+}
+
+// SectionTitle renders an overview section heading, prefixed with the mockups' icon when the section has one.
 func SectionTitle(s string) string {
+	base := s
+	// Titles can carry a count, "Tags (2)"; the icon keys on the bare name.
+	if i := strings.Index(base, " ("); i > 0 {
+		base = base[:i]
+	}
+	if icon, ok := sectionIcons[base]; ok {
+		return utils.ColoredString(icon+" "+s, color.FgCyan)
+	}
 	return utils.ColoredString(s, color.FgCyan)
 }
 
 // ResourceHeader renders the three-line header an inspector overview opens with: the resource kind, then the name with its badge and identifier, then a meta line.
 // The third line is emitted even when there is no meta, so the sections below the header do not shift up on resources that happen to carry less detail.
+// resourceKindIcons carries the mockups' glyph per inspector kind; kinds the mockups do not draw reuse the closest section glyph so no header goes bare.
+var resourceKindIcons = map[string]string{
+	"EC2 Instance": "◇",
+	"ECS Cluster":  "⬡",
+	"Secret":       "▣",
+	"Service":      "▦",
+	"Bucket":       "▣",
+	"Repository":   "⬡",
+	"VPC":          "⇄",
+	"EKS cluster":  "⬡",
+}
+
 func ResourceHeader(kind, name, badge, id string, meta ...string) string {
 	var header strings.Builder
-	header.WriteString(utils.ColoredString(kind, color.FgCyan))
+	if icon, ok := resourceKindIcons[kind]; ok {
+		header.WriteString(utils.ColoredString(icon+" "+kind, color.FgCyan))
+	} else {
+		header.WriteString(utils.ColoredString(kind, color.FgCyan))
+	}
 	header.WriteString("\n")
 	header.WriteString(utils.ColoredString(name, color.Bold))
 	if badge != "" {
@@ -120,10 +181,19 @@ func kvBlock(rows []kv) string {
 
 	lines := make([]string, len(rows))
 	for i, row := range rows {
-		lines[i] = utils.WithPadding(utils.ColoredString(row.label+":", color.FgYellow), label) + " " + row.value
+		// Faint, not amber: the redesign spends amber on warnings and mutable state, and a label is neither.
+		lines[i] = utils.WithPadding(utils.ColoredString(row.label+":", color.Faint), label) + " " + row.value
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// TagLine renders one tag row with the value in the palette's metadata colour, so every pane's tag list reads the same.
+func TagLine(key, value string) string {
+	if value == "" {
+		value = "none"
+	}
+	return key + ": " + utils.ColoredString(value, color.FgMagenta)
 }
 
 // pluralize renders a count with its noun, "1 rule" / "2 rules".

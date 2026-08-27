@@ -290,10 +290,10 @@ func TestEKSOverviewRendersItsTableRowsInFull(t *testing.T) {
 	got := plainEKS(overviewEKSCluster(), fullEKSOverview(), stackedWidth)
 
 	for _, want := range []string{
-		"general ▶ ACTIVE 4 (2-8) v1.29",
-		"workers-spot ▶ ACTIVE 2 (1-4) v1.29",
-		"coredns ▶ ACTIVE v1.11.1-eksbuild.4 healthy",
-		"vpc-cni ▶ ACTIVE v1.18.1-eksbuild.1 healthy",
+		"general ● ACTIVE 4 (2-8) v1.29",
+		"workers-spot ● ACTIVE 2 (1-4) v1.29",
+		"coredns ● ACTIVE v1.11.1-eksbuild.4 healthy",
+		"vpc-cni ● ACTIVE v1.18.1-eksbuild.1 healthy",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing the row %q\n%s", want, got)

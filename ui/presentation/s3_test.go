@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -16,7 +17,8 @@ func TestGetBucketDisplayCells(t *testing.T) {
 	wantCells(t, GetBucketDisplayCells(b), []utils.Cell{
 		{Text: "my-bucket"},
 		{Text: "eu-west-1"},
-		{Text: "2026-07-10 00:00:00"},
+		// The row compresses the stamp to a glance; the Overview keeps the full timestamp.
+		{Text: "10 Jul 00:00", Color: color.Faint},
 	})
 }
 
@@ -37,7 +39,7 @@ func TestBucketRowFitsALongNameIntoANarrowPanel(t *testing.T) {
 	if !strings.Contains(rendered, "…") {
 		t.Errorf("row = %q, want the name cut with an ellipsis", rendered)
 	}
-	for _, want := range []string{"eu-west-1", "2026-07-10 00:00:00"} {
+	for _, want := range []string{"eu-west-1", "10 Jul 00:00"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("row = %q, want it to still show %q in full", rendered, want)
 		}

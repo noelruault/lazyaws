@@ -201,7 +201,7 @@ func eksTagsBlock(o *aws.EKSOverview) string {
 	lines := make([]string, 0, len(keys)+1)
 	lines = append(lines, title)
 	for _, key := range keys {
-		lines = append(lines, key+": "+orNone(o.Details.Tags[key]))
+		lines = append(lines, TagLine(key, o.Details.Tags[key]))
 	}
 
 	return strings.Join(lines, "\n")

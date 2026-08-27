@@ -22,8 +22,19 @@ func GetBucketDisplayCells(b *aws.Bucket) []utils.Cell {
 	return []utils.Cell{
 		{Text: b.Name},
 		{Text: b.Region},
-		{Text: b.CreationDate},
+		{Text: bucketRowDate(b.CreationDate), Color: color.Faint},
 	}
+}
+
+// bucketRowDate compresses the creation timestamp for the row, "29 Apr 18:07"; the full timestamp stays on the Overview.
+// The date arrives preformatted from the list mapping, so one that does not parse degrades to itself rather than to a wrong date.
+func bucketRowDate(created string) string {
+	t, err := time.Parse("2006-01-02 15:04:05", created)
+	if err != nil {
+		return created
+	}
+
+	return t.Format("02 Jan 15:04")
 }
 
 // bucketRulesShown caps the lifecycle and replication listings. A bucket can carry a thousand lifecycle rules; the overview is a glance and the Config tab is the list.
@@ -164,10 +175,10 @@ func bucketDataBlock(o *aws.BucketOverview) string {
 // bucketRuleLines renders a rule list as a count plus its rules, capped, so a bucket with fifty lifecycle rules does not push every later section off the pane.
 func bucketRuleLines(label string, err error, rules []string) []string {
 	if err != nil {
-		return []string{utils.ColoredString(label+":", color.FgYellow) + " " + fieldOr(err, "")}
+		return []string{utils.ColoredString(label+":", color.Faint) + " " + fieldOr(err, "")}
 	}
 	if len(rules) == 0 {
-		return []string{utils.ColoredString(label+":", color.FgYellow) + " none"}
+		return []string{utils.ColoredString(label+":", color.Faint) + " none"}
 	}
 
 	shown := rules
@@ -175,7 +186,7 @@ func bucketRuleLines(label string, err error, rules []string) []string {
 		shown = shown[:bucketRulesShown]
 	}
 
-	lines := []string{utils.ColoredString(label+":", color.FgYellow) + " " + pluralize(len(rules), "rule")}
+	lines := []string{utils.ColoredString(label+":", color.Faint) + " " + pluralize(len(rules), "rule")}
 	for _, rule := range shown {
 		lines = append(lines, "  "+rule)
 	}
@@ -329,7 +340,7 @@ func bucketTagsBlock(o *aws.BucketOverview) string {
 
 	lines := []string{title}
 	for _, key := range keys {
-		lines = append(lines, key+": "+orNone(o.Tags[key]))
+		lines = append(lines, TagLine(key, o.Tags[key]))
 	}
 
 	return strings.Join(lines, "\n")
