@@ -19,6 +19,7 @@ func (gui *Gui) getEC2Panel() *panels.SideListPanel[*aws.Instance] {
 		ContextState: &panels.ContextState[*aws.Instance]{
 			GetMainTabs: func() []panels.MainTab[*aws.Instance] {
 				return []panels.MainTab[*aws.Instance]{
+					overviewTab(gui, func(context.Context, *aws.Instance, int) string { return overviewUnavailable("instance") }),
 					{Key: "config", Title: "Config", Render: gui.renderEC2Config},
 					{Key: "status", Title: "Status", Render: gui.renderEC2Status},
 					{Key: "metrics", Title: "Metrics", Render: gui.renderEC2Metrics},

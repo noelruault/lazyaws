@@ -45,6 +45,7 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 		ContextState: &panels.ContextState[*aws.SecretSummary]{
 			GetMainTabs: func() []panels.MainTab[*aws.SecretSummary] {
 				return []panels.MainTab[*aws.SecretSummary]{
+					overviewTab(gui, func(context.Context, *aws.SecretSummary, int) string { return overviewUnavailable("secret") }),
 					{Key: "config", Title: "Config", Render: gui.renderSecretsConfig},
 					{Key: "value", Title: "Value", Render: gui.renderSecretValue},
 				}

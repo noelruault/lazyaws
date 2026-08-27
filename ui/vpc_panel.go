@@ -20,6 +20,7 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 		ContextState: &panels.ContextState[*aws.VPC]{
 			GetMainTabs: func() []panels.MainTab[*aws.VPC] {
 				return []panels.MainTab[*aws.VPC]{
+					overviewTab(gui, func(context.Context, *aws.VPC, int) string { return overviewUnavailable("VPC") }),
 					{Key: "config", Title: "Config", Render: gui.renderVPCConfig},
 					{Key: "subnets", Title: "Subnets", Render: gui.renderVPCSubnets},
 					{Key: "routes", Title: "Routes", Render: gui.renderVPCRoutes},

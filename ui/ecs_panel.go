@@ -91,6 +91,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 				switch gui.ecsDrill.level {
 				case ecsLevelServices:
 					return []panels.MainTab[*ecsRow]{
+						overviewTab(gui, func(context.Context, *ecsRow, int) string { return overviewUnavailable("service") }),
 						{Key: "config", Title: "Config", Render: gui.renderECSServiceConfig},
 						{Key: "deployments", Title: "Deployments", Render: gui.renderECSServiceDeployments},
 						{Key: "events", Title: "Events", Render: gui.renderECSServiceEvents},
@@ -109,6 +110,7 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 					}
 				default:
 					return []panels.MainTab[*ecsRow]{
+						overviewTab(gui, func(context.Context, *ecsRow, int) string { return overviewUnavailable("cluster") }),
 						{Key: "config", Title: "Config", Render: gui.renderECSClusterConfig},
 						{Key: "instances", Title: "Instances", Render: gui.renderECSClusterInstances},
 						{Key: "tags", Title: "Tags", Render: gui.renderECSClusterTags},

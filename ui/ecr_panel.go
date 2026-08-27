@@ -18,6 +18,7 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 		ContextState: &panels.ContextState[*aws.ECRRepository]{
 			GetMainTabs: func() []panels.MainTab[*aws.ECRRepository] {
 				return []panels.MainTab[*aws.ECRRepository]{
+					overviewTab(gui, func(context.Context, *aws.ECRRepository, int) string { return overviewUnavailable("repository") }),
 					{Key: "config", Title: "Config", Render: gui.renderECRConfig},
 					{Key: "images", Title: "Images", Render: gui.renderECRImages},
 					{Key: "scan", Title: "Scan", Render: gui.renderECRScan},

@@ -35,7 +35,7 @@ func TestECSServiceTabsCycle(t *testing.T) {
 
 	ctx := gui.Panels.ECS.ContextState
 
-	want := []string{"config", "deployments", "events", "scaling", "taskdef", "config"}
+	want := []string{"overview", "config", "deployments", "events", "scaling", "taskdef", "overview"}
 	if got := ctx.GetCurrentMainTab().Key; got != want[0] {
 		t.Fatalf("initial tab = %q, want %q", got, want[0])
 	}
@@ -48,7 +48,7 @@ func TestECSServiceTabsCycle(t *testing.T) {
 
 	ctx.HandlePrevMainTab()
 	if got := ctx.GetCurrentMainTab().Key; got != "taskdef" {
-		t.Fatalf("prev from config = %q, want %q", got, "taskdef")
+		t.Fatalf("prev from overview = %q, want %q", got, "taskdef")
 	}
 }
 
