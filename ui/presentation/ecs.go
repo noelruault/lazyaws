@@ -2,6 +2,7 @@ package presentation
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -107,7 +108,7 @@ func ECSImageLabel(image aws.ECSServiceImage) string {
 // The header is built from the LIST ROW rather than from the fetch, so a cluster whose every section failed is still identified and still carries the badge the side panel shows it with.
 func FormatECSClusterOverview(c *aws.ECSCluster, o *aws.ECSClusterOverview, width int) string {
 	// Cut to the pane: the header spans the full width rather than a column, so Columns never sees it, and with wrap off an over-long meta line runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("Cluster", c.Name, ecsClusterBadge(c).Rendered(), "",
+	header := truncateBlock(ResourceHeader("ECS Cluster", c.Name, ecsClusterBadge(c).Rendered(), "",
 		c.Region,
 		clusterServicesSummary(c, o),
 		fmt.Sprintf("%d running / %d pending", c.RunningTasksCount, c.PendingTasksCount),
@@ -122,9 +123,26 @@ func FormatECSClusterOverview(c *aws.ECSCluster, o *aws.ECSClusterOverview, widt
 	right := joinBlocks(
 		clusterServicesBlock(o, column),
 		clusterTasksBlock(o, column),
+		clusterTagsBlock(o),
 	)
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+func clusterTagsBlock(o *aws.ECSClusterOverview) string {
+	if err := o.Err(aws.SectionTags); err != nil {
+		return sectionUnavailable("Tags", err)
+	}
+
+	lines := []string{SectionTitle("Tags")}
+	if len(o.Tags) == 0 {
+		lines = append(lines, "none")
+	}
+	for _, key := range slices.Sorted(maps.Keys(o.Tags)) {
+		lines = append(lines, TagLine(key, o.Tags[key]))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // clusterServicesSummary counts the services actually holding what they were asked to run, which the cluster's own ActiveServicesCount cannot say: a service stays ACTIVE while every task it wants is failing to start.
@@ -173,6 +191,7 @@ func clusterConfigBlock(c *aws.ECSCluster) string {
 		{"Region", orNone(c.Region)},
 		{"Container Insights", clusterInsightsValue(c.ContainerInsights)},
 		{"Execute command", executeCommandValue(c.ExecuteCommandLogging)},
+		{"Console", orNone(c.ConsoleURL)},
 	})
 }
 
@@ -205,13 +224,16 @@ func executeCommandValue(logging string) string {
 // A cluster with none is not a cluster without capacity: it launches on a bare LaunchType, and a lone "none" reads as broken rather than as configured differently.
 func clusterCapacityBlock(c *aws.ECSCluster, o *aws.ECSClusterOverview) string {
 	title := SectionTitle("Capacity")
+	// The count belongs here rather than in Health: it says what the cluster is running ON, and 0 is the normal Fargate answer, not a problem.
+	instances := fmt.Sprintf("Container instances: %d", c.RegisteredContainerCount)
 
 	if len(c.DefaultCapacityProviderStrat) > 0 {
-		lines := make([]string, 0, len(c.DefaultCapacityProviderStrat)+1)
+		lines := make([]string, 0, len(c.DefaultCapacityProviderStrat)+2)
 		lines = append(lines, title)
 		for _, s := range c.DefaultCapacityProviderStrat {
 			lines = append(lines, fmt.Sprintf("  %s (base %d, weight %d)", s.CapacityProvider, s.Base, s.Weight))
 		}
+		lines = append(lines, instances)
 
 		return strings.Join(lines, "\n")
 	}
@@ -219,10 +241,11 @@ func clusterCapacityBlock(c *aws.ECSCluster, o *aws.ECSClusterOverview) string {
 	// Providers attached with no default strategy is its own state: a service then has to name a provider itself, and one that names none is never placed.
 	if len(c.CapacityProviders) > 0 {
 		return title + "\n  " + strings.Join(c.CapacityProviders, ", ") +
-			"\n  " + utils.ColoredString("no default strategy", color.Faint)
+			"\n  " + utils.ColoredString("no default strategy", color.Faint) +
+			"\n" + instances
 	}
 
-	return title + "\n  none, " + clusterLaunchTypes(o)
+	return title + "\n  none, " + clusterLaunchTypes(o) + "\n" + instances
 }
 
 // clusterLaunchTypes reads what a cluster with no capacity providers actually runs on off the services, rather than assuming Fargate.
@@ -425,10 +448,51 @@ func FormatECSServiceOverview(s *aws.ECSService, o *aws.ECSServiceOverview, widt
 	)
 	right := joinBlocks(
 		serviceMetricsBlock(o),
+		serviceScalingBlock(o),
 		serviceEventsBlock(s, now),
 	)
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+// scalingMetricSuffix names the tracked metric beside its target when the policy reports one.
+func scalingMetricSuffix(metric string) string {
+	if metric == "" {
+		return ""
+	}
+	return " (" + metric + ")"
+}
+
+// serviceScalingBlock folds the old Scaling tab in: bounds and policies fit a section, and a service with none says so in one line.
+func serviceScalingBlock(o *aws.ECSServiceOverview) string {
+	if err := o.Err(aws.SectionScaling); err != nil {
+		return sectionUnavailable("Scaling", err)
+	}
+	scaling := o.Scaling
+	if scaling == nil {
+		return SectionTitle("Scaling") + "\nnot registered"
+	}
+
+	lines := []string{SectionTitle("Scaling"), kvBlock([]kv{
+		{"Capacity", fmt.Sprintf("%d - %d tasks", scaling.MinCapacity, scaling.MaxCapacity)},
+	})}
+	if len(scaling.Policies) == 0 {
+		lines = append(lines, "Policies:\n  none")
+	} else {
+		lines = append(lines, "Policies:")
+	}
+	for _, p := range scaling.Policies {
+		lines = append(lines, "  "+p.Name+" "+utils.ColoredString(p.Type, color.Faint))
+		switch p.Type {
+		case "TargetTrackingScaling":
+			lines = append(lines, fmt.Sprintf("    target %.1f%s, cooldown in %ds / out %ds",
+				p.TargetValue, scalingMetricSuffix(p.TargetMetric), p.ScaleInCooldownSecs, p.ScaleOutCooldownSecs))
+		case "StepScaling":
+			lines = append(lines, fmt.Sprintf("    %d step adjustment(s), cooldown %ds", p.StepAdjustments, p.ScaleOutCooldownSecs))
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // primaryECSDeployment is the deployment the service is trying to reach; the others are ones it is draining away from, and reporting their rollout state would describe a deployment already being replaced.
@@ -546,7 +610,7 @@ func publicIPValue(assign string) string {
 // idListBlock puts each identifier on its own line rather than joining them, because a column narrow enough to cut a joined list drops the ids at the end of it with only an ellipsis to show for them.
 func idListBlock(label string, ids []string) []string {
 	if len(ids) == 0 {
-		return []string{utils.ColoredString(label+":", color.FgYellow) + " none"}
+		return []string{utils.ColoredString(label+":", color.Faint) + " none"}
 	}
 
 	lines := make([]string, 0, len(ids)+1)

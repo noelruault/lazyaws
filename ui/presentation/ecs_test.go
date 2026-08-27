@@ -233,17 +233,20 @@ func clusterFixture() (*aws.ECSCluster, *aws.ECSClusterOverview) {
 	point := func(v float64) aws.MetricPoint { return aws.MetricPoint{Value: v, At: at, OK: true} }
 
 	cluster := &aws.ECSCluster{
-		Name:                  "batch-cluster",
-		Arn:                   "arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
-		Status:                "ACTIVE",
-		RunningTasksCount:     12,
-		ActiveServicesCount:   3,
-		ContainerInsights:     "enabled",
-		ExecuteCommandLogging: "DEFAULT",
-		Region:                "eu-west-1",
+		Name:                     "batch-cluster",
+		Arn:                      "arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
+		Status:                   "ACTIVE",
+		RunningTasksCount:        12,
+		ActiveServicesCount:      3,
+		RegisteredContainerCount: 2,
+		ContainerInsights:        "enabled",
+		ExecuteCommandLogging:    "DEFAULT",
+		Region:                   "eu-west-1",
+		ConsoleURL:               "https://eu-west-1.console.aws.amazon.com/ecs/v2/clusters/batch-cluster",
 	}
 	overview := &aws.ECSClusterOverview{
 		Errs: map[string]error{},
+		Tags: map[string]string{"Environment": "staging"},
 		Services: []aws.ECSService{
 			{Name: "kicker-web", RunningCount: 3, DesiredCount: 3, LaunchType: "FARGATE",
 				Deployments: []aws.ECSDeployment{{Status: "PRIMARY", RolloutState: "COMPLETED"}}},
@@ -298,6 +301,10 @@ func TestClusterOverviewRendersEverySection(t *testing.T) {
 		"a1b2c3d4e5f6",
 		// The image is the hard requirement this pane exists for, with the registry host dropped and the sidecar counted rather than listed.
 		"kicker-web:v1.42.0 (+1 sidecar)",
+		// What the old Config and Tags tabs held and the Overview absorbed: the console URL, the tag list and the container-instance count.
+		"https://eu-west-1.console.aws.amazon.com/ecs/v2/clusters/batch-cluster",
+		"Environment: staging",
+		"Container instances: 2",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview does not contain %q\n%s", want, got)

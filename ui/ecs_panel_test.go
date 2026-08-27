@@ -11,60 +11,6 @@ import (
 	"github.com/noelruault/lazyaws/apps/aws"
 )
 
-func TestFormatECSClusterConfig(t *testing.T) {
-	c := &aws.ECSCluster{Name: "prod", Status: "ACTIVE", RunningTasksCount: 2, ConsoleURL: "https://example/console"}
-	data := &aws.ECSClusterData{
-		Services: []aws.ECSService{
-			{Name: "web", Status: "ACTIVE", DesiredCount: 2, RunningCount: 2},
-		},
-	}
-
-	out := formatECSClusterConfig(c, data, nil)
-
-	for _, want := range []string{"prod", "https://example/console", "web"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("formatECSClusterConfig() missing %q in:\n%s", want, out)
-		}
-	}
-}
-
-func TestFormatECSClusterConfigNoServices(t *testing.T) {
-	c := &aws.ECSCluster{Name: "empty"}
-	data := &aws.ECSClusterData{}
-
-	out := formatECSClusterConfig(c, data, nil)
-
-	if !strings.Contains(out, "none") {
-		t.Errorf("formatECSClusterConfig() with no services should mention \"none\", got:\n%s", out)
-	}
-}
-
-func TestFormatECSClusterConfigWithInsights(t *testing.T) {
-	c := &aws.ECSCluster{Name: "prod"}
-	data := &aws.ECSClusterData{}
-	insights := &aws.ECSContainerInsights{CPUPercent: 42.5, MemPercent: 10}
-
-	out := formatECSClusterConfig(c, data, insights)
-
-	if !strings.Contains(out, "42.5%") {
-		t.Errorf("formatECSClusterConfig() missing CPU percent in:\n%s", out)
-	}
-	if !strings.Contains(out, "10.0%") {
-		t.Errorf("formatECSClusterConfig() missing memory percent in:\n%s", out)
-	}
-}
-
-func TestFormatECSClusterConfigNilInsights(t *testing.T) {
-	c := &aws.ECSCluster{Name: "prod"}
-	data := &aws.ECSClusterData{}
-
-	out := formatECSClusterConfig(c, data, nil)
-
-	if !strings.Contains(out, "n/a") {
-		t.Errorf("formatECSClusterConfig() with nil insights should show \"n/a\", got:\n%s", out)
-	}
-}
-
 func TestFormatECSContainerInstances(t *testing.T) {
 	instances := []aws.ECSContainerInstance{
 		{Ec2InstanceID: "i-abc123", Status: "ACTIVE", AgentConnected: true, AgentVersion: "1.80.0", RunningTasksCount: 3, PendingTasksCount: 1},
@@ -189,43 +135,6 @@ func TestFormatECSServiceConfigWithoutMetrics(t *testing.T) {
 
 	if !strings.Contains(out, "n/a") {
 		t.Errorf("formatECSServiceConfig() with a failed metrics fetch should show \"n/a\", got:\n%s", out)
-	}
-}
-
-func TestFormatECSServiceScalingNone(t *testing.T) {
-	out := formatECSServiceScaling(nil)
-
-	if !strings.Contains(out, "no Application Auto Scaling") {
-		t.Errorf("formatECSServiceScaling(nil) should say no auto scaling, got:\n%s", out)
-	}
-}
-
-func TestFormatECSServiceScalingNoPolicies(t *testing.T) {
-	out := formatECSServiceScaling(&aws.ECSServiceAutoScaling{MinCapacity: 2, MaxCapacity: 10})
-
-	for _, want := range []string{"2", "10", "none"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("formatECSServiceScaling() missing %q in:\n%s", want, out)
-		}
-	}
-}
-
-func TestFormatECSServiceScalingWithPolicies(t *testing.T) {
-	scaling := &aws.ECSServiceAutoScaling{
-		MinCapacity: 1,
-		MaxCapacity: 5,
-		Policies: []aws.ECSScalingPolicy{
-			{Name: "cpu-target", Type: "TargetTrackingScaling", TargetMetric: "ECSServiceAverageCPUUtilization", TargetValue: 60, ScaleInCooldownSecs: 60, ScaleOutCooldownSecs: 30},
-			{Name: "step-out", Type: "StepScaling", StepAdjustments: 2, ScaleOutCooldownSecs: 120},
-		},
-	}
-
-	out := formatECSServiceScaling(scaling)
-
-	for _, want := range []string{"cpu-target", "60.0", "ECSServiceAverageCPUUtilization", "step-out", "2 step adjustment"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("formatECSServiceScaling() missing %q in:\n%s", want, out)
-		}
 	}
 }
 

@@ -57,6 +57,14 @@ func serviceFixture() (*aws.ECSService, *aws.ECSServiceOverview, time.Time) {
 		Errs:    map[string]error{},
 		Metrics: &aws.ECSServiceMetrics{CPUUtilization: point(37.5), MemoryUtilization: point(64.2)},
 		Image:   aws.ECSServiceImage{Image: "app-auth:v1.2.0", Sidecars: 1},
+		Scaling: &aws.ECSServiceAutoScaling{
+			MinCapacity: 1,
+			MaxCapacity: 5,
+			Policies: []aws.ECSScalingPolicy{
+				{Name: "cpu-target", Type: "TargetTrackingScaling", TargetMetric: "ECSServiceAverageCPUUtilization", TargetValue: 60, ScaleInCooldownSecs: 60, ScaleOutCooldownSecs: 30},
+				{Name: "step-out", Type: "StepScaling", StepAdjustments: 2, ScaleOutCooldownSecs: 120},
+			},
+		},
 	}
 
 	return service, overview, now
@@ -76,7 +84,7 @@ func TestServiceOverviewRendersEverySection(t *testing.T) {
 		"● steady",
 		"3 desired / 3 running / 0 pending",
 		"Controller:      ECS",
-		"▶ COMPLETED",
+		"● COMPLETED",
 		"Started:         6h ago",
 		"Circuit breaker: enabled, rolls back",
 		// The PRIMARY deployment's revision, not the service's own: mid-rollout they differ and the deployment is what is being brought up.
@@ -90,12 +98,39 @@ func TestServiceOverviewRendersEverySection(t *testing.T) {
 		"37.5%",
 		"64.2%",
 		"1-min avg @ 14:58Z",
+		// What the old Scaling tab held and the Overview absorbed: bounds, then each policy with its target.
+		"Capacity: 1 - 5 tasks",
+		"cpu-target TargetTrackingScaling",
+		"target 60.0 (ECSServiceAverageCPUUtilization), cooldown in 60s / out 30s",
+		"step-out StepScaling",
+		"2 step adjustment(s), cooldown 120s",
 		"Recent events",
 		"has reached a steady state.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("service overview does not contain %q\n%s", want, got)
 		}
+	}
+}
+
+// A service with no Application Auto Scaling registered is an answer, not a failure, and a failed scaling read must say so instead of rendering as that answer.
+func TestServiceOverviewScalingStates(t *testing.T) {
+	forceColor(t)
+	service, overview, now := serviceFixture()
+
+	overview.Scaling = nil
+	got := utils.Decolorise(FormatECSServiceOverview(service, overview, overviewTestWidth, now))
+	if !strings.Contains(got, "not registered") {
+		t.Errorf("an unregistered service should say so\n%s", got)
+	}
+
+	overview.Errs[aws.SectionScaling] = errors.New("ThrottlingException")
+	got = utils.Decolorise(FormatECSServiceOverview(service, overview, overviewTestWidth, now))
+	if !strings.Contains(got, "unavailable: ThrottlingException") {
+		t.Errorf("a failed scaling read should render unavailable\n%s", got)
+	}
+	if strings.Contains(got, "not registered") {
+		t.Errorf("a failed scaling read must not render as the unregistered answer\n%s", got)
 	}
 }
 
@@ -129,12 +164,12 @@ func TestServiceOverviewRolloutStates(t *testing.T) {
 		{
 			name:       "in progress",
 			deployment: aws.ECSDeployment{Status: aws.ECSDeploymentPrimary, RolloutState: "IN_PROGRESS"},
-			want:       []string{"⟳ IN_PROGRESS"},
+			want:       []string{"● IN_PROGRESS"},
 		},
 		{
 			name:       "failed with a reason and lost tasks",
 			deployment: aws.ECSDeployment{Status: aws.ECSDeploymentPrimary, RolloutState: aws.ECSRolloutFailed, FailedTasks: 2, RolloutStateReason: "ECS deployment circuit breaker: task failed to start."},
-			want:       []string{"! FAILED", "2 failed", "ECS deployment circuit breaker: task failed to start."},
+			want:       []string{"● FAILED", "2 failed", "ECS deployment circuit breaker: task failed to start."},
 		},
 		{
 			// ECS omits rolloutState entirely for a CODE_DEPLOY or EXTERNAL controller, and reading that as "not COMPLETED" would leave every blue/green service permanently alarming.
@@ -431,12 +466,12 @@ func TestServiceOverviewReadsThePrimaryDeployment(t *testing.T) {
 
 	got := utils.Decolorise(FormatECSServiceOverview(service, overview, overviewTestWidth, now))
 
-	for _, want := range []string{"⟳ IN_PROGRESS", "Started:         6h ago", "Task definition: app-auth:42"} {
+	for _, want := range []string{"● IN_PROGRESS", "Started:         6h ago", "Task definition: app-auth:42"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the deployment section must describe the PRIMARY deployment, %q is missing\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "▶ COMPLETED") {
+	if strings.Contains(got, "● COMPLETED") {
 		t.Errorf("the deployment being drained away from must not be the one reported\n%s", got)
 	}
 }
