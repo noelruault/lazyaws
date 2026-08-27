@@ -273,17 +273,76 @@ func TestInstanceOverviewStorageMarksUnencryptedVolumes(t *testing.T) {
 	}
 }
 
-// The storage table is built for the column it will be cut to, so the encryption flag must survive at the narrowest two-column width there is.
-// It is the last column, and RenderTableFit spends its budget left to right, so it is the one a miscalculated width deletes.
+// The encryption flag is the last column and RenderTableFit spends its budget left to right, so it is the one a miscalculated width eats.
+// Contains is not enough to see that: a cut row still contains the prefix it was asked about, so this asserts the BOUNDARY — every storage row ends on a whole flag.
 func TestInstanceOverviewStorageKeepsEncryptionAtTheTwoColumnThreshold(t *testing.T) {
 	o := fullOverview()
 	o.Details.BlockDevices = append(o.Details.BlockDevices, aws.BlockDevice{
 		DeviceName: "/dev/sdb", VolumeID: "vol-0abcdef1234567890", VolumeSize: 8, VolumeType: "gp3", Iops: 3000, Throughput: 125,
 	})
 
-	got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, minTwoColWidth, overviewNow))
-	if !strings.Contains(got, "unencrypted") {
-		t.Errorf("the encryption flag was rendered away at width %d\n%s", minTwoColWidth, got)
+	rows := storageRows(t, utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, minTwoColWidth, overviewNow)))
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 storage rows, got %d: %q", len(rows), rows)
+	}
+	for _, row := range rows {
+		if !strings.HasSuffix(row, "unencrypted") {
+			t.Errorf("storage row does not end on a whole encryption flag: %q", row)
+		}
+	}
+}
+
+// The widest row EBS can produce does NOT fit the narrowest two-column pane, and this pins what it degrades to rather than leaving it to be discovered.
+// The flag is cut, but the cut lands after the letters that tell the two states apart and the amber survives it, so the row still reports the one thing on it anybody acts on.
+func TestInstanceOverviewStorageDegradesTheWidestVolumeReadably(t *testing.T) {
+	forceColor(t)
+
+	o := fullOverview()
+	o.Details.BlockDevices = []aws.BlockDevice{
+		// io2 Block Express, at the service's documented ceilings for size, IOPS and throughput.
+		{DeviceName: "/dev/xvdba", VolumeSize: 16384, VolumeType: "io2", Iops: 64000, Throughput: 4000, Encrypted: true},
+		{DeviceName: "/dev/sda1", VolumeSize: 8, VolumeType: "gp2", Iops: 100},
+	}
+
+	out := FormatInstanceOverview(overviewInstance(), o, minTwoColWidth, overviewNow)
+	rows := storageRows(t, utils.Decolorise(out))
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 storage rows, got %d: %q", len(rows), rows)
+	}
+	if !strings.HasSuffix(rows[0], "encr…") || !strings.HasSuffix(rows[1], "unen…") {
+		t.Errorf("the widest volume's rows degraded differently than recorded: %q", rows)
+	}
+	if !strings.Contains(out, "\x1b[33munen") {
+		t.Errorf("a cut unencrypted flag lost its amber, which is what carries it once the word is truncated:\n%s", out)
+	}
+}
+
+// storageRows returns the device rows of a rendered overview, which on a stacked or zipped pane are the lines under the Storage heading.
+func storageRows(t *testing.T, plain string) []string {
+	t.Helper()
+
+	var rows []string
+	for _, line := range strings.Split(plain, "\n") {
+		// Above minTwoColWidth the storage block sits in the right column, so each line still carries the left column and the rule.
+		if _, right, found := strings.Cut(line, "│"); found {
+			line = right
+		}
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "/dev/") {
+			rows = append(rows, line)
+		}
+	}
+
+	return rows
+}
+
+// Sections inside a column are separated by a blank line: without one, the last row of a section and the next heading read as a single list.
+func TestInstanceOverviewSeparatesItsSections(t *testing.T) {
+	got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), fullOverview(), stackedWidth, overviewNow))
+
+	for _, want := range []string{"\n\nNetwork\n", "\n\nMetrics\n", "\n\nStorage\n", "\n\nSecurity\n", "\n\nTags\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("section %q is not preceded by a blank line\n%s", strings.TrimSpace(want), got)
+		}
 	}
 }
 
