@@ -20,3 +20,4 @@ One line per closed ticket, appended by the builder: `- <id> <sha> — summary`.
 - s5-ec2-overview 85f4366 — Overview tab for EC2: a WaitGroup fan-out whose sections fail independently, two columns of seven sections, and the alarm/ASG/address lookups priced per selection instead of per tick
 - s6-ecs-clusterdata b8d57d7 — DescribeClusters carries STATISTICS+SETTINGS, and service CPU/memory moves to AWS/ECS through GetMetricData with the Insights reservations as gated extras in the same call
 - s6-ecs-image ff71d1d — the running image comes off DescribeTasks' newest running task with its sidecars counted, falling back to the PRIMARY deployment's memoized task definition labelled desired
+- s6-ecs-cluster-overview 5dc0f7b — cluster Overview: health header, Configuration, Capacity falling back to the service launch type, Metrics gauges from one GetMetricData, a Service Summary carrying rollout stability, and a Tasks table with the running image
