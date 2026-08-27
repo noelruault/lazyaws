@@ -36,3 +36,4 @@ One line per closed ticket, appended by the builder: `- <id> <sha> — summary`.
 - s10-ui-journeys-panels 16ee5c3 — one journey per left panel: number key, rows as whole lines, and the selected-row highlight read out of the cell attributes because SelBgColor is all this gocui draws
 - s10-ui-journeys-overview f92a213 — six resources' Overview tabs asserted whole (tab order, header, sections), two columns at 1700px and stacked at 1000px, with readScreen reading exactly cols cells so xterm's reflow stops faking a layout
 - s10-ui-journeys-keys a6a9e62 — every key the footer advertises checked against what it does; R proved by a bucket the unfocused panel cannot see any other way, r documented as inseparable from its own refresh tier
+- s11-secret-policy-unavailable f7bc7e5 — a resource-policy read that failed now says so on both the Overview and the Config tab instead of rendering as "not configured", and its throttle reaches the backoff engine
