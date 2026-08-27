@@ -56,7 +56,8 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 		GetTableCellsFit: func(v *aws.VPC) []utils.Cell {
 			return presentation.GetVPCDisplayCells(v)
 		},
-		Weights: func(*aws.VPC) []int { return presentation.VPCWeights() },
+		Weights:   func(*aws.VPC) []int { return presentation.VPCWeights() },
+		CopyValue: func(v *aws.VPC) string { return v.ID },
 	}
 }
 

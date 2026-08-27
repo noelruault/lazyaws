@@ -30,6 +30,7 @@ type ISideListPanel interface {
 	HandlePrevMainTab() error
 	HandleNextMainTab() error
 	CurrentMainRows() *MainRows
+	SelectedCopyValue() (string, bool)
 }
 
 type SideListPanel[T comparable] struct {
@@ -53,6 +54,9 @@ type SideListPanel[T comparable] struct {
 	// GetTableCellsFit renders a row as plain-text cells, laying the panel out with RenderTableFit instead of RenderTable so one long value cannot push the other columns off-screen.
 	// A panel sets this or GetTableCells, never both; the panels still on GetTableCells are the ones stage 2 has not migrated yet.
 	GetTableCellsFit func(T) []utils.Cell
+	// CopyValue answers the full, untruncated identifier of a row for the copy popup.
+	// It is deliberately not the selection key: the key must stay something a reload can match on, while this is the value a user pastes elsewhere, so a resource carrying an ARN reports the ARN.
+	CopyValue func(T) string
 	// Weights sizes the columns of a table whose rows are shaped like the one passed, which is the first row on screen.
 	// It takes an item because a panel can change row shape as it is used (the ECS panel's rows differ per drill level), and reading the shape off the rows actually being rendered is what stops the two from drifting apart.
 	Weights func(T) []int
@@ -101,6 +105,21 @@ func (self *SideListPanel[T]) HandleClick() error {
 
 func (self *SideListPanel[T]) GetView() *gocui.View {
 	return self.View
+}
+
+// SelectedCopyValue reports false rather than an empty string so a caller cannot open a popup showing nothing: a panel with no CopyValue, no rows, or a row whose identifier the list call left blank all mean "there is nothing to copy here".
+func (self *SideListPanel[T]) SelectedCopyValue() (string, bool) {
+	if self.CopyValue == nil {
+		return "", false
+	}
+
+	item, err := self.GetSelectedItem()
+	if err != nil {
+		return "", false
+	}
+
+	value := self.CopyValue(item)
+	return value, value != ""
 }
 
 func (self *SideListPanel[T]) HandleSelect() error {

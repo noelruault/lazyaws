@@ -93,7 +93,8 @@ func (gui *Gui) getEKSPanel() *panels.SideListPanel[*aws.EKSCluster] {
 		GetTableCellsFit: func(c *aws.EKSCluster) []utils.Cell {
 			return presentation.GetEKSClusterDisplayCells(c)
 		},
-		Weights: func(*aws.EKSCluster) []int { return presentation.EKSClusterWeights() },
+		Weights:   func(*aws.EKSCluster) []int { return presentation.EKSClusterWeights() },
+		CopyValue: func(c *aws.EKSCluster) string { return arnOrName(c.Arn, c.Name) },
 	}
 }
 

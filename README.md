@@ -75,6 +75,7 @@ Generated from `DefaultKeys` in `ui/keymap.go`, which is where these live: chang
 | `:` | Go to a resource by name, or run a command |
 | `a` | Open the actions menu for the focused item (every panel, and the main panel) |
 | `/` | Filter the focused list |
+| `y` | Show the selected item's full id / ARN, untruncated, to copy by hand (every panel, and the main panel) |
 | `r` | Refresh the focused panel |
 | `R` | Refresh everything |
 | `[` | Previous detail tab |

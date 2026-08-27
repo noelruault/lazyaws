@@ -74,7 +74,8 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 		GetTableCellsFit: func(s *aws.SecretSummary) []utils.Cell {
 			return presentation.GetSecretDisplayCells(s)
 		},
-		Weights: func(*aws.SecretSummary) []int { return presentation.SecretWeights() },
+		Weights:   func(*aws.SecretSummary) []int { return presentation.SecretWeights() },
+		CopyValue: func(s *aws.SecretSummary) string { return arnOrName(s.Arn, s.Name) },
 	}
 }
 

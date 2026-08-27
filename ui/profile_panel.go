@@ -50,6 +50,8 @@ func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
 			return presentation.GetProfileDisplayCells(profile, gui.CurrentProfile, region, accountID)
 		},
 		Weights: func(string) []int { return []int{1} },
+		// A profile has no ARN; its name is the identifier, and it is what a `--profile` flag wants.
+		CopyValue: func(profile string) string { return profile },
 	}
 }
 

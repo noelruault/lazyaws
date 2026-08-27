@@ -50,6 +50,8 @@ func (gui *Gui) getS3Panel() *panels.SideListPanel[*aws.Bucket] {
 			return presentation.GetBucketDisplayCells(b)
 		},
 		Weights: func(*aws.Bucket) []int { return presentation.BucketWeights() },
+		// A bucket ARN is derivable from the name, but ListBuckets does not answer one and inventing the string here would publish a guess.
+		CopyValue: func(b *aws.Bucket) string { return b.Name },
 	}
 }
 

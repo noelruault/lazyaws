@@ -16,6 +16,7 @@ const (
 	KeyCommandBar           KeyName = "command-bar"
 	KeyActions              KeyName = "actions"
 	KeyFilter               KeyName = "filter"
+	KeyCopyID               KeyName = "copy-id"
 	KeyRefreshPanel         KeyName = "refresh-panel"
 	KeyRefreshAll           KeyName = "refresh-all"
 	KeyPrevTab              KeyName = "prev-tab"
@@ -53,6 +54,7 @@ var DefaultKeys = []Chord{
 	{Name: KeyCommandBar, Key: ':', Description: "Go to a resource by name, or run a command"},
 	{Name: KeyActions, Key: 'a', Description: "Open the actions menu for the focused item", Where: "every panel, and the main panel"},
 	{Name: KeyFilter, Key: '/', Description: "Filter the focused list"},
+	{Name: KeyCopyID, Key: 'y', Description: "Show the selected item's full id / ARN, untruncated, to copy by hand", Where: "every panel, and the main panel"},
 	{Name: KeyRefreshPanel, Key: 'r', Description: "Refresh the focused panel"},
 	{Name: KeyRefreshAll, Key: 'R', Description: "Refresh everything"},
 	{Name: KeyPrevTab, Key: '[', Description: "Previous detail tab"},

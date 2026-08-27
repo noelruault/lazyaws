@@ -42,7 +42,8 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 		GetTableCellsFit: func(r *aws.ECRRepository) []utils.Cell {
 			return presentation.GetECRRepositoryDisplayCells(r)
 		},
-		Weights: func(*aws.ECRRepository) []int { return presentation.ECRRepositoryWeights() },
+		Weights:   func(*aws.ECRRepository) []int { return presentation.ECRRepositoryWeights() },
+		CopyValue: func(r *aws.ECRRepository) string { return arnOrName(r.Arn, r.Name) },
 	}
 }
 

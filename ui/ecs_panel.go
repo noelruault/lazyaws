@@ -151,6 +151,8 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 				return presentation.ECSClusterWeights()
 			}
 		},
+		// Every ECS row carries an ARN at every drill level, so the copy value is the ARN whichever table is on screen.
+		CopyValue: func(row *ecsRow) string { return row.arn() },
 	}
 }
 
