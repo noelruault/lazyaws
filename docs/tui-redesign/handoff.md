@@ -380,7 +380,7 @@ threads: `apps/aws/s3.go:339` (`GetObjectTagging`) and `:1017` (`HeadObject`) st
 
 ### s12-ec2-performance-unavailable (8aa46fa)
 meant: spec.md:12, on the one EC2 Overview field whose "none" was a false statement rather than a degradation.
-did: `ui/presentation/ec2.go:153` — the Network section's Performance row reads the field-level `unavailable` this file already uses at `:171` (Elastic IPs), `:230` (Alarms) and `:246` (Auto Scaling) when `InstanceTypeInfo` is nil, since every instance type carries a rating and the field has no absent state. `instanceTypeLine` is untouched, as the ticket requires.
+did: `ui/presentation/ec2.go:153` — the Network section's Performance row reads the field-level `unavailable` this file already uses at `:176` (Elastic IPs), `:235` (Alarms) and `:251` (Auto Scaling) when `InstanceTypeInfo` is nil, since every instance type carries a rating and the field has no absent state. `instanceTypeLine` is untouched, as the ticket requires.
 deviations: none.
 verified: `make lint` and `make test` exit 0. The new test reads the Performance row as a whole LINE and asserts both halves (reads unavailable, does not read none), because "none" appears on half a dozen other lines of the same pane and a Contains assertion could not tell them apart.
 threads: the nil is still the only signal — `GetInstanceTypeInfo`'s error stays dropped at `apps/aws/ec2.go:271`, so the pane says unavailable without being able to say why, unlike every other unavailable in the file. Recording it would be an `InstanceTypeInfoErr` field on `InstanceDetails` plus a section key; out of this ticket, which asked only that the row stop lying.
