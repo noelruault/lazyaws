@@ -50,61 +50,67 @@ func (o *BucketOverview) Err(section string) error {
 // A section that failed is reported through Errs so the sections that succeeded still render: on a read-only role, a denied GetBucketPolicy is routine and must cost one line rather than the pane.
 func (c *Client) GetBucketOverview(ctx context.Context, name string) *BucketOverview {
 	overview := &BucketOverview{Errs: map[string]error{}}
-	// Every fetch below dereferences c.S3 inside its own goroutine, where a nil would be an unrecoverable panic rather than a rendered error.
-	if c.S3 == nil {
-		overview.Errs[SectionRegion] = errors.New("S3 client not initialized")
-		return overview
-	}
-
 	sections := newSectionFetcher(overview.Errs)
 
-	sections.fetch(SectionRegion, func() (err error) {
+	sections.fetch(SectionRegion, c.bucketSection(func() (err error) {
 		overview.Region, err = c.GetBucketRegion(ctx, name)
 		return err
-	})
-	sections.fetch(SectionVersioning, func() (err error) {
+	}))
+	sections.fetch(SectionVersioning, c.bucketSection(func() (err error) {
 		overview.Versioning, err = c.GetBucketVersioning(ctx, name)
 		return err
-	})
-	sections.fetch(SectionPublicAccess, func() (err error) {
+	}))
+	sections.fetch(SectionPublicAccess, c.bucketSection(func() (err error) {
 		overview.PublicAccess, err = c.GetBucketPublicAccessBlock(ctx, name)
 		return err
-	})
-	sections.fetch(SectionEncryption, func() (err error) {
+	}))
+	sections.fetch(SectionEncryption, c.bucketSection(func() (err error) {
 		overview.Encryption, err = c.GetBucketEncryption(ctx, name)
 		return err
-	})
-	sections.fetch(SectionObjectLock, func() (err error) {
+	}))
+	sections.fetch(SectionObjectLock, c.bucketSection(func() (err error) {
 		overview.ObjectLock, err = c.GetBucketObjectLockConfiguration(ctx, name)
 		return err
-	})
-	sections.fetch(SectionLifecycle, func() (err error) {
+	}))
+	sections.fetch(SectionLifecycle, c.bucketSection(func() (err error) {
 		overview.Lifecycle, err = c.GetBucketLifecycleConfiguration(ctx, name)
 		return err
-	})
-	sections.fetch(SectionReplication, func() (err error) {
+	}))
+	sections.fetch(SectionReplication, c.bucketSection(func() (err error) {
 		overview.Replication, err = c.GetBucketReplication(ctx, name)
 		return err
-	})
-	sections.fetch(SectionLogging, func() (err error) {
+	}))
+	sections.fetch(SectionLogging, c.bucketSection(func() (err error) {
 		overview.Logging, err = c.GetBucketLogging(ctx, name)
 		return err
-	})
-	sections.fetch(SectionNotifications, func() (err error) {
+	}))
+	sections.fetch(SectionNotifications, c.bucketSection(func() (err error) {
 		overview.Notifications, err = c.GetBucketNotificationConfiguration(ctx, name)
 		return err
-	})
-	sections.fetch(SectionPolicy, func() error {
+	}))
+	sections.fetch(SectionPolicy, c.bucketSection(func() error {
 		policy, err := c.GetBucketPolicy(ctx, name)
 		overview.PolicyPresent = policy != ""
 		return err
-	})
-	sections.fetch(SectionTags, func() (err error) {
+	}))
+	sections.fetch(SectionTags, c.bucketSection(func() (err error) {
 		overview.Tags, err = c.GetBucketTagging(ctx, name)
 		return err
-	})
+	}))
 
 	sections.wait()
 
 	return overview
+}
+
+// bucketSection runs a fetch behind the nil-client check every S3 subresource call needs, because none of them carries its own.
+// Guarding inside the fan-out rather than ahead of it is what keeps the failure per section: a client with no S3 reports eleven failed sections like any other outage, instead of one error standing in for the pane.
+func (c *Client) bucketSection(run func() error) func() error {
+	return func() error {
+		if c.S3 == nil {
+			return errors.New("S3 client not initialized")
+		}
+
+		return run()
+	}
 }

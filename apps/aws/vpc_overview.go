@@ -36,36 +36,42 @@ func (o *VPCOverview) Err(section string) error {
 // A section that failed is reported through Errs so the sections that succeeded still render: one denied describe degrades one block instead of blanking the pane.
 func (c *Client) GetVPCOverview(ctx context.Context, vpcID string) *VPCOverview {
 	overview := &VPCOverview{Errs: map[string]error{}}
-	// Every fetch below dereferences c.EC2 inside its own goroutine, where a nil would be an unrecoverable panic rather than a rendered error.
-	if c.EC2 == nil {
-		overview.Errs[SectionDNS] = errors.New("EC2 client not initialized")
-		return overview
-	}
-
 	sections := newSectionFetcher(overview.Errs)
 
-	sections.fetch(SectionDNS, func() (err error) {
+	sections.fetch(SectionDNS, c.vpcSection(func() (err error) {
 		overview.DNSSupport, overview.DNSHostnames, err = c.GetVPCDNS(ctx, vpcID)
 		return err
-	})
-	sections.fetch(SectionSubnets, func() (err error) {
+	}))
+	sections.fetch(SectionSubnets, c.vpcSection(func() (err error) {
 		overview.Subnets, err = c.ListSubnets(ctx, vpcID)
 		return err
-	})
-	sections.fetch(SectionIGW, func() (err error) {
+	}))
+	sections.fetch(SectionIGW, c.vpcSection(func() (err error) {
 		overview.InternetGateways, err = c.ListInternetGateways(ctx, vpcID)
 		return err
-	})
-	sections.fetch(SectionNAT, func() (err error) {
+	}))
+	sections.fetch(SectionNAT, c.vpcSection(func() (err error) {
 		overview.NATGateways, err = c.ListNATGateways(ctx, vpcID)
 		return err
-	})
-	sections.fetch(SectionEndpoints, func() (err error) {
+	}))
+	sections.fetch(SectionEndpoints, c.vpcSection(func() (err error) {
 		overview.Endpoints, err = c.ListVPCEndpoints(ctx, vpcID)
 		return err
-	})
+	}))
 
 	sections.wait()
 
 	return overview
+}
+
+// vpcSection runs a fetch behind the nil-client check none of the VPC describes carries, the same guard ec2.go added for the instance overview's fan-out.
+// Guarding inside the fan-out rather than ahead of it is what keeps the failure per section, so a client with no EC2 reports five failed sections like any other outage.
+func (c *Client) vpcSection(run func() error) func() error {
+	return func() error {
+		if c.EC2 == nil {
+			return errors.New("EC2 client not initialized")
+		}
+
+		return run()
+	}
 }
