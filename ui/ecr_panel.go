@@ -18,7 +18,7 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 		ContextState: &panels.ContextState[*aws.ECRRepository]{
 			GetMainTabs: func() []panels.MainTab[*aws.ECRRepository] {
 				return []panels.MainTab[*aws.ECRRepository]{
-					overviewTab(gui, func(context.Context, *aws.ECRRepository, int) string { return overviewUnavailable("repository") }),
+					staticOverviewTab(gui, gui.ecrRepositoryOverview),
 					{Key: "config", Title: "Config", Render: gui.renderECRConfig},
 					{Key: "images", Title: "Images", Render: gui.renderECRImages},
 					{Key: "scan", Title: "Scan", Render: gui.renderECRScan},
@@ -76,6 +76,21 @@ func (gui *Gui) loadECRList() error {
 
 // ecrSelectionKey identifies a repository across reloads; repository names are unique per registry.
 func ecrSelectionKey(repo *aws.ECRRepository) string { return repo.Name }
+
+// ecrRepositoryOverview reads the repository off the list row and fetches only the images, which is the one thing the row does not carry.
+// The image list is what keeps this off the refresh ticker: DescribeImages pages the whole repository, so its cost grows with the repository rather than staying flat.
+func (gui *Gui) ecrRepositoryOverview(ctx context.Context, repo *aws.ECRRepository, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("repository")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	images, err := gui.Client.ListECRImages(fetchCtx, repo.Name)
+
+	return presentation.FormatECRRepositoryOverview(repo, images, err, width, time.Now())
+}
 
 // renderECRConfig reuses policy data already fetched with the repository row.
 func (gui *Gui) renderECRConfig(repo *aws.ECRRepository) tasks.TaskFunc {
@@ -169,13 +184,9 @@ func formatECRImages(images []aws.ECRImage) string {
 	return out
 }
 
-// shortDigest follows Docker's convention to keep identity recognizable.
+// shortDigest is presentation.ShortDigest under this package's older name, kept so the four call sites here read as they did.
 func shortDigest(digest string) string {
-	d := strings.TrimPrefix(digest, "sha256:")
-	if len(d) > 12 {
-		return d[:12]
-	}
-	return d
+	return presentation.ShortDigest(digest)
 }
 
 // renderECRScan relies on newest-tagged-first ordering because ECR scans require a tag.
