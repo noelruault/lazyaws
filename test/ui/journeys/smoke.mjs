@@ -22,4 +22,8 @@ export async function run ({ term, seed }) {
   assertScreen(screen, 'ui-core', 'VPC panel')
   // Nothing seeds EKS, so the in-panel empty state is the only correct render for it.
   assertScreen(screen, 'no EKS clusters', 'EKS panel')
+
+  // Focus has to be where the app put it (`initiallyFocusedViewName` is the profile panel), not where the harness reached for it.
+  // The main pane's own footer offers "enter select", so this fails the moment anything in the harness sends a click.
+  assertScreen(await term.footer(), 'enter switch', 'focus after boot')
 }

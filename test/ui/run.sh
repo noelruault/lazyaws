@@ -49,9 +49,11 @@ curl -fsS "$endpoint/moto-api/" >/dev/null || { echo "$moto_image did not come u
 
 AWS_ENDPOINT_URL="$endpoint" AWS_REGION="$region" bash "$here/seed.sh"
 
+# AWS_PROFILE below and this section have to name the same profile, or the app starts degraded and loads nothing.
+profile=ui-harness
 mkdir -p "$fake_home/.aws"
 cat >"$fake_home/.aws/config" <<CONF
-[profile ui-harness]
+[profile $profile]
 region = $region
 CONF
 
@@ -59,7 +61,7 @@ go build -o "$here/.lazyaws" "$repo"
 
 # ttyd owns the pty; the browser viewport is what sizes it (see harness.mjs).
 env -i HOME="$fake_home" PATH="$PATH" TERM=xterm-256color \
-	AWS_ENDPOINT_URL="$endpoint" AWS_REGION="$region" AWS_PROFILE=ui-harness \
+	AWS_ENDPOINT_URL="$endpoint" AWS_REGION="$region" AWS_PROFILE="$profile" \
 	AWS_ACCESS_KEY_ID=lazyaws-ui-test AWS_SECRET_ACCESS_KEY=lazyaws-ui-test \
 	ttyd --writable --port "$ttyd_port" --interface 127.0.0.1 "$here/.lazyaws" \
 	>"$here/.ttyd.log" 2>&1 &
@@ -68,5 +70,7 @@ for _ in $(seq 1 40); do
 	curl -fsS "http://127.0.0.1:$ttyd_port" >/dev/null 2>&1 && break
 	sleep 0.25
 done
+# Said here rather than left to the browser: a port already in use fails ttyd on startup, and "net::ERR_CONNECTION_REFUSED" does not name that.
+curl -fsS "http://127.0.0.1:$ttyd_port" >/dev/null || { echo "ttyd did not come up on port $ttyd_port; see $here/.ttyd.log" >&2; exit 1; }
 
 TTYD_URL="http://127.0.0.1:$ttyd_port" "$runtime" "$here/run.mjs" "$@"
