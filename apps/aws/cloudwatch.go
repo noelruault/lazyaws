@@ -9,117 +9,129 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 )
 
+// MetricPoint is one CloudWatch datapoint with the time CloudWatch published it.
+// Absent is not zero: an EBS-only instance never publishes disk metrics, and rendering that as 0 invents a reading.
+type MetricPoint struct {
+	Value float64
+	At    time.Time
+	OK    bool
+}
+
 type InstanceMetrics struct {
 	InstanceID        string
-	CPUUtilization    float64
-	NetworkIn         float64
-	NetworkOut        float64
-	DiskReadBytes     float64
-	DiskWriteBytes    float64
-	StatusCheckFailed int
-	Period            string
+	CPUUtilization    MetricPoint
+	NetworkIn         MetricPoint
+	NetworkOut        MetricPoint
+	DiskReadBytes     MetricPoint
+	DiskWriteBytes    MetricPoint
+	StatusCheckFailed MetricPoint
+}
+
+// Query ids are the only way to tell one result from another: GetMetricData documents no correspondence between request and response order.
+const (
+	metricIDCPU               = "cpu"
+	metricIDNetworkIn         = "netin"
+	metricIDNetworkOut        = "netout"
+	metricIDDiskRead          = "diskr"
+	metricIDDiskWrite         = "diskw"
+	metricIDStatusCheckFailed = "statuscheck"
+)
+
+const (
+	// metricWindow spans several basic-monitoring periods so a metric that published anything recently still has a datapoint to show.
+	metricWindow = 30 * time.Minute
+	// metricPeriod matches basic monitoring's publish interval; asking for less returns empty buckets between datapoints, not finer data.
+	metricPeriod = 300
+)
+
+func instanceMetricQuery(id, metricName, stat, instanceID string) types.MetricDataQuery {
+	namespace := "AWS/EC2"
+	dimensionName := "InstanceId"
+	return types.MetricDataQuery{
+		Id: &id,
+		MetricStat: &types.MetricStat{
+			Metric: &types.Metric{
+				Namespace:  &namespace,
+				MetricName: &metricName,
+				Dimensions: []types.Dimension{{Name: &dimensionName, Value: &instanceID}},
+			},
+			Period: getInt32Ptr(metricPeriod),
+			Stat:   &stat,
+		},
+	}
+}
+
+// instanceMetricQueries asks for the whole EC2 metric set in one request.
+// GetMetricData is billed per metric id, so six ids in one call cost what six calls cost and pay one round trip instead of six.
+func instanceMetricQueries(instanceID string) []types.MetricDataQuery {
+	return []types.MetricDataQuery{
+		instanceMetricQuery(metricIDCPU, "CPUUtilization", "Average", instanceID),
+		instanceMetricQuery(metricIDNetworkIn, "NetworkIn", "Sum", instanceID),
+		instanceMetricQuery(metricIDNetworkOut, "NetworkOut", "Sum", instanceID),
+		instanceMetricQuery(metricIDDiskRead, "DiskReadBytes", "Sum", instanceID),
+		instanceMetricQuery(metricIDDiskWrite, "DiskWriteBytes", "Sum", instanceID),
+		instanceMetricQuery(metricIDStatusCheckFailed, "StatusCheckFailed", "Maximum", instanceID),
+	}
+}
+
+// latestPoint takes the newest datapoint of a result.
+// Timestamps and Values are index-paired and the response carries no ordering guarantee, so the newest is searched for rather than read off either end.
+func latestPoint(r types.MetricDataResult) MetricPoint {
+	var point MetricPoint
+	paired := len(r.Timestamps)
+	if len(r.Values) < paired {
+		paired = len(r.Values)
+	}
+	for i := 0; i < paired; i++ {
+		if point.OK && !r.Timestamps[i].After(point.At) {
+			continue
+		}
+		point = MetricPoint{Value: r.Values[i], At: r.Timestamps[i], OK: true}
+	}
+	return point
+}
+
+// mapInstanceMetrics indexes results by query id because GetMetricData does not answer in request order.
+// A metric with nothing published comes back as an empty series rather than being omitted, and stays absent here.
+func mapInstanceMetrics(instanceID string, results []types.MetricDataResult) *InstanceMetrics {
+	byID := make(map[string]MetricPoint, len(results))
+	for _, r := range results {
+		byID[getString(r.Id)] = latestPoint(r)
+	}
+	return &InstanceMetrics{
+		InstanceID:        instanceID,
+		CPUUtilization:    byID[metricIDCPU],
+		NetworkIn:         byID[metricIDNetworkIn],
+		NetworkOut:        byID[metricIDNetworkOut],
+		DiskReadBytes:     byID[metricIDDiskRead],
+		DiskWriteBytes:    byID[metricIDDiskWrite],
+		StatusCheckFailed: byID[metricIDStatusCheckFailed],
+	}
 }
 
 func (c *Client) GetInstanceMetrics(ctx context.Context, instanceID string) (*InstanceMetrics, error) {
-	metrics := &InstanceMetrics{
-		InstanceID: instanceID,
-		Period:     "Last 5 minutes",
+	if c.CloudWatch == nil {
+		return nil, fmt.Errorf("CloudWatch client not initialized")
 	}
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance id required")
+	}
+	timeoutCtx, cancel := withDefaultTimeout(ctx, 10*time.Second)
+	defer cancel()
 
 	endTime := time.Now()
-	startTime := endTime.Add(-5 * time.Minute)
+	startTime := endTime.Add(-metricWindow)
 
-	getMetric := func(metricName string, stat string) (float64, error) {
-		namespace := "AWS/EC2"
-		dimensionName := "InstanceId"
-		input := &cloudwatch.GetMetricStatisticsInput{
-			Namespace:  &namespace,
-			MetricName: &metricName,
-			Dimensions: []types.Dimension{
-				{
-					Name:  &dimensionName,
-					Value: &instanceID,
-				},
-			},
-			StartTime:  &startTime,
-			EndTime:    &endTime,
-			Period:     getInt32Ptr(300),
-			Statistics: []types.Statistic{types.Statistic(stat)},
-		}
-
-		result, err := c.CloudWatch.GetMetricStatistics(ctx, input)
-		if err != nil {
-			return 0, err
-		}
-
-		if len(result.Datapoints) == 0 {
-			return 0, nil
-		}
-
-		var latestDatapoint types.Datapoint
-		var latestTime time.Time
-		for _, dp := range result.Datapoints {
-			if dp.Timestamp != nil && dp.Timestamp.After(latestTime) {
-				latestTime = *dp.Timestamp
-				latestDatapoint = dp
-			}
-		}
-
-		switch stat {
-		case "Average":
-			if latestDatapoint.Average != nil {
-				return *latestDatapoint.Average, nil
-			}
-		case "Sum":
-			if latestDatapoint.Sum != nil {
-				return *latestDatapoint.Sum, nil
-			}
-		case "Maximum":
-			if latestDatapoint.Maximum != nil {
-				return *latestDatapoint.Maximum, nil
-			}
-		}
-
-		return 0, nil
-	}
-
-	cpu, err := getMetric("CPUUtilization", "Average")
+	result, err := c.CloudWatch.GetMetricData(timeoutCtx, &cloudwatch.GetMetricDataInput{
+		MetricDataQueries: instanceMetricQueries(instanceID),
+		StartTime:         &startTime,
+		EndTime:           &endTime,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get CPU metrics: %w", err)
+		return nil, fmt.Errorf("failed to get instance metrics: %w", err)
 	}
-	metrics.CPUUtilization = cpu
 
-	networkIn, err := getMetric("NetworkIn", "Sum")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get network in metrics: %w", err)
-	}
-	metrics.NetworkIn = networkIn
-
-	networkOut, err := getMetric("NetworkOut", "Sum")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get network out metrics: %w", err)
-	}
-	metrics.NetworkOut = networkOut
-
-	diskRead, err := getMetric("DiskReadBytes", "Sum")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get disk read metrics: %w", err)
-	}
-	metrics.DiskReadBytes = diskRead
-
-	diskWrite, err := getMetric("DiskWriteBytes", "Sum")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get disk write metrics: %w", err)
-	}
-	metrics.DiskWriteBytes = diskWrite
-
-	statusCheck, err := getMetric("StatusCheckFailed", "Maximum")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get status check metrics: %w", err)
-	}
-	metrics.StatusCheckFailed = int(statusCheck)
-
-	return metrics, nil
+	return mapInstanceMetrics(instanceID, result.MetricDataResults), nil
 }
 
 func getInt32Ptr(i int32) *int32 {

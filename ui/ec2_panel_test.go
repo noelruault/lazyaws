@@ -3,9 +3,56 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noelruault/lazyaws/apps/aws"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
+
+func TestFormatEC2MetricsStampsReadingsAndKeepsAbsenceAbsent(t *testing.T) {
+	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
+	metrics := &aws.InstanceMetrics{
+		InstanceID:     "i-0abcdef1234567890",
+		CPUUtilization: aws.MetricPoint{Value: 0.523, At: at, OK: true},
+		NetworkIn:      aws.MetricPoint{Value: 235000, At: at, OK: true},
+		// An EBS-only instance publishes no disk metrics at all.
+		DiskReadBytes:     aws.MetricPoint{},
+		DiskWriteBytes:    aws.MetricPoint{},
+		StatusCheckFailed: aws.MetricPoint{Value: 0, At: at, OK: true},
+	}
+
+	got := utils.Decolorise(formatEC2Metrics(metrics))
+
+	for _, want := range []string{
+		"CPU utilization: 0.5% (5-min avg @ 17:43Z)",
+		"Network in: 229.5 KiB (5-min total @ 17:43Z)",
+		"Disk read: no data",
+		"Disk write: no data",
+		"Status check failed: 0 (5-min max @ 17:43Z)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatEC2Metrics() missing %q, got:\n%s", want, got)
+		}
+	}
+
+	// The old caption claimed a freshness basic monitoring cannot deliver: its datapoints are already minutes old on arrival.
+	if strings.Contains(strings.ToLower(got), "last 5 minutes") {
+		t.Errorf("formatEC2Metrics() still captions a fixed period, got:\n%s", got)
+	}
+	// A metric that published nothing must never be rendered as a zero reading.
+	if strings.Contains(got, "Disk read: 0") {
+		t.Errorf("formatEC2Metrics() rendered an absent series as 0, got:\n%s", got)
+	}
+}
+
+func TestFormatMetricPointAbsentReadsNoData(t *testing.T) {
+	got := formatMetricPoint(aws.MetricPoint{Value: 99, At: time.Now(), OK: false}, "5-min avg", func(v float64) string {
+		return "formatted"
+	})
+	if got != "no data" {
+		t.Errorf("formatMetricPoint() = %q, want %q; an absent point must not render its zero value", got, "no data")
+	}
+}
 
 func TestFormatByteCount(t *testing.T) {
 	cases := []struct {

@@ -256,15 +256,25 @@ func (gui *Gui) renderEC2Metrics(inst *aws.Instance) tasks.TaskFunc {
 	})
 }
 
+// formatMetricPoint stamps a reading with the time CloudWatch published it, because the freshest datapoint basic monitoring offers is already minutes old and captioning it "last 5 minutes" claims a freshness the data does not have.
+// A series that published nothing reads "no data": zero is a measurement, absence is not.
+func formatMetricPoint(p aws.MetricPoint, stat string, format func(float64) string) string {
+	if !p.OK {
+		return "no data"
+	}
+	return fmt.Sprintf("%s (%s @ %s)", format(p.Value), stat, p.At.UTC().Format("15:04Z"))
+}
+
 func formatEC2Metrics(m *aws.InstanceMetrics) string {
+	percent := func(v float64) string { return fmt.Sprintf("%.1f%%", v) }
+	count := func(v float64) string { return strconv.Itoa(int(v)) }
 	return utils.FormatMap(0, map[string]string{
-		"Period":              m.Period,
-		"CPU utilization":     fmt.Sprintf("%.1f%%", m.CPUUtilization),
-		"Network in":          formatByteCount(m.NetworkIn),
-		"Network out":         formatByteCount(m.NetworkOut),
-		"Disk read":           formatByteCount(m.DiskReadBytes),
-		"Disk write":          formatByteCount(m.DiskWriteBytes),
-		"Status check failed": strconv.Itoa(m.StatusCheckFailed),
+		"CPU utilization":     formatMetricPoint(m.CPUUtilization, "5-min avg", percent),
+		"Network in":          formatMetricPoint(m.NetworkIn, "5-min total", formatByteCount),
+		"Network out":         formatMetricPoint(m.NetworkOut, "5-min total", formatByteCount),
+		"Disk read":           formatMetricPoint(m.DiskReadBytes, "5-min total", formatByteCount),
+		"Disk write":          formatMetricPoint(m.DiskWriteBytes, "5-min total", formatByteCount),
+		"Status check failed": formatMetricPoint(m.StatusCheckFailed, "5-min max", count),
 	})
 }
 
