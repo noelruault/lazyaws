@@ -84,6 +84,9 @@ type Gui struct {
 	// panelReloads holds each panel's loader behind its single-flight guard, keyed as panelReloaders keys them.
 	panelReloads map[string]func() error
 
+	// throttles carries a throttled fetch from the overview that saw it to the pane gate that has to slow down because of it.
+	throttles throttleWatch
+
 	// mainWidth is main's inner width as of the last layout pass, so a resize can be told from the many layout passes that change nothing.
 	mainWidth int
 

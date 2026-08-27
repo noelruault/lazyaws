@@ -2,12 +2,14 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
 
 	"github.com/noelruault/lazyaws/apps/aws"
 	"github.com/noelruault/lazyaws/config"
@@ -216,5 +218,137 @@ func TestNewGuiPutsEveryPanelLoaderBehindOneSingleFlightGuard(t *testing.T) {
 	}
 	if len(gui.panelReloads) != len(gui.panelThrottles) {
 		t.Errorf("%d single-flighted loaders against %d throttles, want one each", len(gui.panelReloads), len(gui.panelThrottles))
+	}
+}
+
+// The codes are byte-exact from the SDK's own throttle set (aws/retry/standard.go DefaultThrottleErrorCodes), which is what the adaptive retryer classifies on; the pane tier has to agree with it or the two would be reacting to different things.
+func TestIsThrottle(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "no error", err: nil},
+		{name: "ThrottlingException", err: &smithy.GenericAPIError{Code: "ThrottlingException", Message: "Rate exceeded"}, want: true},
+		{name: "RequestLimitExceeded", err: &smithy.GenericAPIError{Code: "RequestLimitExceeded", Message: "Request limit exceeded"}, want: true},
+		{name: "SlowDown", err: &smithy.GenericAPIError{Code: "SlowDown", Message: "Please reduce your request rate"}, want: true},
+		{name: "EC2ThrottledException", err: &smithy.GenericAPIError{Code: "EC2ThrottledException"}, want: true},
+		// A denial is permanent: backing off makes the pane slower without ever making the call succeed.
+		{name: "AccessDeniedException", err: &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "not authorized"}},
+		{name: "a plain error", err: errFakeReload},
+		{name: "wrapped throttle", err: fmt.Errorf("loading metrics: %w", &smithy.GenericAPIError{Code: "ThrottlingException"}), want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isThrottle(tt.err); got != tt.want {
+				t.Errorf("isThrottle(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextInterval(t *testing.T) {
+	const base = 2 * time.Second
+
+	tests := []struct {
+		name      string
+		current   time.Duration
+		throttled bool
+		want      time.Duration
+	}{
+		{name: "a throttle doubles the base", current: base, throttled: true, want: 4 * time.Second},
+		{name: "a throttle doubles again", current: 8 * time.Second, throttled: true, want: 16 * time.Second},
+		{name: "doubling stops at the ceiling", current: 40 * time.Second, throttled: true, want: backoffCeiling},
+		{name: "already at the ceiling", current: backoffCeiling, throttled: true, want: backoffCeiling},
+		{name: "a clean fetch decays by half", current: 16 * time.Second, want: 8 * time.Second},
+		{name: "decay stops at the base", current: 3 * time.Second, want: base},
+		{name: "a clean fetch at the base changes nothing", current: base, want: base},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nextInterval(tt.current, base, tt.throttled); got != tt.want {
+				t.Errorf("nextInterval(%v, %v, throttled=%v) = %v, want %v", tt.current, base, tt.throttled, got, tt.want)
+			}
+		})
+	}
+}
+
+// Ceilings are published in two places once a doc mentions the number, and a pane refreshing more slowly than the slowest configured tier reads as hung.
+func TestBackoffCeilingMatchesTheMetricsTierDefault(t *testing.T) {
+	if want := time.Duration(config.DefaultUserConfig().Refresh.MetricsSeconds) * time.Second; backoffCeiling != want {
+		t.Errorf("backoffCeiling = %v, want the default metrics interval %v", backoffCeiling, want)
+	}
+}
+
+// The tier is the ticker's EFFECTIVE interval: the ticker keeps ticking at its configured rate and the gate decides which ticks may fetch.
+func TestPaneGateWidensAfterAThrottleAndRecoversAfterCleanFetches(t *testing.T) {
+	const base = 2 * time.Second
+	start := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	watch := &throttleWatch{}
+	gate := newPaneGate(base, watch)
+
+	// The first tick always fetches: a pane with nothing on it yet must not wait out an interval.
+	if !gate.due(start) {
+		t.Fatal("the first tick was dropped, want the pane's first fetch to go straight through")
+	}
+
+	watch.observe(&smithy.GenericAPIError{Code: "ThrottlingException"})
+
+	// The throttle has to widen the gap at once, so the next tick at the base rate is dropped.
+	if gate.due(start.Add(base)) {
+		t.Error("a tick one base interval after a throttled fetch was allowed, want it dropped")
+	}
+	// Nothing fetched, so nothing new was learnt: the widened gap must survive the dropped ticks.
+	if gate.due(start.Add(3 * time.Second)) {
+		t.Error("a dropped tick decayed the backoff, want the gap to hold until a fetch reports")
+	}
+	if !gate.due(start.Add(4 * time.Second)) {
+		t.Fatal("the tick a doubled interval later was dropped, want it allowed")
+	}
+
+	// One clean fetch halves the gap rather than restoring the base outright.
+	watch.observe(nil)
+	if gate.due(start.Add(5 * time.Second)) {
+		t.Error("one clean fetch restored the base rate, want the gap to decay by half")
+	}
+	if !gate.due(start.Add(6 * time.Second)) {
+		t.Fatal("the tick a halved interval later was dropped, want it allowed")
+	}
+
+	watch.observe(nil)
+	if !gate.due(start.Add(8 * time.Second)) {
+		t.Error("the pane did not return to its base rate after two clean fetches")
+	}
+}
+
+// The verdict has to come from the pane's OWN last fetch; a section map is how three of the four panes report.
+func TestThrottleWatchTakeReportsOncePerFetch(t *testing.T) {
+	watch := &throttleWatch{}
+
+	if _, reported := watch.take(); reported {
+		t.Error("a watch nothing has fetched through reported a verdict")
+	}
+
+	watch.observeSections(map[string]error{
+		"details": errFakeReload,
+		"metrics": &smithy.GenericAPIError{Code: "ThrottlingException"},
+	})
+
+	throttled, reported := watch.take()
+	if !reported || !throttled {
+		t.Errorf("take() = (%v, %v), want a reported throttle: one throttled section is AWS asking the pane to slow down", throttled, reported)
+	}
+	if _, reported := watch.take(); reported {
+		t.Error("the verdict was reported twice, so one throttle would widen the gap on every later tick")
+	}
+
+	watch.observeSections(map[string]error{"details": errFakeReload})
+
+	throttled, reported = watch.take()
+	if !reported || throttled {
+		t.Errorf("take() = (%v, %v), want a reported clean fetch: a failure that is not a throttle must not slow the pane down", throttled, reported)
 	}
 }

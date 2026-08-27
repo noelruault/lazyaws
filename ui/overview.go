@@ -55,11 +55,20 @@ func (gui *Gui) newOverviewTask(interval time.Duration, render func(context.Cont
 		})
 	}
 
+	gate := newPaneGate(interval, &gui.throttles)
+
 	return gui.NewTickerTask(TickerTaskOpts{
 		Duration: interval,
 		Wrap:     false,
 		Before:   func(context.Context) { gui.clearMainView() },
-		Func:     func(ctx context.Context, _ chan struct{}) { gui.renderOverview(ctx, render) },
+		Func: func(ctx context.Context, _ chan struct{}) {
+			// A dropped tick leaves the pane showing what it already has, which is the point: while AWS is throttling, redrawing the same numbers is not worth the calls it costs.
+			if !gate.due(time.Now()) {
+				return
+			}
+
+			gui.renderOverview(ctx, render)
+		},
 	})
 }
 

@@ -124,6 +124,7 @@ func (gui *Gui) secretOverview(ctx context.Context, secret *aws.SecretSummary, w
 	defer cancel()
 
 	details, err := gui.Client.GetSecretDetails(fetchCtx, secret.Name)
+	gui.throttles.observe(err)
 	if err != nil {
 		return overviewUnavailableBecause("secret", err)
 	}

@@ -163,7 +163,10 @@ func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	return presentation.FormatECSClusterOverview(row.Cluster, gui.Client.GetECSClusterOverview(fetchCtx, row.Cluster, gui.metricsMaxAge()), width)
+	overview := gui.Client.GetECSClusterOverview(fetchCtx, row.Cluster, gui.metricsMaxAge())
+	gui.throttles.observeSections(overview.Errs)
+
+	return presentation.FormatECSClusterOverview(row.Cluster, overview, width)
 }
 
 // ecsServiceOverview consolidates the service's detail tabs into one pane, refetching its running image on each render and its metrics on the slower metrics tier.
@@ -176,7 +179,10 @@ func (gui *Gui) ecsServiceOverview(ctx context.Context, row *ecsRow, width int) 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	return presentation.FormatECSServiceOverview(row.Service, gui.Client.GetECSServiceOverview(fetchCtx, row.Service, gui.metricsMaxAge()), width, time.Now())
+	overview := gui.Client.GetECSServiceOverview(fetchCtx, row.Service, gui.metricsMaxAge())
+	gui.throttles.observeSections(overview.Errs)
+
+	return presentation.FormatECSServiceOverview(row.Service, overview, width, time.Now())
 }
 
 func (gui *Gui) renderECSClusterConfig(row *ecsRow) tasks.TaskFunc {
