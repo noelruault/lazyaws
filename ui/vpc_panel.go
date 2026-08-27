@@ -19,9 +19,9 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 	return &panels.SideListPanel[*aws.VPC]{
 		ContextState: &panels.ContextState[*aws.VPC]{
 			GetMainTabs: func() []panels.MainTab[*aws.VPC] {
+				// No Config tab: the Overview's Configuration, DNS and Tags sections carry every field it held.
 				return []panels.MainTab[*aws.VPC]{
 					staticOverviewTab(gui, gui.vpcOverview),
-					{Key: "config", Title: "Config", Render: gui.renderVPCConfig},
 					{Key: "subnets", Title: "Subnets", Render: gui.renderVPCSubnets},
 					{Key: "routes", Title: "Routes", Render: gui.renderVPCRoutes},
 					{Key: "gateways", Title: "Gateways", Render: gui.renderVPCGateways},
@@ -123,19 +123,6 @@ func (gui *Gui) vpcTab(vpc *aws.VPC, render func(context.Context, string) (strin
 		}
 		gui.RenderStringMain(out)
 	}})
-}
-
-func (gui *Gui) renderVPCConfig(vpc *aws.VPC) tasks.TaskFunc {
-	// The list already holds everything but the two DNS attributes, which cost a call each.
-	item := *vpc
-	return gui.vpcTab(vpc, func(ctx context.Context, vpcID string) (string, error) {
-		support, hostnames, err := gui.Client.GetVPCDNS(ctx, vpcID)
-		if err != nil {
-			return "", err
-		}
-		item.DNSSupport, item.DNSHostnames = support, hostnames
-		return formatVPCConfig(&item), nil
-	})
 }
 
 func (gui *Gui) renderVPCSubnets(vpc *aws.VPC) tasks.TaskFunc {
@@ -318,30 +305,6 @@ func (gui *Gui) renderVPCTransit(vpc *aws.VPC) tasks.TaskFunc {
 		}
 		return formatVPCTransit(vpcID, attachments, gateways), nil
 	})
-}
-
-func formatVPCConfig(v *aws.VPC) string {
-	fields := map[string]string{
-		"ID":             v.ID,
-		"State":          v.State,
-		"CIDR":           v.CIDR,
-		"Tenancy":        v.Tenancy,
-		"Owner":          orDash(v.OwnerID),
-		"Default VPC":    formatYesNo(v.IsDefault),
-		"DNS resolution": formatEnabled(v.DNSSupport),
-		"DNS hostnames":  formatEnabled(v.DNSHostnames),
-		"DHCP options":   orDash(v.DHCPOptionsID),
-	}
-	if v.Name != "" {
-		fields["Name"] = v.Name
-	}
-
-	out := utils.FormatMap(0, fields)
-	out += formatVPCList("Secondary IPv4 CIDRs", v.SecondaryCIDRs)
-	out += formatVPCList("IPv6 CIDRs", v.IPv6CIDRs)
-	out += formatVPCTags(v.Tags)
-
-	return out
 }
 
 func formatVPCSubnets(subnets []aws.Subnet) string {

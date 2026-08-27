@@ -236,9 +236,9 @@ func TestFormatSecretOverviewRendersTheRotatingSecret(t *testing.T) {
 		"eu-west-1",
 		"Owning service: rds",
 		"Description:    Secret associated with the primary cluster",
-		"us-east-1  ▶ InSync",
+		"us-east-1  ● InSync",
 		"env: staging",
-		"Configured, shown on the Config tab",
+		"Configured, shown on the Policy tab",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing %q:\n%s", want, got)
@@ -315,7 +315,7 @@ func TestFormatSecretOverviewCapsTheVersionTable(t *testing.T) {
 	if strings.Contains(got, "version-15") {
 		t.Errorf("a version past the cap was rendered:\n%s", got)
 	}
-	if want := "(4 more on the Config tab)"; !strings.Contains(got, want) {
+	if want := "(4 more on the Versions tab)"; !strings.Contains(got, want) {
 		t.Errorf("overview is missing %q, so the hidden versions are silently dropped:\n%s", want, got)
 	}
 }

@@ -78,6 +78,7 @@ func secretDetailsBlock(d *aws.SecretDetails, now time.Time) string {
 		{"KMS key", orNone(d.KMSKeyID)},
 		{"Description", orNone(d.Description)},
 		{"Owning service", orNone(d.OwningService)},
+		{"Console", orNone(secretConsoleURL(d))},
 	}
 	// A secret awaiting deletion still reports every field above unchanged, so without this line the pane describes a healthy secret that is about to disappear.
 	if d.DeletedDate != nil {
@@ -103,7 +104,7 @@ func secretPostureBlock(d *aws.SecretDetails) string {
 		lines = append(lines, "none")
 	}
 	for _, tag := range d.Tags {
-		lines = append(lines, orNone(deref(tag.Key))+": "+orNone(deref(tag.Value)))
+		lines = append(lines, TagLine(orNone(deref(tag.Key)), deref(tag.Value)))
 	}
 
 	return strings.Join(lines, "\n")
@@ -118,10 +119,19 @@ func secretPolicyBlock(d *aws.SecretDetails) string {
 
 	policy := "Not configured"
 	if d.ResourcePolicy != "" {
-		policy = "Configured, shown on the Config tab"
+		policy = "Configured, shown on the Policy tab"
 	}
 
 	return SectionTitle("Resource policy") + "\n" + policy
+}
+
+// secretConsoleURL rebuilds what the Config tab used to compute, empty when the region never loaded.
+func secretConsoleURL(d *aws.SecretDetails) string {
+	if d.PrimaryRegion == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("https://%s.console.aws.amazon.com/secretsmanager/secret?name=%s&region=%s", d.PrimaryRegion, d.Name, d.PrimaryRegion)
 }
 
 func secretVersionsBlock(d *aws.SecretDetails, width int, now time.Time) string {
@@ -149,10 +159,29 @@ func secretVersionsBlock(d *aws.SecretDetails, width int, now time.Time) string 
 
 	out := title + "\n" + table
 	if hidden := len(d.Versions) - len(shown); hidden > 0 {
-		out += "\n" + utils.ColoredString(fmt.Sprintf("(%d more on the Config tab)", hidden), color.Faint)
+		out += "\n" + utils.ColoredString(fmt.Sprintf("(%d more on the Versions tab)", hidden), color.Faint)
 	}
 
 	return out
+}
+
+// FormatSecretVersions is the Versions tab: the same table as the Overview's, uncapped, for the rotation history the glance deliberately cuts.
+func FormatSecretVersions(d *aws.SecretDetails, width int, now time.Time) string {
+	if len(d.Versions) == 0 {
+		return "none\n"
+	}
+
+	rows := make([][]utils.Cell, len(d.Versions))
+	for i, version := range d.Versions {
+		rows[i] = []utils.Cell{
+			{Text: orNone(deref(version.VersionId))},
+			secretStagesCell(version.VersionStages),
+			{Text: RelTime(derefTime(version.CreatedDate), now), Color: color.Faint},
+		}
+	}
+	table, _ := utils.RenderTableFit(rows, width, []int{0, 0, 0})
+
+	return table
 }
 
 // secretStagesCell joins a version's staging labels into one cell.
