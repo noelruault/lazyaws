@@ -165,13 +165,15 @@ func TestVPCOverviewSectionsFailIndependently(t *testing.T) {
 
 // A subnet is public because the route table governing it reaches an internet gateway, which is the fetch's finding; the count has to follow that flag rather than the auto-assign setting beside it.
 func TestVPCOverviewCountsPublicSubnetsByRouting(t *testing.T) {
+	// Deliberately lopsided: with an equal split, swapping the two counts renders the same line and the mutant lives.
 	o := emptyVPCOverview()
 	o.Subnets = []aws.Subnet{
 		{ID: "subnet-a", AZ: "eu-west-1a", Public: true, MapPublicIPOnLaunch: false},
 		{ID: "subnet-b", AZ: "eu-west-1a", Public: false, MapPublicIPOnLaunch: true},
+		{ID: "subnet-c", AZ: "eu-west-1b", Public: false, MapPublicIPOnLaunch: true},
 	}
 
-	if got := plainVPC(overviewVPC(), o, stackedWidth); !strings.Contains(got, "2 subnets · 1 public / 1 private") {
+	if got := plainVPC(overviewVPC(), o, stackedWidth); !strings.Contains(got, "3 subnets · 1 public / 2 private") {
 		t.Errorf("overview does not count public subnets by their routing\n%s", got)
 	}
 }
