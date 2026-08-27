@@ -38,6 +38,16 @@ func TestGetBucketOverviewReportsEverySectionThatFailed(t *testing.T) {
 	}
 }
 
+// The overview keeps whether a policy exists, not the document, and inverted this reads as an attached policy on a bucket governed by none.
+func TestBucketPolicyAttached(t *testing.T) {
+	if BucketPolicyAttached("") {
+		t.Error("an empty policy response is NoSuchBucketPolicy, which is no policy")
+	}
+	if !BucketPolicyAttached(`{"Version":"2012-10-17","Statement":[]}`) {
+		t.Error("a policy document was reported as no policy")
+	}
+}
+
 // Err answers per section, which is what lets one formatter section render "unavailable" while its neighbours render data.
 func TestBucketOverviewErrIsPerSection(t *testing.T) {
 	overview := &BucketOverview{Errs: map[string]error{SectionPolicy: context.Canceled}}

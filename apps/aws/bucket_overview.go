@@ -90,7 +90,7 @@ func (c *Client) GetBucketOverview(ctx context.Context, name string) *BucketOver
 	}))
 	sections.fetch(SectionPolicy, c.bucketSection(func() error {
 		policy, err := c.GetBucketPolicy(ctx, name)
-		overview.PolicyPresent = policy != ""
+		overview.PolicyPresent = BucketPolicyAttached(policy)
 		return err
 	}))
 	sections.fetch(SectionTags, c.bucketSection(func() (err error) {
@@ -101,6 +101,12 @@ func (c *Client) GetBucketOverview(ctx context.Context, name string) *BucketOver
 	sections.wait()
 
 	return overview
+}
+
+// BucketPolicyAttached reports whether a GetBucketPolicy response carries a policy.
+// A bucket with none answers NoSuchBucketPolicy, which s3.go maps to an empty string and no error, so the absence is a value here and not a failure. Named rather than inlined at the fetch because the fetch itself is behind a concrete SDK client no test can reach, and inverted this line would tell an audit that an open bucket is governed by a policy.
+func BucketPolicyAttached(policy string) bool {
+	return policy != ""
 }
 
 // bucketSection runs a fetch behind the nil-client check every S3 subresource call needs, because none of them carries its own.
