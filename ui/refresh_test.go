@@ -417,3 +417,77 @@ func TestReloadProfilePanelGoesThroughTheSingleFlightGuard(t *testing.T) {
 		t.Errorf("the guarded loader ran %d times, want 1: the recovery path reached past the guard", got)
 	}
 }
+
+// The guard has to reach EVERY loader, and the wiring that applies it is the part a test of singleFlight itself cannot see: a loader wired without its wrapper is single-flighted from none of its three callers.
+func TestGuardedReloadersGuardsEveryLoader(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan string, 2)
+
+	var calls atomic.Int32
+	blocking := func() error {
+		calls.Add(1)
+		entered <- "in"
+		<-release
+
+		return nil
+	}
+
+	guarded := guardedReloaders(map[string]func() error{"ec2": blocking, "s3": blocking})
+
+	if len(guarded) != 2 {
+		t.Fatalf("guardedReloaders returned %d loaders, want 2: a dropped key is a panel with no guard", len(guarded))
+	}
+
+	go func() { _ = guarded["ec2"]() }()
+	<-entered
+
+	// The second caller finds the first still running and must be dropped, not queued behind it.
+	// Called off the test goroutine and waited on with a deadline, because an UNGUARDED loader does not fail here, it blocks on the same release the first one is holding: a hang is a worse way to report this than a failure.
+	dropped := make(chan error, 1)
+	go func() { dropped <- guarded["ec2"]() }()
+
+	select {
+	case err := <-dropped:
+		if err != nil {
+			t.Fatalf("the dropped call returned %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second call never returned: it queued behind the reload in flight instead of being dropped")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("the loader ran %d times, want 1: the second caller was not dropped", got)
+	}
+
+	// A different panel has its OWN guard, so one slow list must not block another.
+	go func() { _ = guarded["s3"]() }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("s3 never started: the loaders share one guard instead of holding one each")
+	}
+
+	close(release)
+}
+
+// The auth path is the app's recovery path and reloads the profile list by name; reaching past the guard there is how a stuck reload gets joined by one more per refresh key.
+func TestRefreshReloadsTheProfilePanelThroughTheGuardWhenAuthIsBroken(t *testing.T) {
+	gui, _ := newHeadlessGui(t)
+	gui.authProblem = errors.New("token expired")
+
+	guarded := make(chan struct{}, 1)
+	gui.panelReloads = map[string]func() error{
+		profileReloader: func() error {
+			guarded <- struct{}{}
+
+			return nil
+		},
+	}
+
+	gui.refresh()
+
+	select {
+	case <-guarded:
+	case <-time.After(time.Second):
+		t.Fatal("the auth path never reached the guarded profile loader: it called the raw loader instead")
+	}
+}

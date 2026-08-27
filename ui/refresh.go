@@ -43,6 +43,16 @@ func singleFlight(reload func() error) func() error {
 	}
 }
 
+// guardedReloaders puts EVERY panel loader behind its own single-flight guard, which is what makes one guard mean anything: a throttle firing, the refresh key and a tick from the panel tier are three callers into the same list, and a loader that misses its wrapper here is single-flighted from none of them.
+func guardedReloaders(reloaders map[string]func() error) map[string]func() error {
+	guarded := make(map[string]func() error, len(reloaders))
+	for name, reload := range reloaders {
+		guarded[name] = singleFlight(reload)
+	}
+
+	return guarded
+}
+
 // backoffCeiling caps how far a throttled pane's refresh interval is stretched.
 // 60s is the metrics tier's own interval: beyond it a pane that is merely being rate-limited would refresh more slowly than the slowest tier this app has, which reads as a hung pane rather than as a pane giving AWS room.
 const backoffCeiling = 60 * time.Second

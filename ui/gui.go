@@ -187,11 +187,7 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 	gui.Keys, gui.startupProblems = buildKeymap(cfg.User.Keybindings)
 	gui.throttledRefresh = newThrottle(50*time.Millisecond, gui.refresh)
 	gui.rerenderMainTab = newThrottle(50*time.Millisecond, gui.rerenderCurrentMainTab)
-	// Wrapped once, here, so every path into a loader shares one in-flight guard: a throttle firing, a refresh key and a tick from the panel tier are three callers that must not turn into three concurrent reloads of the same list.
-	gui.panelReloads = make(map[string]func() error)
-	for name, reload := range gui.panelReloaders() {
-		gui.panelReloads[name] = singleFlight(reload)
-	}
+	gui.panelReloads = guardedReloaders(gui.panelReloaders())
 	gui.panelThrottles = make(map[string]*throttle)
 	for name, reload := range gui.panelReloads {
 		gui.panelThrottles[name] = newThrottle(50*time.Millisecond, func() { go func() { _ = reload() }() })
