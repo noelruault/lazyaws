@@ -82,6 +82,8 @@ type Gui struct {
 	// mainWidth is main's inner width as of the last layout pass, so a resize can be told from the many layout passes that change nothing.
 	mainWidth int
 
+	ec2Extras ec2OverviewExtras
+
 	// rerenderMainTab collapses a drag-resize into one re-render per 50ms window.
 	rerenderMainTab *throttle
 }

@@ -3,7 +3,9 @@ package ui
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -19,7 +21,7 @@ func (gui *Gui) getEC2Panel() *panels.SideListPanel[*aws.Instance] {
 		ContextState: &panels.ContextState[*aws.Instance]{
 			GetMainTabs: func() []panels.MainTab[*aws.Instance] {
 				return []panels.MainTab[*aws.Instance]{
-					overviewTab(gui, func(context.Context, *aws.Instance, int) string { return overviewUnavailable("instance") }),
+					overviewTab(gui, gui.instanceOverview),
 					{Key: "config", Title: "Config", Render: gui.renderEC2Config},
 					{Key: "status", Title: "Status", Render: gui.renderEC2Status},
 					{Key: "metrics", Title: "Metrics", Render: gui.renderEC2Metrics},
@@ -85,6 +87,60 @@ func (gui *Gui) loadEC2List() error {
 
 // ec2SelectionKey identifies an instance across reloads. The Name tag is absent on plenty of instances and duplicated across an autoscaling group, so the id is the only identity.
 func ec2SelectionKey(inst *aws.Instance) string { return inst.ID }
+
+// instanceOverview consolidates the six detail tabs into one pane, refetching the refreshable sections on every render and reusing the selection-time ones.
+func (gui *Gui) instanceOverview(ctx context.Context, inst *aws.Instance, width int) string {
+	if gui.Client == nil {
+		return overviewUnavailable("instance")
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	overview := gui.Client.GetInstanceOverview(fetchCtx, inst.ID)
+	gui.ec2Extras.fill(fetchCtx, gui.Client, gui.Gen, inst.ID, overview)
+
+	return presentation.FormatInstanceOverview(inst, overview, width, time.Now())
+}
+
+// ec2OverviewExtras holds the two overview sections whose frequency is a cost decision rather than a display one.
+// The overview re-renders on a ticker, and DescribeAlarms cannot filter by dimension server-side: it pages every alarm in the account, against the tightest quota this app touches. Fetching that every couple of seconds is what "best effort" must not turn into, so both are fetched once per selected instance and reused until the selection moves.
+type ec2OverviewExtras struct {
+	mu         sync.Mutex
+	gen        int
+	instanceID string
+	asg        *aws.ASGMembership
+	alarms     []aws.InstanceAlarm
+	errs       map[string]error
+}
+
+// fill puts the selection-time sections onto an overview, fetching them only when the selection or the profile behind it has moved.
+// The lock is held across the fetches on purpose: it is also what stops two overview renders of the same instance from making the same pair of calls at once.
+func (e *ec2OverviewExtras) fill(ctx context.Context, client *aws.Client, gen int, instanceID string, overview *aws.InstanceOverview) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// The generation is part of the key because an instance id is only unique within the account it was read from, and a profile switch replaces the account without changing the id.
+	if e.instanceID != instanceID || e.gen != gen {
+		e.instanceID, e.gen = instanceID, gen
+		e.errs = map[string]error{}
+
+		asg, err := client.GetInstanceASGMembership(ctx, instanceID)
+		e.asg = asg
+		if err != nil {
+			e.errs[aws.SectionASG] = err
+		}
+
+		alarms, err := client.GetInstanceAlarms(ctx, instanceID)
+		e.alarms = alarms
+		if err != nil {
+			e.errs[aws.SectionAlarms] = err
+		}
+	}
+
+	overview.ASG, overview.Alarms = e.asg, e.alarms
+	maps.Copy(overview.Errs, e.errs)
+}
 
 func (gui *Gui) renderEC2Config(inst *aws.Instance) tasks.TaskFunc {
 	id := inst.ID
