@@ -108,12 +108,12 @@ func ECSImageLabel(image aws.ECSServiceImage) string {
 func FormatECSClusterOverview(c *aws.ECSCluster, o *aws.ECSClusterOverview, width int) string {
 	// Cut to the pane: the header spans the full width rather than a column, so Columns never sees it, and with wrap off an over-long meta line runs off the edge unmarked.
 	// The meta line stops at the services summary: the running and pending counts moved into the stat cards beside it, and repeating them here is what the cards' width would truncate first.
-	header := mergeRightAligned(width,
-		truncateBlock(ResourceHeader("ECS Cluster", c.Name, ecsClusterBadge(c).Rendered(), "",
+	header := HeaderWithStats(width,
+		ResourceHeader("ECS Cluster", c.Name, ecsClusterBadge(c).Rendered(), "",
 			c.Region,
 			clusterServicesSummary(c, o),
-		), width),
-		StatBoxes(0, clusterStatCards(c, o)),
+		),
+		clusterStatCards(c, o),
 	)
 
 	column := ColumnWidth(width, overviewGap)

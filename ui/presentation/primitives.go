@@ -176,6 +176,9 @@ const boxInnerPadding = 1
 // boxedTableMinInner keeps a table legible when the pane is squeezed: below this the border chrome costs more than it organises, so the caller gets the borderless layout instead.
 const boxedTableMinInner = 16
 
+// boxedTablesOn keeps every overview on one table style while preserving the frameless layout as a one-line rollback.
+var boxedTablesOn = true
+
 // BoxedTable renders the mockups' bordered table: a square-cornered frame, a faint header row, a rule under it, and the body aligned by RenderTableFit.
 // Square corners on purpose: the rounded set is the pane chrome, and reusing it here would make a table read as a nested view.
 // width is the full width including borders; weights follow RenderTableFit's contract and must match the column count.
@@ -193,7 +196,7 @@ func BoxedTable(width int, weights []int, header []string, rows [][]utils.Cell) 
 	if err != nil {
 		return utils.ColoredString(err.Error(), color.FgRed)
 	}
-	if inner < boxedTableMinInner {
+	if !boxedTablesOn || inner < boxedTableMinInner {
 		return table
 	}
 
@@ -220,11 +223,21 @@ type Stat struct {
 	Value utils.Cell
 }
 
+// statCardsOn keeps every overview on one stat style while preserving aligned lines as a one-line rollback.
+var statCardsOn = true
+
 // StatBoxes renders stat cards side by side, each four rows tall.
 // width <= 0 sizes every card to the widest one and centres the text, which is the header's compact row; width > 0 splits the width evenly and left-aligns, which is the Health cards.
 func StatBoxes(width int, stats []Stat) string {
 	if len(stats) == 0 {
 		return ""
+	}
+	if !statCardsOn {
+		rows := make([]kv, len(stats))
+		for i, stat := range stats {
+			rows[i] = kv{stat.Label, stat.Value.Rendered()}
+		}
+		return kvBlock(rows)
 	}
 
 	const gap = " "
@@ -270,6 +283,20 @@ func StatBoxes(width int, stats []Stat) string {
 		strings.Join(values, gap),
 		strings.Join(bottom, gap),
 	}, "\n")
+}
+
+// HeaderWithStats keeps compact cards beside a resource header when they fit and preserves the header's full-width reading order in plain mode.
+func HeaderWithStats(width int, header string, cards []Stat) string {
+	header = truncateBlock(header, width)
+	stats := StatBoxes(0, cards)
+	if stats == "" {
+		return header
+	}
+	if !statCardsOn {
+		return header + "\n" + truncateBlock(stats, width)
+	}
+
+	return mergeRightAligned(width, header, stats)
 }
 
 // centerPad pads a styled string to width cells with the slack split evenly, the odd cell going right.

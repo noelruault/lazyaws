@@ -16,10 +16,13 @@ func Gallery(width int) string {
 		symbol string
 		body   string
 	}{
-		{"ResourceHeader + StatBoxes(compact) via mergeRightAligned", galleryHeader(width)},
-		{"StatBoxes(filled) — the Health cards", galleryHealthCards(width)},
-		{"BoxedTable — bordered table, faint header, rule under it", galleryServiceTable(width)},
-		{"BoxedTable with a flexible last column", galleryTaskTable(width)},
+		{"ResourceHeader + StatBoxes(compact) — style A: cards (flip statCardsOn)", galleryHeader(width, true)},
+		{"ResourceHeader + StatBoxes(compact) — style B: plain lines", galleryHeader(width, false)},
+		{"StatBoxes(filled) — style A: Health cards", galleryHealthCards(width, true)},
+		{"StatBoxes(filled) — style B: plain lines", galleryHealthCards(width, false)},
+		{"BoxedTable — style A: bordered (flip boxedTablesOn)", galleryServiceTable(width, true)},
+		{"BoxedTable — style B: frameless", galleryServiceTable(width, false)},
+		{"BoxedTable with a flexible last column", galleryTaskTable(width, true)},
 		{"Badge — one colour vocabulary for every state word", galleryBadges()},
 		{"Gauge — textual meter for metrics", galleryGauges()},
 		{"kvBlock — aligned label/value rows", galleryKvBlock()},
@@ -36,21 +39,29 @@ func Gallery(width int) string {
 	return truncateBlock(strings.Join(out, "\n"), width)
 }
 
-func galleryHeader(width int) string {
-	return mergeRightAligned(width,
+func galleryHeader(width int, cards bool) string {
+	previous := statCardsOn
+	statCardsOn = cards
+	defer func() { statCardsOn = previous }()
+
+	return HeaderWithStats(width,
 		ResourceHeader("ECS Cluster", "app-cluster", Badge("healthy"), "",
 			"eu-west-1",
 			"1/1 services steady",
 		),
-		StatBoxes(0, []Stat{
+		[]Stat{
 			{Label: "Services", Value: utils.Cell{Text: "1 / 1", Color: color.FgGreen}},
 			{Label: "Tasks", Value: utils.Cell{Text: "1 running", Color: color.FgGreen}},
 			{Label: "Pending", Value: utils.Cell{Text: "0"}},
-		}),
+		},
 	)
 }
 
-func galleryHealthCards(width int) string {
+func galleryHealthCards(width int, cards bool) string {
+	previous := statCardsOn
+	statCardsOn = cards
+	defer func() { statCardsOn = previous }()
+
 	return StatBoxes(min(width, 90), []Stat{
 		{Label: "Cluster", Value: utils.Cell{Text: "● ACTIVE", Color: color.FgGreen}},
 		{Label: "Services", Value: utils.Cell{Text: "1 healthy", Color: color.FgGreen}},
@@ -58,7 +69,11 @@ func galleryHealthCards(width int) string {
 	})
 }
 
-func galleryServiceTable(width int) string {
+func galleryServiceTable(width int, boxed bool) string {
+	previous := boxedTablesOn
+	boxedTablesOn = boxed
+	defer func() { boxedTablesOn = previous }()
+
 	return SectionTitleWithNote(min(width, 90), "Service Summary", "1 service") + "\n" +
 		BoxedTable(min(width, 90), []int{1, 0, 0, 0, 0},
 			[]string{"Service", "Desired", "Running", "Pending", "Status"},
@@ -68,7 +83,11 @@ func galleryServiceTable(width int) string {
 			})
 }
 
-func galleryTaskTable(width int) string {
+func galleryTaskTable(width int, boxed bool) string {
+	previous := boxedTablesOn
+	boxedTablesOn = boxed
+	defer func() { boxedTablesOn = previous }()
+
 	return SectionTitle("Tasks") + "\n" +
 		BoxedTable(min(width, 90), []int{0, 0, 0, 1},
 			[]string{"Task", "Revision", "Status", "Image"},

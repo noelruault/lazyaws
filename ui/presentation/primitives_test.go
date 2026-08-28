@@ -247,6 +247,25 @@ func TestBoxedTableDropsTheFrameWhenSqueezed(t *testing.T) {
 	}
 }
 
+func TestBoxedTableFollowsTheStyleSwitch(t *testing.T) {
+	previous := boxedTablesOn
+	t.Cleanup(func() { boxedTablesOn = previous })
+
+	boxedTablesOn = false
+	got := utils.Decolorise(BoxedTable(40, []int{1, 0}, []string{"Name", "Status"}, [][]utils.Cell{
+		{{Text: "app-service"}, {Text: "HEALTHY"}},
+	}))
+
+	if strings.Contains(got, "┌") {
+		t.Errorf("plain table style still renders a border:\n%s", got)
+	}
+	for _, want := range []string{"Name", "Status", "app-service", "HEALTHY"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plain table style lost %q:\n%s", want, got)
+		}
+	}
+}
+
 // Compact cards size to the widest of them and centre their text; that is the header's stat row.
 func TestStatBoxesCompact(t *testing.T) {
 	forceColor(t)
@@ -308,6 +327,38 @@ func TestStatBoxesTruncateRatherThanBreakTheFrame(t *testing.T) {
 		if w := runewidth.StringWidth(line); w != first {
 			t.Errorf("line %d is %d cells wide while the frame is %d:\n%s", i, w, first, got)
 		}
+	}
+}
+
+func TestStatBoxesFollowsTheStyleSwitch(t *testing.T) {
+	previous := statCardsOn
+	t.Cleanup(func() { statCardsOn = previous })
+
+	statCardsOn = false
+	got := utils.Decolorise(StatBoxes(60, []Stat{
+		{Label: "Services", Value: utils.Cell{Text: "1 / 1", Color: color.FgGreen}},
+		{Label: "Pending", Value: utils.Cell{Text: "0"}},
+	}))
+
+	if strings.Contains(got, "┌") {
+		t.Errorf("plain stat style still renders a border:\n%s", got)
+	}
+	for _, want := range []string{"Services: 1 / 1", "Pending:  0"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plain stat style lost %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestHeaderWithStatsStacksPlainStatsUnderTheHeader(t *testing.T) {
+	previous := statCardsOn
+	t.Cleanup(func() { statCardsOn = previous })
+
+	statCardsOn = false
+	got := utils.Decolorise(HeaderWithStats(60, "kind\nname\nmeta", []Stat{{Label: "Tasks", Value: utils.Cell{Text: "3"}}}))
+
+	if got != "kind\nname\nmeta\nTasks: 3" {
+		t.Errorf("plain header stats = %q, want stats below the header", got)
 	}
 }
 

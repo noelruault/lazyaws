@@ -19,10 +19,10 @@ func TestGalleryShowsEveryComponentInsideItsWidth(t *testing.T) {
 
 	for _, want := range []string{
 		"ResourceHeader", "StatBoxes(compact)", "StatBoxes(filled)",
-		"BoxedTable", "Badge", "Gauge", "kvBlock", "SectionTitle",
+		"statCardsOn", "BoxedTable", "boxedTablesOn", "frameless", "Badge", "Gauge", "kvBlock", "SectionTitle",
 		"tagChips", "plain lines",
 		// One recognisable rendering per component, so a caption without its block cannot pass.
-		"app-cluster", "● ACTIVE", "▦ Service Summary", "app:42",
+		"app-cluster", "Services: 1 / 1", "● ACTIVE", "Cluster:     ● ACTIVE", "▦ Service Summary", "app:42",
 		"● some-new-state", "▕███", "Container Insights:", "⌘ Console",
 		"│ Environment: staging │", "Environment: staging\nTeam: security",
 	} {
@@ -38,13 +38,27 @@ func TestGalleryShowsEveryComponentInsideItsWidth(t *testing.T) {
 	}
 }
 
-// The gallery forces each tag style for its sample and must put the switch back, or looking at the gallery would change how the app renders.
-func TestGalleryLeavesTheTagStyleAlone(t *testing.T) {
-	previous := tagStyleChips
-	t.Cleanup(func() { tagStyleChips = previous })
+// The gallery forces every style for its samples and must put the switches back, or looking at the gallery would change how the app renders.
+func TestGalleryLeavesStyleSwitchesAlone(t *testing.T) {
+	previousStats := statCardsOn
+	previousTables := boxedTablesOn
+	previousTags := tagStyleChips
+	t.Cleanup(func() {
+		statCardsOn = previousStats
+		boxedTablesOn = previousTables
+		tagStyleChips = previousTags
+	})
 
+	statCardsOn = false
+	boxedTablesOn = false
 	tagStyleChips = false
 	Gallery(80)
+	if statCardsOn != false {
+		t.Error("rendering the gallery flipped statCardsOn")
+	}
+	if boxedTablesOn != false {
+		t.Error("rendering the gallery flipped boxedTablesOn")
+	}
 	if tagStyleChips != false {
 		t.Error("rendering the gallery flipped tagStyleChips")
 	}
