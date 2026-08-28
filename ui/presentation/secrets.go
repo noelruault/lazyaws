@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	secretsmanagertypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/fatih/color"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -50,10 +51,37 @@ const secretVersionsShown = 15
 // FormatSecretOverview lays a secret's metadata out for the Overview tab: the header, a two-column body, then the version history that rotation is actually visible in.
 // Everything rendered here comes from the DescribeSecret / ListSecretVersionIds / GetResourcePolicy fetch the Config tab already makes, so the tab costs no additional AWS call, and the value itself is never read.
 func FormatSecretOverview(d *aws.SecretDetails, width int, now time.Time) string {
-	header := ResourceHeader("Secret", d.Name, secretRotationBadge(&d.SecretSummary), "", d.PrimaryRegion)
+	header := HeaderWithStats(width,
+		ResourceHeader("Secret", d.Name, secretRotationBadge(&d.SecretSummary), "", d.PrimaryRegion),
+		secretStatCards(d),
+	)
 	body := Columns(width, 2, secretDetailsBlock(d, now), secretPostureBlock(d, ColumnWidth(width, 2)))
 
 	return header + "\n\n" + body + "\n\n" + secretVersionsBlock(d, width, now)
+}
+
+func secretStatCards(d *aws.SecretDetails) []Stat {
+	rotation := utils.Cell{Text: "off"}
+	if d.RotationEnabled {
+		rotation = utils.Cell{Text: "on", Color: color.FgGreen}
+		if d.RotationDays > 0 {
+			rotation.Text = fmt.Sprintf("every %dd", d.RotationDays)
+		}
+	}
+
+	replicas := utils.Cell{Text: fmt.Sprintf("%d", len(d.Replication))}
+	for _, replica := range d.Replication {
+		if replica.Status != secretsmanagertypes.StatusTypeInSync {
+			replicas.Color = color.FgRed
+			break
+		}
+	}
+
+	return []Stat{
+		{Label: "Rotation", Value: rotation},
+		{Label: "Replicas", Value: replicas},
+		{Label: "Versions", Value: utils.Cell{Text: fmt.Sprintf("%d", len(d.Versions))}},
+	}
 }
 
 // secretRotationBadge speaks the same vocabulary as the left panel's rotation column, including its rule that a cadence of zero days is an unreported cadence rather than a configured one.
@@ -157,8 +185,8 @@ func secretVersionsBlock(d *aws.SecretDetails, width int, now time.Time) string 
 		}
 	}
 
-	// Every column here holds a value of its own natural width, so none of them takes a weight; the rows and the weights are built together, which is why neither error RenderTableFit reports can happen.
-	table, _ := utils.RenderTableFit(rows, width, []int{0, 0, 0})
+	// Version IDs absorb the squeeze so stage and creation state stay readable.
+	table := BoxedTable(width, []int{1, 0, 0}, []string{"Version", "Stages", "Created"}, rows)
 
 	out := title + "\n" + table
 	if hidden := len(d.Versions) - len(shown); hidden > 0 {
