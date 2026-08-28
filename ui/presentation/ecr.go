@@ -67,14 +67,43 @@ const ecrImagesShown = 10
 // FormatECRRepositoryOverview lays a repository out for the Overview tab: the posture that decides whether a tag can move under a deployment, then what is actually in the repository.
 // Everything but the image list is already on the row the list fetched, so this pane costs the one DescribeImages call the Images tab makes.
 func FormatECRRepositoryOverview(r *aws.ECRRepository, images []aws.ECRImage, imagesErr error, width int, now time.Time) string {
-	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and a registry URI plus a long repository name runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("Repository", r.Name, ecrMutabilityBadge(r.TagMutability).Rendered(), "", r.URI, ecrCreated(r, now)), width)
+	header := HeaderWithStats(width,
+		ResourceHeader("Repository", r.Name, ecrMutabilityBadge(r.TagMutability).Rendered(), "", r.URI, ecrCreated(r, now)),
+		ecrStatCards(r, images, imagesErr),
+	)
 
 	column := ColumnWidth(width, overviewGap)
 	left := joinBlocks(ecrConfigBlock(r), ecrPolicyBlock(r, now))
 	right := ecrImagesBlock(images, imagesErr, column, now)
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+func ecrStatCards(r *aws.ECRRepository, images []aws.ECRImage, imagesErr error) []Stat {
+	imageCount := utils.Cell{Text: fmt.Sprintf("%d", len(images))}
+	if imagesErr != nil {
+		imageCount = utils.Cell{Text: "unavailable", Color: color.FgRed}
+	}
+
+	mutability := ecrMutabilityBadge(r.TagMutability)
+	switch {
+	case strings.HasPrefix(r.TagMutability, "IMMUTABLE"):
+		mutability.Text = strings.ToUpper(mutability.Text)
+		mutability.Color = color.FgGreen
+	case strings.HasPrefix(r.TagMutability, "MUTABLE"):
+		mutability.Text = strings.ToUpper(strings.TrimPrefix(mutability.Text, "● "))
+	}
+
+	scanOnPush := utils.Cell{Text: "off"}
+	if r.ScanOnPush {
+		scanOnPush = utils.Cell{Text: "on", Color: color.FgGreen}
+	}
+
+	return []Stat{
+		{Label: "Images", Value: imageCount},
+		{Label: "Mutability", Value: mutability},
+		{Label: "Scan on push", Value: scanOnPush},
+	}
 }
 
 func ecrCreated(r *aws.ECRRepository, now time.Time) string {
@@ -159,10 +188,10 @@ func ecrLifecycleLine(r *aws.ECRRepository, now time.Time) string {
 }
 
 func ecrImagesBlock(images []aws.ECRImage, err error, width int, now time.Time) string {
-	title := SectionTitle("Images")
 	if err != nil {
-		return title + "\n" + utils.ColoredString("unavailable: "+err.Error(), color.FgRed)
+		return sectionUnavailable("Images", err)
 	}
+	title := SectionTitle("Images")
 	if len(images) == 0 {
 		return title + "\nnone"
 	}
@@ -185,15 +214,14 @@ func ecrImagesBlock(images []aws.ECRImage, err error, width int, now time.Time) 
 	for i, image := range shown {
 		rows[i] = []utils.Cell{
 			ecrTagsCell(image.Tags),
-			{Text: ShortDigest(image.Digest), Color: color.Faint},
+			{Text: RelTime(pushedAt(image.PushedAt), now)},
 			{Text: FormatByteCount(float64(image.SizeBytes))},
-			{Text: RelTime(pushedAt(image.PushedAt), now), Color: color.Faint},
-			ecrFindingsCell(image.Severity),
+			{Text: ShortDigest(image.Digest), Color: color.Faint},
 		}
 	}
 
-	// The tag column is the only one without a natural width, so it takes the slack and every other column is content-sized.
-	table, _ := utils.RenderTableFit(rows, width, []int{1, 0, 0, 0, 0})
+	// Digest can lose its suffix without hiding when or how large an image is, so it absorbs the squeeze.
+	table := BoxedTable(width, []int{0, 0, 0, 1}, []string{"Tag", "Pushed", "Size", "Digest"}, rows)
 
 	out := title + "\n" + summary + "\n" + table
 	if hidden := len(images) - len(shown); hidden > 0 {
@@ -233,35 +261,4 @@ func ecrTagsCell(tags []string) utils.Cell {
 	}
 
 	return utils.Cell{Text: strings.Join(tags, ", ")}
-}
-
-// ecrSeverityRank orders the finding severities ECR reports, worst first, so a row shows the one that decides whether the image ships.
-var ecrSeverityRank = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL", "UNDEFINED"}
-
-// ecrFindingsCell reduces a scan summary to its worst severity and that severity's count.
-// A repository with scanning off reports no counts at all, which is not the same as a clean scan, so an absent summary is "-" rather than "0".
-func ecrFindingsCell(severity map[string]int32) utils.Cell {
-	if len(severity) == 0 {
-		return utils.Cell{Text: "-", Color: color.Faint}
-	}
-
-	for _, name := range ecrSeverityRank {
-		count, ok := severity[name]
-		if !ok || count == 0 {
-			continue
-		}
-
-		text := fmt.Sprintf("%s %d", strings.ToLower(name), count)
-		switch name {
-		case "CRITICAL", "HIGH":
-			return utils.Cell{Text: text, Color: color.FgRed}
-		case "MEDIUM":
-			return utils.Cell{Text: text, Color: color.FgYellow}
-		default:
-			return utils.Cell{Text: text, Color: color.Faint}
-		}
-	}
-
-	// Every severity ECR reported was zero, which is a scan that ran and found nothing.
-	return utils.Cell{Text: "clean", Color: color.FgGreen}
 }
