@@ -291,11 +291,10 @@ func TestClusterOverviewRendersEverySection(t *testing.T) {
 	for _, want := range []string{
 		"batch-cluster",
 		"eu-west-1",
-		"1/1 services steady",
-		// The counts moved off the header's meta line into the stat cards and the Health grid.
+		// Every count lives in exactly one place after the dedup pass: the cards carry services, running and pending, and the Health block carries what no card does.
+		"1 / 1",
 		"12 running",
-		"Running tasks:",
-		"Pending tasks:",
+		"Deployments:",
 		"arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
 		"Container Insights: enabled",
 		"DEFAULT (task awslogs driver)",
@@ -468,7 +467,8 @@ func TestClusterOverviewShowsTheRolloutReasonOnItsOwnLine(t *testing.T) {
 	if !strings.Contains(got, "kicker-worker: "+reason) {
 		t.Errorf("a failed rollout must name the service and its reason\n%s", got)
 	}
-	if !strings.Contains(got, "0/1 services steady") {
+	// The steady count lives in the Services card now; a service that lost every task is not steady.
+	if !strings.Contains(got, "0 / 1") {
 		t.Errorf("a service that lost every task is not steady\n%s", got)
 	}
 
@@ -517,9 +517,9 @@ func TestClusterOverviewSectionsFailIndependently(t *testing.T) {
 	if !strings.Contains(got, "unavailable: AccessDenied: ecs:ListServices") {
 		t.Errorf("a failed services fetch must state its reason\n%s", got)
 	}
-	// The header cannot count steady services without the list, and falls back to the count the cluster itself reported.
-	if !strings.Contains(got, "3 services") || strings.Contains(got, "services steady") {
-		t.Errorf("with the service list unavailable the header must fall back to the cluster's own count\n%s", got)
+	// The Services card cannot count steady services without the list, and falls back to the count the cluster itself reported.
+	if card := clusterStatCards(cluster, overview)[0].Value.Text; card != "3" {
+		t.Errorf("with the service list unavailable the Services card reads %q, want the cluster's own count %q", card, "3")
 	}
 	if !strings.Contains(got, "none, services unavailable") {
 		t.Errorf("capacity cannot name launch types it could not read, and must say so rather than assuming Fargate\n%s", got)

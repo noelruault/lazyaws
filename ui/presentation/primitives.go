@@ -227,7 +227,8 @@ type Stat struct {
 var statCardsOn = true
 
 // StatBoxes renders stat cards side by side, each four rows tall.
-// width <= 0 sizes every card to the widest one and centres the text, which is the header's compact row; width > 0 splits the width evenly and left-aligns, which is the Health cards.
+// width <= 0 sizes each card to its own content and centres the text, which is the header's compact row: uniform widths looked tidier but overflowed an 80-cell pane the moment a fourth card joined, and per-card sizing is what keeps the row inside panes it cannot measure.
+// width > 0 splits the width evenly and left-aligns, which is the Health cards.
 func StatBoxes(width int, stats []Stat) string {
 	if len(stats) == 0 {
 		return ""
@@ -243,34 +244,33 @@ func StatBoxes(width int, stats []Stat) string {
 	const gap = " "
 	centred := width <= 0
 
-	inner := 0
-	if centred {
-		for _, s := range stats {
-			inner = max(inner, runewidth.StringWidth(s.Label), runewidth.StringWidth(s.Value.Text))
-		}
-		inner += 2 * boxInnerPadding
-	} else {
-		// Borders and gaps come off the budget first; a remainder narrower than the padding renders as an empty frame rather than a panic.
-		inner = max((width-len(stats)*2-(len(stats)-1))/len(stats), 2*boxInnerPadding+1)
-	}
-
-	fit := func(s string) string {
-		return truncateStyled(s, inner-2*boxInnerPadding)
-	}
-	place := func(s string) string {
+	// Borders and gaps come off the budget first; a remainder narrower than the padding renders as an empty frame rather than a panic.
+	filledInner := max((width-len(stats)*2-(len(stats)-1))/len(stats), 2*boxInnerPadding+1)
+	innerOf := func(s Stat) int {
 		if centred {
-			return centerPad(s, inner)
+			return max(runewidth.StringWidth(s.Label), runewidth.StringWidth(s.Value.Text)) + 2*boxInnerPadding
 		}
-		pad := strings.Repeat(" ", boxInnerPadding)
-		return pad + utils.WithPadding(s, inner-2*boxInnerPadding) + pad
+		return filledInner
 	}
 
-	rule := strings.Repeat("─", inner)
 	top := make([]string, len(stats))
 	labels := make([]string, len(stats))
 	values := make([]string, len(stats))
 	bottom := make([]string, len(stats))
 	for i, s := range stats {
+		inner := innerOf(s)
+		fit := func(text string) string {
+			return truncateStyled(text, inner-2*boxInnerPadding)
+		}
+		place := func(text string) string {
+			if centred {
+				return centerPad(text, inner)
+			}
+			pad := strings.Repeat(" ", boxInnerPadding)
+			return pad + utils.WithPadding(text, inner-2*boxInnerPadding) + pad
+		}
+
+		rule := strings.Repeat("─", inner)
 		top[i] = "┌" + rule + "┐"
 		labels[i] = "│" + place(utils.ColoredString(fit(s.Label), color.Faint)) + "│"
 		values[i] = "│" + place(utils.Cell{Text: fit(s.Value.Text), Color: s.Value.Color}.Rendered()) + "│"

@@ -24,30 +24,14 @@ func FormatEKSClusterOverview(c *aws.EKSCluster, o *aws.EKSOverview, width int) 
 	)
 
 	column := ColumnWidth(width, overviewGap)
-	left := joinBlocks(eksHealthBlock(c, o, column), eksConfigBlock(c, o), eksNetworkingBlock(o), eksLoggingBlock(o), eksTagsBlock(o, column))
+	left := joinBlocks(eksConfigBlock(c, o), eksNetworkingBlock(o), eksLoggingBlock(o), eksTagsBlock(o, column))
 	right := joinBlocks(eksNodeGroupsBlock(c, o, column), eksAddonsBlock(o, column))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
 }
 
+// eksStatCards is the header's glance row. No Status card and no separate Health grid: the header badge already carries the cluster status, and repeating it framed was the owner's dedup complaint (2026-08-28), so the node-group and addon verdicts moved up here instead.
 func eksStatCards(c *aws.EKSCluster, o *aws.EKSOverview) []Stat {
-	addons := utils.Cell{Text: "unavailable", Color: color.FgRed}
-	if o.Err(aws.SectionAddons) == nil {
-		_, degraded := eksAddonHealthCounts(o.Addons)
-		addons = utils.Cell{Text: fmt.Sprintf("%d", len(o.Addons))}
-		if degraded > 0 {
-			addons = utils.Cell{Text: fmt.Sprintf("%d degraded", degraded), Color: color.FgRed}
-		}
-	}
-
-	return []Stat{
-		{Label: "Status", Value: BadgeCell(c.Status)},
-		{Label: "Nodes", Value: utils.Cell{Text: fmt.Sprintf("%d desired", c.NodeCount)}},
-		{Label: "Addons", Value: addons},
-	}
-}
-
-func eksHealthBlock(c *aws.EKSCluster, o *aws.EKSOverview, width int) string {
 	nodeGroups := utils.Cell{Text: "unavailable", Color: color.FgRed}
 	if o.Err(aws.SectionNodeGroups) == nil {
 		active := 0
@@ -82,13 +66,11 @@ func eksHealthBlock(c *aws.EKSCluster, o *aws.EKSOverview, width int) string {
 		}
 	}
 
-	cards := StatBoxes(width, []Stat{
-		{Label: "Cluster", Value: BadgeCell(c.Status)},
+	return []Stat{
+		{Label: "Nodes", Value: utils.Cell{Text: fmt.Sprintf("%d desired", c.NodeCount)}},
 		{Label: "Node groups", Value: nodeGroups},
 		{Label: "Addons", Value: addons},
-	})
-
-	return SectionTitle("Health") + "\n" + cards
+	}
 }
 
 func eksAddonHealthCounts(addons []aws.EKSAddon) (healthy, degraded int) {
@@ -139,15 +121,11 @@ func eksDetailsErr(o *aws.EKSOverview) error {
 	return nil
 }
 
-// eksConfigBlock reads the list row, not the describe, so a denied DescribeCluster still leaves the cluster's version, status and endpoint on the pane.
+// eksConfigBlock carries only what the header does not: the version, region, created stamp and node count all live on the header and its cards, and repeating them here was the dedup pass's finding.
+// The endpoint still reads the list row, so a denied DescribeCluster only costs the platform-version row.
 func eksConfigBlock(c *aws.EKSCluster, o *aws.EKSOverview) string {
 	rows := []kv{
-		{"Version", orNone(c.Version)},
-		{"Status", orNone(c.Status)},
 		{"Endpoint", orNone(c.Endpoint)},
-		{"Region", orNone(c.Region)},
-		{"Created", orNone(c.CreatedAt)},
-		{"Nodes", fmt.Sprintf("%d desired", c.NodeCount)},
 		{"Platform", eksPlatformVersion(o)},
 		{"ARN", orNone(c.Arn)},
 	}

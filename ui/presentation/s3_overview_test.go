@@ -56,8 +56,9 @@ func emptyBucketOverview() *aws.BucketOverview {
 func TestBucketOverviewRendersEverySection(t *testing.T) {
 	got := plainBucket(overviewBucket(), fullBucketOverview(), stackedWidth)
 
+	// No exposure badge in the header: the Access card is the glance and the Security rows are the detail.
 	for _, want := range []string{
-		"Bucket", "app-artifacts", "Public access blocked", "eu-west-1",
+		"Bucket", "app-artifacts", "eu-west-1",
 		"Access", "private", "Versioning", "Enabled", "Encryption", "KMS",
 		"Security", "Block ACLs:", "Restrict public:", "aws:kms", "attached, shown on the Policy tab",
 		"Data management", "Enabled", "GOVERNANCE", "30d default",
@@ -109,8 +110,8 @@ func TestBucketOverviewCardsUsePostureColours(t *testing.T) {
 	}
 	partial := emptyBucketOverview()
 	partial.PublicAccess = &aws.PublicAccessBlock{BlockPublicAcls: true, BlockPublicPolicy: true}
-	if got := bucketStatCards(partial)[0].Value; got.Text != "public" || got.Color != color.FgRed {
-		t.Errorf("partly blocked access card = %+v, want red public", got)
+	if got := bucketStatCards(partial)[0].Value; got.Text != "partly blocked 2/4" || got.Color != color.FgYellow {
+		t.Errorf("partly blocked access card = %+v, want the amber count the old badge carried", got)
 	}
 
 	aes := fullBucketOverview()
@@ -266,8 +267,8 @@ func TestBucketOverviewReportsAFailedRegionInTheHeader(t *testing.T) {
 	}
 }
 
-// The badge is the one thing read at a glance, and every state it can take has to be a different word.
-func TestBucketExposureBadge(t *testing.T) {
+// The Access card is the one thing read at a glance, and every state it can take has to be a different word; the partial case keeps its count because "2/4 blocked" and "nothing blocked" call for different fixes.
+func TestBucketAccessCardStates(t *testing.T) {
 	forceColor(t)
 
 	all := &aws.PublicAccessBlock{BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: true, RestrictPublicBuckets: true}
@@ -277,11 +278,11 @@ func TestBucketExposureBadge(t *testing.T) {
 		err   error
 		want  string
 	}{
-		{"all four", all, nil, "Public access blocked"},
-		{"two of four", &aws.PublicAccessBlock{BlockPublicAcls: true, BlockPublicPolicy: true}, nil, "Public access partly blocked (2/4)"},
-		{"none of four", &aws.PublicAccessBlock{}, nil, "Public access not blocked"},
-		{"no configuration", nil, nil, "Public access not blocked"},
-		{"failed read", all, errors.New("AccessDenied"), "Public access unknown"},
+		{"all four", all, nil, "private"},
+		{"two of four", &aws.PublicAccessBlock{BlockPublicAcls: true, BlockPublicPolicy: true}, nil, "partly blocked 2/4"},
+		{"none of four", &aws.PublicAccessBlock{}, nil, "public"},
+		{"no configuration", nil, nil, "public"},
+		{"failed read", all, errors.New("AccessDenied"), "unavailable"},
 	}
 
 	for _, test := range tests {
@@ -291,8 +292,8 @@ func TestBucketExposureBadge(t *testing.T) {
 				o.Errs[aws.SectionPublicAccess] = test.err
 			}
 
-			if got := utils.Decolorise(bucketExposureBadge(o)); got != test.want {
-				t.Errorf("badge = %q, want %q", got, test.want)
+			if got := bucketStatCards(o)[0].Value.Text; got != test.want {
+				t.Errorf("access card = %q, want %q", got, test.want)
 			}
 		})
 	}

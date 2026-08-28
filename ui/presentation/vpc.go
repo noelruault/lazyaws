@@ -40,9 +40,10 @@ func GetVPCDisplayCells(v *aws.VPC) []utils.Cell {
 // Everything but the DNS attributes comes off the list row or the tabs' own loaders, so the pane costs no call the Subnets, Gateways and Endpoints tabs do not already make.
 func FormatVPCOverview(v *aws.VPC, o *aws.VPCOverview, width int) string {
 	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and a long Name tag beside the CIDR and the id runs off the edge unmarked.
+	// The state lives in the card row rather than as a badge beside the name (owner's call, 2026-08-28): one framed "available", not the same word twice.
 	header := HeaderWithStats(width,
-		ResourceHeader("VPC", vpcLabel(v), Badge(v.State), v.ID, v.CIDR, vpcDefaultNote(v)),
-		vpcStatCards(o),
+		ResourceHeader("VPC", vpcLabel(v), "", v.ID, v.CIDR, vpcDefaultNote(v)),
+		vpcStatCards(v, o),
 	)
 
 	left := joinBlocks(vpcConfigBlock(v), vpcDNSBlock(o), vpcTagsBlock(v, ColumnWidth(width, overviewGap)))
@@ -51,7 +52,7 @@ func FormatVPCOverview(v *aws.VPC, o *aws.VPCOverview, width int) string {
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
 }
 
-func vpcStatCards(o *aws.VPCOverview) []Stat {
+func vpcStatCards(v *aws.VPC, o *aws.VPCOverview) []Stat {
 	public, freeIPs := vpcSubnetTotals(o.Subnets)
 	subnets := utils.Cell{Text: fmt.Sprintf("%d · %d pub / %d priv", len(o.Subnets), public, len(o.Subnets)-public)}
 	free := utils.Cell{Text: fmt.Sprintf("%d", freeIPs)}
@@ -66,6 +67,7 @@ func vpcStatCards(o *aws.VPCOverview) []Stat {
 	}
 
 	return []Stat{
+		{Label: "State", Value: BadgeCell(v.State)},
 		{Label: "Subnets", Value: subnets},
 		{Label: "Free IPs", Value: free},
 		{Label: "Endpoints", Value: endpoints},
@@ -100,9 +102,9 @@ func vpcDefaultNote(v *aws.VPC) string {
 	return ""
 }
 
+// vpcConfigBlock has no primary-CIDR row: the header carries it as the VPC's identity, and the same string twice was the dedup pass's finding.
 func vpcConfigBlock(v *aws.VPC) string {
 	rows := []kv{
-		{"CIDR", orNone(v.CIDR)},
 		{"Secondary CIDRs", orNoneList(v.SecondaryCIDRs)},
 		{"IPv6 CIDRs", orNoneList(v.IPv6CIDRs)},
 		{"Default", yesNo(v.IsDefault)},
@@ -138,20 +140,13 @@ func vpcSubnetsBlock(o *aws.VPCOverview) string {
 		return title + "\nnone"
 	}
 
-	public, available := vpcSubnetTotals(o.Subnets)
+	// Only the AZ spread: the counts and the free-address total are the header's Subnets and Free IPs cards, and this section adds the one fact they cannot carry.
 	byAZ := map[string]int{}
 	for _, subnet := range o.Subnets {
 		byAZ[subnet.AZ]++
 	}
 
-	lines := []string{
-		title,
-		fmt.Sprintf("%s · %d public / %d private", pluralize(len(o.Subnets), "subnet"), public, len(o.Subnets)-public),
-		fmt.Sprintf("%d addresses free", available),
-		"AZs: " + countsByKey(byAZ),
-	}
-
-	return strings.Join(lines, "\n")
+	return title + "\nAZs: " + countsByKey(byAZ)
 }
 
 // countsByKey renders a count per key in key order, since Go randomizes map iteration and an unsorted line would reshuffle itself on every re-render.

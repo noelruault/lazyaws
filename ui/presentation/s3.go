@@ -42,8 +42,9 @@ const bucketRulesShown = 5
 // FormatBucketOverview re-lays the Config tab's data as the bucket's Overview: what can reach it, what happens to its objects, who is watching it.
 // The size is deliberately absent — it is a full object scan — so this pane costs exactly the calls the Config tab already made.
 func FormatBucketOverview(b *aws.Bucket, o *aws.BucketOverview, width int, now time.Time) string {
+	// No exposure badge beside the name: the Access card reads the same four flags, and the Security block's rows say which of them is off.
 	header := HeaderWithStats(width,
-		ResourceHeader("Bucket", b.Name, bucketExposureBadge(o), "", bucketRegion(o), bucketCreated(b, now)),
+		ResourceHeader("Bucket", b.Name, "", "", bucketRegion(o), bucketCreated(b, now)),
 		bucketStatCards(o),
 	)
 
@@ -53,17 +54,26 @@ func FormatBucketOverview(b *aws.Bucket, o *aws.BucketOverview, width int, now t
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
 }
 
+// bucketStatCards answers the one question a bucket is opened for in its Access card; the partial case keeps the count the old header badge carried, since "2/4 blocked" and "nothing blocked" call for different fixes.
+// An absent public access block reads public rather than unknown: S3 answers "no configuration" for a bucket that has none, and that genuinely means nothing at the bucket level is stopping a public ACL or policy.
 func bucketStatCards(o *aws.BucketOverview) []Stat {
 	access := utils.Cell{Text: "public", Color: color.FgRed}
 	if err := o.Err(aws.SectionPublicAccess); err != nil {
 		access = utils.Cell{Text: "unavailable", Color: color.FgRed}
 	} else if o.PublicAccess != nil {
-		private := true
-		for _, blocked := range publicAccessFlags(o.PublicAccess) {
-			private = private && blocked
+		blocked := 0
+		for _, on := range publicAccessFlags(o.PublicAccess) {
+			if on {
+				blocked++
+			}
 		}
-		if private {
+		switch blocked {
+		case len(publicAccessFlags(o.PublicAccess)):
 			access = utils.Cell{Text: "private", Color: color.FgGreen}
+		case 0:
+			access = utils.Cell{Text: "public", Color: color.FgRed}
+		default:
+			access = utils.Cell{Text: fmt.Sprintf("partly blocked %d/4", blocked), Color: color.FgYellow}
 		}
 	}
 
@@ -96,34 +106,7 @@ func bucketStatCards(o *aws.BucketOverview) []Stat {
 	}
 }
 
-// bucketExposureBadge answers the one question a bucket is opened for. The word carries the state and the colour only reinforces it.
-// An absent public access block is reported as not blocked rather than as unknown: S3 answers "no configuration" for a bucket that has none, and that genuinely means nothing at the bucket level is stopping a public ACL or policy.
-func bucketExposureBadge(o *aws.BucketOverview) string {
-	if err := o.Err(aws.SectionPublicAccess); err != nil {
-		return utils.ColoredString("Public access unknown", color.FgYellow)
-	}
-	if o.PublicAccess == nil {
-		return utils.ColoredString("Public access not blocked", color.FgRed)
-	}
-
-	blocked := 0
-	for _, on := range publicAccessFlags(o.PublicAccess) {
-		if on {
-			blocked++
-		}
-	}
-
-	switch blocked {
-	case len(publicAccessFlags(o.PublicAccess)):
-		return utils.ColoredString("Public access blocked", color.FgGreen)
-	case 0:
-		return utils.ColoredString("Public access not blocked", color.FgRed)
-	default:
-		return utils.ColoredString(fmt.Sprintf("Public access partly blocked (%d/4)", blocked), color.FgYellow)
-	}
-}
-
-// publicAccessFlags keeps the badge's count and the security block's rows reading the same four settings, in the order the S3 console lists them.
+// publicAccessFlags keeps the Access card's count and the security block's rows reading the same four settings, in the order the S3 console lists them.
 func publicAccessFlags(p *aws.PublicAccessBlock) []bool {
 	return []bool{p.BlockPublicAcls, p.IgnorePublicAcls, p.BlockPublicPolicy, p.RestrictPublicBuckets}
 }
@@ -203,11 +186,16 @@ func bucketPolicyLine(present bool) string {
 	return "none"
 }
 
+// bucketDataBlock has no Versioning row: the header card is the same one-word field, unlike the encryption row, which carries the key the card cannot.
+// The row returns only when the fetch failed, because the card's "unavailable" has no room for the reason and the reason is what distinguishes a throttle from a denial.
 func bucketDataBlock(o *aws.BucketOverview) string {
-	rows := []kv{
-		{"Versioning", fieldOr(o.Err(aws.SectionVersioning), orNone(o.Versioning))},
-		{"Object lock", fieldOr(o.Err(aws.SectionObjectLock), bucketObjectLockLine(o.ObjectLock))},
+	rows := []kv{}
+	if err := o.Err(aws.SectionVersioning); err != nil {
+		rows = append(rows, kv{"Versioning", fieldOr(err, "")})
 	}
+	rows = append(rows,
+		kv{"Object lock", fieldOr(o.Err(aws.SectionObjectLock), bucketObjectLockLine(o.ObjectLock))},
+	)
 
 	lines := []string{SectionTitle("Data management"), kvBlock(rows)}
 	lines = append(lines, bucketRuleLines("Lifecycle", o.Err(aws.SectionLifecycle), lifecycleRuleLines(o.Lifecycle))...)

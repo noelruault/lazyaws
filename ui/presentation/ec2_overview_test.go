@@ -113,7 +113,8 @@ func TestInstanceOverviewRendersEverySection(t *testing.T) {
 
 	for _, want := range []string{
 		"Instance", "web-1", "i-0abcdef1234567890",
-		"State", "● running", "Checks", "2/2 ok", "Alarms", "1",
+		// No State card: the header badge beside the name is the same field.
+		"● running", "Checks", "2/2 ok", "Alarms", "1",
 		"Configuration", "t3a.micro · 2 vCPU · 1.0 GiB", "eu-west-1a", "x86_64", "Linux/UNIX", "web-kp", "web-role",
 		"Network", "198.51.100.178", "203.0.113.10", "vpc-0abcdef1234567890", "Up to 5 Gigabit", "eni-0abcdef1234567890",
 		// The CPU row carries the mockups' bar; a reading of 0.5% fills no cells at this width, so the empty bar plus its number is the recorded render.
@@ -129,15 +130,15 @@ func TestInstanceOverviewRendersEverySection(t *testing.T) {
 	}
 
 	plain := utils.Decolorise(got)
-	if header := strings.SplitN(plain, "\n\n", 2)[0]; strings.Count(header, "┌") != 3 {
-		t.Errorf("header does not contain three stat cards\n%s", header)
+	if header := strings.SplitN(plain, "\n\n", 2)[0]; strings.Count(header, "┌") != 2 {
+		t.Errorf("header does not contain two stat cards\n%s", header)
 	}
 	_, statusAndAfter, found := strings.Cut(plain, "♡ Status\n")
 	if !found {
 		t.Fatalf("overview has no Status section\n%s", plain)
 	}
 	status, _, found := strings.Cut(statusAndAfter, "\n\n▣ Storage")
-	if !found || strings.Count(status, "┌") != 3 {
+	if !found || strings.Count(status, "┌") != 2 {
 		t.Errorf("Status does not contain three filled cards\n%s", status)
 	}
 	if strings.Count(plain, "├") != 1 {

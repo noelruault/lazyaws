@@ -106,19 +106,15 @@ func ECSImageLabel(image aws.ECSServiceImage) string {
 // FormatECSClusterOverview lays a cluster out for the Overview tab: a header that always renders, then the two-column body the Config, Instances and Tags tabs are consolidated into.
 // The header is built from the LIST ROW rather than from the fetch, so a cluster whose every section failed is still identified and still carries the badge the side panel shows it with.
 func FormatECSClusterOverview(c *aws.ECSCluster, o *aws.ECSClusterOverview, width int) string {
-	// Cut to the pane: the header spans the full width rather than a column, so Columns never sees it, and with wrap off an over-long meta line runs off the edge unmarked.
-	// The meta line stops at the services summary: the running and pending counts moved into the stat cards beside it, and repeating them here is what the cards' width would truncate first.
+	// The meta line is the region alone: the services summary and the task counts live in the stat cards beside it, and a meta line repeating a card is the first thing the cards' width truncates.
 	header := HeaderWithStats(width,
-		ResourceHeader("ECS Cluster", c.Name, ecsClusterBadge(c).Rendered(), "",
-			c.Region,
-			clusterServicesSummary(c, o),
-		),
+		ResourceHeader("ECS Cluster", c.Name, ecsClusterBadge(c).Rendered(), "", c.Region),
 		clusterStatCards(c, o),
 	)
 
 	column := ColumnWidth(width, overviewGap)
 	left := joinBlocks(
-		clusterHealthBlock(c, o, column),
+		clusterHealthBlock(c, o),
 		clusterConfigBlock(c),
 		clusterMetricsBlock(o),
 	)
@@ -178,51 +174,27 @@ func clusterStatCards(c *aws.ECSCluster, o *aws.ECSClusterOverview) []Stat {
 	}
 }
 
-// clusterHealthBlock is the mockups' Health section: three cards answering "is it fine" per layer, then the counts behind them.
-// The container instance count lives here rather than in Capacity so the mockups' Health grid stays whole; 0 is still the normal Fargate answer, not a problem.
-func clusterHealthBlock(c *aws.ECSCluster, o *aws.ECSClusterOverview, width int) string {
-	cluster := BadgeCell(c.Status)
-	if c.Status == "" {
-		// DescribeClusters omits the status of a cluster it could not read; a bare dot would look like a rendering bug.
-		cluster = utils.Cell{Text: "● unknown", Color: color.FgRed}
-	}
-
-	services := utils.Cell{Text: "unavailable", Color: color.FgRed}
-	deployments := utils.Cell{Text: "unavailable", Color: color.FgRed}
-	failedValue := "unknown"
-	if o.Err(aws.SectionServices) == nil {
-		steady, rolling, failed := clusterServiceHealth(o)
-		failedValue = fmt.Sprintf("%d", failed)
-
-		switch {
-		case len(o.Services) == 0:
-			services = utils.Cell{Text: "none"}
-		case steady == len(o.Services):
-			services = utils.Cell{Text: fmt.Sprintf("%d healthy", steady), Color: color.FgGreen}
-		default:
-			services = utils.Cell{Text: fmt.Sprintf("%d/%d healthy", steady, len(o.Services)), Color: color.FgYellow}
-		}
-
+// clusterHealthBlock carries only what no card already says: the deployment verdict with its failed-task count, and what the cluster runs on.
+// It shrank from the mockups' card grid on the owner's dedup rule (2026-08-28): the cluster status echoed the header badge and the service and task counts echoed the header cards, so the cards here were the same numbers in a second frame.
+func clusterHealthBlock(c *aws.ECSCluster, o *aws.ECSClusterOverview) string {
+	deployments := utils.ColoredString("unavailable", color.FgRed)
+	if err := o.Err(aws.SectionServices); err != nil {
+		deployments = fieldOr(err, "")
+	} else {
+		_, rolling, failed := clusterServiceHealth(o)
 		switch {
 		case failed > 0:
-			deployments = utils.Cell{Text: fmt.Sprintf("%d failed", failed), Color: color.FgRed}
+			deployments = utils.ColoredString(fmt.Sprintf("%d failed tasks", failed), color.FgRed)
 		case rolling:
-			deployments = utils.Cell{Text: "deploying", Color: color.FgYellow}
+			deployments = utils.ColoredString("deploying", color.FgYellow)
 		default:
-			deployments = utils.Cell{Text: "stable", Color: color.FgGreen}
+			deployments = utils.ColoredString("stable", color.FgGreen)
 		}
 	}
 
-	cards := StatBoxes(width, []Stat{
-		{Label: "Cluster", Value: cluster},
-		{Label: "Services", Value: services},
-		{Label: "Deployments", Value: deployments},
-	})
-
-	return SectionTitle("Health") + "\n" + cards + "\n" + kvBlock([]kv{
-		{"Running tasks", fmt.Sprintf("%d", c.RunningTasksCount)},
-		{"Pending tasks", fmt.Sprintf("%d", c.PendingTasksCount)},
-		{"Failed tasks", failedValue},
+	return SectionTitle("Health") + "\n" + kvBlock([]kv{
+		{"Deployments", deployments},
+		// 0 is the normal Fargate answer, not a problem.
 		{"Container instances", fmt.Sprintf("%d", c.RegisteredContainerCount)},
 	})
 }
@@ -236,26 +208,6 @@ func clusterTagsBlock(o *aws.ECSClusterOverview, width int) string {
 	}
 
 	return SectionTitle("Tags") + "\n" + tagsBodyFrom(width, o.Tags)
-}
-
-// clusterServicesSummary counts the services actually holding what they were asked to run, which the cluster's own ActiveServicesCount cannot say: a service stays ACTIVE while every task it wants is failing to start.
-// Only the service list carries that, so a failed services fetch falls back to the count the cluster itself reported rather than dropping the line out of the header.
-func clusterServicesSummary(c *aws.ECSCluster, o *aws.ECSClusterOverview) string {
-	if o.Err(aws.SectionServices) != nil {
-		return fmt.Sprintf("%d services", c.ActiveServicesCount)
-	}
-	if len(o.Services) == 0 {
-		return "no services"
-	}
-
-	steady := 0
-	for i := range o.Services {
-		if ecsServiceIsSteady(&o.Services[i]) {
-			steady++
-		}
-	}
-
-	return fmt.Sprintf("%d/%d services steady", steady, len(o.Services))
 }
 
 // ecsServiceIsSteady is the service-level twin of the cluster badge: it holds its desired count and has no rollout still open.

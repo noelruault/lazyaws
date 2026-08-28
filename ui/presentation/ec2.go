@@ -51,7 +51,7 @@ func MetricReading(p aws.MetricPoint, stat string, format func(float64) string) 
 func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width int, now time.Time) string {
 	header := HeaderWithStats(width,
 		ResourceHeader("EC2 Instance", instanceName(inst), Badge(inst.State), inst.ID, inst.InstanceType, inst.AZ),
-		instanceStatCards(inst, o),
+		instanceStatCards(o),
 	)
 
 	column := ColumnWidth(width, overviewGap)
@@ -73,9 +73,9 @@ func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width i
 
 var errInstanceStatusUnavailable = errors.New("instance status not returned")
 
-func instanceStatCards(inst *aws.Instance, o *aws.InstanceOverview) []Stat {
+// instanceStatCards has no State card: the header badge beside the name is the same field, and a framed echo of it was the owner's dedup complaint (2026-08-28).
+func instanceStatCards(o *aws.InstanceOverview) []Stat {
 	return []Stat{
-		{Label: "State", Value: BadgeCell(inst.State)},
 		{Label: "Checks", Value: instanceChecksCell(o)},
 		{Label: "Alarms", Value: instanceAlarmsCell(o)},
 	}
@@ -301,10 +301,10 @@ func instanceStatusBlock(o *aws.InstanceOverview, width int) string {
 	}
 	s := o.Status
 
+	// No Alarms card here: the header's Alarms card is the same count, and the per-check split is what this section adds over the header's aggregate.
 	cards := StatBoxes(width, []Stat{
 		{Label: "System", Value: instanceStatusCell(s.SystemStatus)},
 		{Label: "Instance", Value: instanceStatusCell(s.InstanceStatus)},
-		{Label: "Alarms", Value: instanceAlarmsCell(o)},
 	})
 	rows := []kv{
 		{"Scheduled events", instanceScheduledEventsValue(s.ScheduledEvents)},

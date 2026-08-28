@@ -67,8 +67,9 @@ const ecrImagesShown = 10
 // FormatECRRepositoryOverview lays a repository out for the Overview tab: the posture that decides whether a tag can move under a deployment, then what is actually in the repository.
 // Everything but the image list is already on the row the list fetched, so this pane costs the one DescribeImages call the Images tab makes.
 func FormatECRRepositoryOverview(r *aws.ECRRepository, images []aws.ECRImage, imagesErr error, width int, now time.Time) string {
+	// No mutability badge beside the name: the Mutability card is the same field, and the Configuration row keeps the raw enum an audit reads.
 	header := HeaderWithStats(width,
-		ResourceHeader("Repository", r.Name, ecrMutabilityBadge(r.TagMutability).Rendered(), "", r.URI, ecrCreated(r, now)),
+		ResourceHeader("Repository", r.Name, "", "", r.URI, ecrCreated(r, now)),
 		ecrStatCards(r, images, imagesErr),
 	)
 
@@ -116,9 +117,9 @@ func ecrCreated(r *aws.ECRRepository, now time.Time) string {
 
 func ecrConfigBlock(r *aws.ECRRepository) string {
 	rows := []kv{
-		// The raw enum rather than the header's badge word: MUTABLE_WITH_EXCLUSION and MUTABLE are one badge but two policies, and this is the row an audit reads.
+		// The raw enum rather than the card's badge word: MUTABLE_WITH_EXCLUSION and MUTABLE are one badge but two policies, and this is the row an audit reads.
+		// No scan-on-push row: the header card is the same boolean with nothing to add.
 		{"Tag mutability", orNone(r.TagMutability)},
-		{"Scan on push", ecrScanLine(r.ScanOnPush)},
 		{"Encryption", ecrEncryptionLine(r)},
 		{"Registry", orNone(r.RegistryID)},
 		{"ARN", orNone(r.Arn)},

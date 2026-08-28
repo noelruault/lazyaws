@@ -185,7 +185,9 @@ func TestFormatSecretOverviewStatesEveryAbsence(t *testing.T) {
 	got := plainOverview(t, neverRotatedSecret(), stackedWidth)
 
 	for _, want := range []string{
-		"Rotation off",
+		// The rotation state lives in its header card, off and plain for a never-rotated secret.
+		"Rotation",
+		"off",
 		"Not replicated",
 		"Not configured",
 		"Description:    none",
@@ -233,7 +235,6 @@ func TestFormatSecretOverviewRendersTheRotatingSecret(t *testing.T) {
 	for _, want := range []string{
 		"Secret",
 		"rds!cluster-1a2b3c4d",
-		"Rotation every 7d",
 		"Rotation",
 		"every 7d",
 		"Replicas",
@@ -436,22 +437,22 @@ func TestFormatSecretOverviewNeverRendersTheValue(t *testing.T) {
 	}
 }
 
-func TestSecretRotationBadge(t *testing.T) {
+// The Rotation card speaks the left panel's vocabulary, including its rule that a cadence of zero days is an unreported cadence rather than a configured one: a secret scheduled by a cron() or rate() expression carries no day cadence until it has rotated once, and "every 0d" would be a cadence nobody configured.
+func TestSecretRotationCard(t *testing.T) {
 	forceColor(t)
 
 	for _, tt := range []struct {
 		name   string
-		secret *aws.SecretSummary
-		want   string
+		secret aws.SecretSummary
+		want   utils.Cell
 	}{
-		{"never rotated", &aws.SecretSummary{}, utils.ColoredString("Rotation off", color.Faint)},
-		{"a seven day cadence", &aws.SecretSummary{RotationEnabled: true, RotationDays: 7}, utils.ColoredString("Rotation every 7d", color.FgGreen)},
-		// A secret scheduled by a cron() or rate() expression carries no day cadence until it has rotated once, and "every 0d" would be a cadence nobody configured.
-		{"on with no cadence reported yet", &aws.SecretSummary{RotationEnabled: true}, utils.ColoredString("Rotation on", color.FgGreen)},
+		{"never rotated", aws.SecretSummary{}, utils.Cell{Text: "off"}},
+		{"a seven day cadence", aws.SecretSummary{RotationEnabled: true, RotationDays: 7}, utils.Cell{Text: "every 7d", Color: color.FgGreen}},
+		{"on with no cadence reported yet", aws.SecretSummary{RotationEnabled: true}, utils.Cell{Text: "on", Color: color.FgGreen}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := secretRotationBadge(tt.secret); got != tt.want {
-				t.Errorf("secretRotationBadge = %q, want %q", got, tt.want)
+			if got := secretStatCards(&aws.SecretDetails{SecretSummary: tt.secret})[0].Value; got != tt.want {
+				t.Errorf("rotation card = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

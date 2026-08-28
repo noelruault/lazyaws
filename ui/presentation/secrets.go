@@ -51,8 +51,9 @@ const secretVersionsShown = 15
 // FormatSecretOverview lays a secret's metadata out for the Overview tab: the header, a two-column body, then the version history that rotation is actually visible in.
 // Everything rendered here comes from the DescribeSecret / ListSecretVersionIds / GetResourcePolicy fetch the Config tab already makes, so the tab costs no additional AWS call, and the value itself is never read.
 func FormatSecretOverview(d *aws.SecretDetails, width int, now time.Time) string {
+	// No rotation badge beside the name: the Rotation card is the same fields in the same vocabulary, and one of the two had to go in the dedup pass.
 	header := HeaderWithStats(width,
-		ResourceHeader("Secret", d.Name, secretRotationBadge(&d.SecretSummary), "", d.PrimaryRegion),
+		ResourceHeader("Secret", d.Name, "", "", d.PrimaryRegion),
 		secretStatCards(d),
 	)
 	body := Columns(width, 2, secretDetailsBlock(d, now), secretPostureBlock(d, ColumnWidth(width, 2)))
@@ -81,18 +82,6 @@ func secretStatCards(d *aws.SecretDetails) []Stat {
 		{Label: "Rotation", Value: rotation},
 		{Label: "Replicas", Value: replicas},
 		{Label: "Versions", Value: utils.Cell{Text: fmt.Sprintf("%d", len(d.Versions))}},
-	}
-}
-
-// secretRotationBadge speaks the same vocabulary as the left panel's rotation column, including its rule that a cadence of zero days is an unreported cadence rather than a configured one.
-func secretRotationBadge(s *aws.SecretSummary) string {
-	switch {
-	case !s.RotationEnabled:
-		return utils.ColoredString("Rotation off", color.Faint)
-	case s.RotationDays > 0:
-		return utils.ColoredString(fmt.Sprintf("Rotation every %dd", s.RotationDays), color.FgGreen)
-	default:
-		return utils.ColoredString("Rotation on", color.FgGreen)
 	}
 }
 

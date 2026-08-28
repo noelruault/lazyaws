@@ -104,13 +104,22 @@ export async function run ({ term, seed }) {
   }
 
   // Narrow it and the same two sections must be stacked instead of wrapped: each on its own line, both still present, nothing soft-wrapped into the panel beside it.
+  // POLLED rather than read once: a resize triggers a full re-render through gocui's unordered Update, and a single read can land between the pane's clear and its rewrite.
   await term.resize(narrow.width, narrow.height)
   await term.waitForText('╭─Overview')
-  const stacked = await term.readScreen()
-  const cells = paneCells(stacked)
-  for (const section of ['▤ Configuration', '♡ Status']) {
-    if (!cells.includes(section)) {
-      throw new Error(`Overview lost the "${section}" section when narrow\n--- screen ---\n${stacked}`)
+  let stacked = ''
+  {
+    const deadline = Date.now() + 10000
+    let missing = []
+    while (Date.now() < deadline) {
+      stacked = await term.readScreen()
+      const cells = paneCells(stacked)
+      missing = ['▤ Configuration', '♡ Status'].filter(section => !holdsTitle(cells, section))
+      if (missing.length === 0) break
+      await term.page.waitForTimeout(200)
+    }
+    if (missing.length > 0) {
+      throw new Error(`Overview lost the ${missing.map(s => JSON.stringify(s)).join(', ')} section(s) when narrow\n--- screen ---\n${stacked}`)
     }
   }
   if (stacked.split('\n').some(line => /Configuration/.test(line) && /Status/.test(line))) {

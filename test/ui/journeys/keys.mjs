@@ -18,7 +18,7 @@ async function cleanFooter (term, { timeout = 15000 } = {}) {
   let footer = ''
   while (Date.now() < deadline) {
     footer = await term.footer()
-    if (footer.startsWith('←→↑↓') && footer.endsWith('Quit')) return footer
+    if (footer.startsWith('Arrows') && footer.endsWith('Quit')) return footer
     await term.page.waitForTimeout(150)
   }
   throw new Error(`the options line never came back clean; last read ${JSON.stringify(footer)}`)

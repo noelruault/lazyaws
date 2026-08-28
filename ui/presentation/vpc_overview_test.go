@@ -63,11 +63,13 @@ func emptyVPCOverview() *aws.VPCOverview {
 func TestVPCOverviewRendersEverySection(t *testing.T) {
 	got := plainVPC(overviewVPC(), fullVPCOverview(), stackedWidth)
 
+	// The subnet counts and the free-address total live only in the header cards after the dedup pass; the section keeps the AZ spread the cards cannot carry.
 	for _, want := range []string{
 		"VPC", "app-core", "vpc-0abcdef1234567890", "198.51.100.0/24",
+		"State", "● available", "4 · 2 pub / 2 priv", "1500",
 		"Configuration", "Secondary CIDRs: 10.70.0.0/16", "Default: no", "Tenancy: default", "DHCP options: dopt-0c1f2e3d",
 		"DNS", "Resolution: on", "Hostnames: on",
-		"Subnets", "4 subnets · 2 public / 2 private", "1500 addresses free", "AZs: eu-west-1a (2), eu-west-1b (1), eu-west-1c (1)",
+		"Subnets", "AZs: eu-west-1a (2), eu-west-1b (1), eu-west-1c (1)",
 		"Gateways", "Internet gateway: igw-0f1e2d3c", "NAT gateways: 2 · available (1), pending (1)",
 		"Endpoints", "2 endpoints · Gateway (1), Interface (1)", "s3, secretsmanager",
 		"Tags", "Env: prod",
@@ -79,22 +81,23 @@ func TestVPCOverviewRendersEverySection(t *testing.T) {
 
 	plain := utils.Decolorise(FormatVPCOverview(overviewVPC(), fullVPCOverview(), stackedWidth))
 	header := strings.SplitN(plain, "\n\n", 2)[0]
-	if strings.Count(header, "┌") != 3 {
-		t.Errorf("header does not contain three stat cards\n%s", header)
+	if strings.Count(header, "┌") != 4 {
+		t.Errorf("header does not contain four stat cards\n%s", header)
 	}
-	if strings.Count(plain, "├") != 0 || strings.Count(plain, "┌") != 3 || strings.Contains(plain, "Health") {
+	if strings.Count(plain, "├") != 0 || strings.Count(plain, "┌") != 4 || strings.Contains(plain, "Health") {
 		t.Errorf("overview contains health cards or a boxed table\n%s", plain)
 	}
 }
 
 func TestVPCOverviewCardsSummariseExistingFetches(t *testing.T) {
 	want := []Stat{
+		{Label: "State", Value: utils.Cell{Text: "● available", Color: color.FgGreen}},
 		{Label: "Subnets", Value: utils.Cell{Text: "4 · 2 pub / 2 priv"}},
 		{Label: "Free IPs", Value: utils.Cell{Text: "1500"}},
 		{Label: "Endpoints", Value: utils.Cell{Text: "2"}},
 	}
 
-	cards := vpcStatCards(fullVPCOverview())
+	cards := vpcStatCards(overviewVPC(), fullVPCOverview())
 	if len(cards) != len(want) {
 		t.Fatalf("vpcStatCards() returned %d cards, want %d", len(cards), len(want))
 	}
@@ -107,9 +110,10 @@ func TestVPCOverviewCardsSummariseExistingFetches(t *testing.T) {
 	failed := fullVPCOverview()
 	failed.Errs[aws.SectionSubnets] = errors.New("subnets denied")
 	failed.Errs[aws.SectionEndpoints] = errors.New("endpoints denied")
-	for i, card := range vpcStatCards(failed) {
+	// The State card reads the list row and no fetch can take it down, so only the three fetch-backed cards degrade.
+	for i, card := range vpcStatCards(overviewVPC(), failed)[1:] {
 		if card.Value.Text != "unavailable" || card.Value.Color != color.FgRed {
-			t.Errorf("failed-fetch card %d = %+v, want red unavailable", i, card.Value)
+			t.Errorf("failed-fetch card %d = %+v, want red unavailable", i+1, card.Value)
 		}
 	}
 }
@@ -120,13 +124,13 @@ func TestVPCOverviewHeaderCardsFitWidthBudgets(t *testing.T) {
 	for _, width := range []int{80, 110, 120, 160} {
 		got := FormatVPCOverview(overviewVPC(), fullVPCOverview(), width)
 		header := strings.SplitN(utils.Decolorise(got), "\n\n", 2)[0]
-		for _, want := range []string{"Subnets", "4 · 2 pub / 2 priv", "Free IPs", "1500", "Endpoints", "2"} {
+		for _, want := range []string{"State", "● available", "Subnets", "4 · 2 pub / 2 priv", "Free IPs", "1500", "Endpoints", "2"} {
 			if !strings.Contains(header, want) {
 				t.Errorf("at width %d header card is missing %q\n%s", width, want, header)
 			}
 		}
-		if strings.Count(header, "┌") != 3 {
-			t.Errorf("at width %d header does not contain three stat cards\n%s", width, header)
+		if strings.Count(header, "┌") != 4 {
+			t.Errorf("at width %d header does not contain four stat cards\n%s", width, header)
 		}
 		for _, line := range strings.Split(got, "\n") {
 			if cells := runewidth.StringWidth(utils.Decolorise(line)); cells > width {
@@ -156,7 +160,6 @@ func TestVPCOverviewStatesEveryAbsence(t *testing.T) {
 
 	for _, want := range []string{
 		"(no name)",
-		"CIDR: none",
 		"Secondary CIDRs: none",
 		"IPv6 CIDRs: none",
 		"Subnets\nnone",
@@ -233,7 +236,7 @@ func TestVPCOverviewCountsPublicSubnetsByRouting(t *testing.T) {
 		{ID: "subnet-c", AZ: "eu-west-1b", Public: false, MapPublicIPOnLaunch: true},
 	}
 
-	if got := plainVPC(overviewVPC(), o, stackedWidth); !strings.Contains(got, "3 subnets · 1 public / 2 private") {
+	if got := plainVPC(overviewVPC(), o, stackedWidth); !strings.Contains(got, "3 · 1 pub / 2 priv") {
 		t.Errorf("overview does not count public subnets by their routing\n%s", got)
 	}
 }

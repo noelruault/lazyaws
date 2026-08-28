@@ -53,10 +53,11 @@ func TestRepositoryOverviewRendersEverySection(t *testing.T) {
 	got := plainRepository(overviewRepository(), overviewImages(), nil, stackedWidth)
 
 	for _, want := range []string{
-		"Repository", "app-api", "mutable",
+		"Repository", "app-api",
 		"Images", "2", "Mutability", "MUTABLE", "Scan on push", "on",
 		"123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-api",
-		"Configuration", "Tag mutability: MUTABLE", "Scan on push: on", "KMS · arn:aws:kms:eu-west-1:123456789012:key/2f7c", "Registry: 123456789012",
+		// No scan-on-push row and no header badge: the cards carry both, and the raw enum row stays because MUTABLE_WITH_EXCLUSION and MUTABLE are one card word but two policies.
+		"Configuration", "Tag mutability: MUTABLE", "KMS · arn:aws:kms:eu-west-1:123456789012:key/2f7c", "Registry: 123456789012",
 		"Policies", "Repository policy: attached, shown on the Config tab", "Lifecycle policy: attached, evaluated 6h ago",
 		"Images", "2 images · 150.0 MiB",
 		"Tag", "Pushed", "Size", "Digest",
@@ -130,7 +131,9 @@ func TestRepositoryOverviewStatesEveryAbsence(t *testing.T) {
 	got := plainRepository(&aws.ECRRepository{Name: "bare"}, nil, nil, stackedWidth)
 
 	for _, want := range []string{
-		"Scan on push: off",
+		// Scan on push lives in its header card, off and plain for a bare repository.
+		"Scan on push",
+		"off",
 		"Encryption: none",
 		"Registry: none",
 		"ARN: none",
@@ -201,7 +204,7 @@ func TestRepositoryOverviewSurvivesAFailedImageFetch(t *testing.T) {
 	if !strings.Contains(got, "Images\nunavailable: AccessDenied") {
 		t.Errorf("overview does not report the failed image fetch\n%s", got)
 	}
-	for _, want := range []string{"app-api", "Scan on push: on", "Repository policy: attached"} {
+	for _, want := range []string{"app-api", "Tag mutability: MUTABLE", "Repository policy: attached"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("a failed image fetch took %q down with it\n%s", want, got)
 		}

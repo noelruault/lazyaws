@@ -67,17 +67,17 @@ func emptyEKSOverview() *aws.EKSOverview {
 func TestEKSOverviewRendersEverySection(t *testing.T) {
 	got := plainEKS(overviewEKSCluster(), fullEKSOverview(), stackedWidth)
 
+	// Every fact once (the owner's dedup rule): the header carries version, region, created and status; the cards carry nodes, node-group and addon health; Configuration keeps only what nothing else says.
 	for _, want := range []string{
-		"EKS cluster", "app-prod", "v1.29 · eu-west-1 · created 2026-01-14 09:12:44",
-		"Status", "● ACTIVE", "Nodes", "6 desired", "Addons", "2",
-		"Health", "Cluster", "Node groups", "2/2 active", "2 healthy",
-		"Configuration", "Version: 1.29", "Status: ACTIVE", "Endpoint: https://ABCD1234.gr7.eu-west-1.eks.amazonaws.com",
-		"Region: eu-west-1", "Nodes: 6 desired", "Platform: eks.8", "ARN: arn:aws:eks:eu-west-1:123456789012:cluster/app-prod",
+		"EKS cluster", "app-prod", "● ACTIVE", "v1.29 · eu-west-1 · created 2026-01-14 09:12:44",
+		"Nodes", "6 desired", "Node groups", "2/2 active", "Addons", "2 healthy",
+		"Configuration", "Endpoint: https://ABCD1234.gr7.eu-west-1.eks.amazonaws.com",
+		"Platform: eks.8", "ARN: arn:aws:eks:eu-west-1:123456789012:cluster/app-prod",
 		"Networking", "VPC: vpc-0abcdef1234567890", "Endpoint access: public + private", "Allowed CIDRs: 10.0.0.0/8",
 		"Control plane logging",
 		"Tags", "Env: prod", "Owner: platform",
-		"Node groups", "2 node groups · 6 nodes desired", "types: m6i.large (1), t3.medium (1)", "Group", "Nodes (min-max)",
-		"Addons", "2 addons", "Addon",
+		"2 node groups · 6 nodes desired", "types: m6i.large (1), t3.medium (1)", "Group", "Nodes (min-max)",
+		"2 addons", "Addon",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing %q\n%s", want, got)
@@ -88,6 +88,11 @@ func TestEKSOverviewRendersEverySection(t *testing.T) {
 	}
 	if strings.Count(got, "├") != 2 {
 		t.Errorf("overview does not contain two boxed tables\n%s", got)
+	}
+	for _, gone := range []string{"Version: 1.29", "Status: ACTIVE", "Region: eu-west-1", "Nodes: 6 desired", "Health\n"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("overview still repeats %q, which the header or a card already carries\n%s", gone, got)
+		}
 	}
 }
 
@@ -125,9 +130,8 @@ func TestEKSOverviewStatesEveryAbsence(t *testing.T) {
 	got := plainEKS(&aws.EKSCluster{Name: "bare", Status: "CREATING"}, emptyEKSOverview(), stackedWidth)
 
 	for _, want := range []string{
-		"Version: none",
 		"Endpoint: none",
-		"Nodes: 0 desired",
+		"0 desired",
 		"Platform: none",
 		"Subnets: none",
 		"Security groups: none",
@@ -142,7 +146,7 @@ func TestEKSOverviewStatesEveryAbsence(t *testing.T) {
 	}
 }
 
-// The Configuration block reads the list row, not the describe, so the three fields the ticket names survive a denied DescribeCluster.
+// The header and the Configuration block read the list row, not the describe, so the three fields the ticket names survive a denied DescribeCluster.
 func TestEKSOverviewKeepsRowFieldsWhenTheDescribeFails(t *testing.T) {
 	o := fullEKSOverview()
 	o.Details = nil
@@ -150,7 +154,7 @@ func TestEKSOverviewKeepsRowFieldsWhenTheDescribeFails(t *testing.T) {
 
 	got := plainEKS(overviewEKSCluster(), o, stackedWidth)
 
-	for _, want := range []string{"Version: 1.29", "Status: ACTIVE", "Endpoint: https://ABCD1234.gr7.eu-west-1.eks.amazonaws.com"} {
+	for _, want := range []string{"v1.29", "● ACTIVE", "Endpoint: https://ABCD1234.gr7.eu-west-1.eks.amazonaws.com"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("a failed describe lost %q, which comes off the list row\n%s", want, got)
 		}
@@ -225,7 +229,7 @@ func TestEKSOverviewSectionsFailIndependently(t *testing.T) {
 				}
 			}
 			// The pane survives: the cluster is still identified and the row's own fields are still rendered.
-			if !strings.Contains(got, "app-prod") || !strings.Contains(got, "Version: 1.29") {
+			if !strings.Contains(got, "app-prod") || !strings.Contains(got, "v1.29") {
 				t.Errorf("a failed %s took the pane down with it\n%s", test.section, got)
 			}
 		})
