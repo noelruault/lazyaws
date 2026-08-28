@@ -63,7 +63,7 @@ func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width i
 		instanceStorageBlock(o, column),
 		instanceSecurityBlock(o),
 		instanceConsoleBlock(o, now),
-		instanceTagsBlock(o),
+		instanceTagsBlock(o, column),
 	)
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
@@ -423,18 +423,18 @@ func instanceSecurityBlock(o *aws.InstanceOverview) string {
 	return strings.Join(lines, "\n")
 }
 
-func instanceTagsBlock(o *aws.InstanceOverview) string {
+func instanceTagsBlock(o *aws.InstanceOverview, width int) string {
 	if err := o.Err(aws.SectionDetails); err != nil {
 		return sectionUnavailable("Tags", err)
 	}
-
-	lines := []string{SectionTitle("Tags")}
 	if len(o.Details.Tags) == 0 {
-		lines = append(lines, "none")
-	}
-	for _, tag := range o.Details.Tags {
-		lines = append(lines, TagLine(tag.Key, tag.Value))
+		return SectionTitle("Tags") + "\nnone"
 	}
 
-	return strings.Join(lines, "\n")
+	tags := make([]kv, len(o.Details.Tags))
+	for i, tag := range o.Details.Tags {
+		tags[i] = kv{tag.Key, tag.Value}
+	}
+
+	return SectionTitle("Tags") + "\n" + tagsBody(width, tags)
 }

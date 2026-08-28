@@ -42,7 +42,7 @@ func FormatVPCOverview(v *aws.VPC, o *aws.VPCOverview, width int) string {
 	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and a long Name tag beside the CIDR and the id runs off the edge unmarked.
 	header := truncateBlock(ResourceHeader("VPC", vpcLabel(v), Badge(v.State), v.ID, v.CIDR, vpcDefaultNote(v)), width)
 
-	left := joinBlocks(vpcConfigBlock(v), vpcDNSBlock(o), vpcTagsBlock(v))
+	left := joinBlocks(vpcConfigBlock(v), vpcDNSBlock(o), vpcTagsBlock(v, ColumnWidth(width, overviewGap)))
 	right := joinBlocks(vpcSubnetsBlock(o), vpcGatewaysBlock(o), vpcEndpointsBlock(o))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
@@ -208,18 +208,18 @@ func vpcEndpointsBlock(o *aws.VPCOverview) string {
 	return strings.Join(lines, "\n")
 }
 
-func vpcTagsBlock(v *aws.VPC) string {
+func vpcTagsBlock(v *aws.VPC, width int) string {
 	title := SectionTitle("Tags")
 	if len(v.Tags) == 0 {
 		return title + "\nnone"
 	}
 
-	lines := []string{title}
-	for _, tag := range v.Tags {
-		lines = append(lines, TagLine(tag.Key, tag.Value))
+	tags := make([]kv, len(v.Tags))
+	for i, tag := range v.Tags {
+		tags[i] = kv{tag.Key, tag.Value}
 	}
 
-	return strings.Join(lines, "\n")
+	return title + "\n" + tagsBody(width, tags)
 }
 
 func orNoneList(values []string) string {

@@ -3,6 +3,7 @@ package presentation
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -92,6 +93,7 @@ var sectionIcons = map[string]string{
 	"Data management":       "▣",
 	"Images":                "▣",
 	"Security":              "⌾",
+	"Service Summary":       "▦",
 	"Access":                "⌾",
 	"Resource policy":       "⌾",
 	"Policies":              "⌾",
@@ -168,6 +170,170 @@ func ResourceHeader(kind, name, badge, id string, meta ...string) string {
 	return header.String()
 }
 
+// boxInnerPadding is the one blank cell between a box border and its content, the terminal's rendition of the mockups' px-2 cell padding.
+const boxInnerPadding = 1
+
+// boxedTableMinInner keeps a table legible when the pane is squeezed: below this the border chrome costs more than it organises, so the caller gets the borderless layout instead.
+const boxedTableMinInner = 16
+
+// BoxedTable renders the mockups' bordered table: a square-cornered frame, a faint header row, a rule under it, and the body aligned by RenderTableFit.
+// Square corners on purpose: the rounded set is the pane chrome, and reusing it here would make a table read as a nested view.
+// width is the full width including borders; weights follow RenderTableFit's contract and must match the column count.
+func BoxedTable(width int, weights []int, header []string, rows [][]utils.Cell) string {
+	inner := width - 2 - 2*boxInnerPadding
+
+	headerCells := make([]utils.Cell, len(header))
+	for i, h := range header {
+		headerCells[i] = utils.Cell{Text: h, Color: color.Faint}
+	}
+	all := append([][]utils.Cell{headerCells}, rows...)
+
+	// One layout call over header and body together, so the header measures into the same column widths as the values under it.
+	table, err := utils.RenderTableFit(all, max(inner, 1), weights)
+	if err != nil {
+		return utils.ColoredString(err.Error(), color.FgRed)
+	}
+	if inner < boxedTableMinInner {
+		return table
+	}
+
+	lines := strings.Split(table, "\n")
+	pad := strings.Repeat(" ", boxInnerPadding)
+	rule := strings.Repeat("─", inner+2*boxInnerPadding)
+
+	var out []string
+	out = append(out, "┌"+rule+"┐")
+	for i, line := range lines {
+		out = append(out, "│"+pad+utils.WithPadding(line, inner)+pad+"│")
+		if i == 0 {
+			out = append(out, "├"+rule+"┤")
+		}
+	}
+	out = append(out, "└"+rule+"┘")
+
+	return strings.Join(out, "\n")
+}
+
+// Stat is one bordered stat card: a faint label over a value that keeps its own colour.
+type Stat struct {
+	Label string
+	Value utils.Cell
+}
+
+// StatBoxes renders stat cards side by side, each four rows tall.
+// width <= 0 sizes every card to the widest one and centres the text, which is the header's compact row; width > 0 splits the width evenly and left-aligns, which is the Health cards.
+func StatBoxes(width int, stats []Stat) string {
+	if len(stats) == 0 {
+		return ""
+	}
+
+	const gap = " "
+	centred := width <= 0
+
+	inner := 0
+	if centred {
+		for _, s := range stats {
+			inner = max(inner, runewidth.StringWidth(s.Label), runewidth.StringWidth(s.Value.Text))
+		}
+		inner += 2 * boxInnerPadding
+	} else {
+		// Borders and gaps come off the budget first; a remainder narrower than the padding renders as an empty frame rather than a panic.
+		inner = max((width-len(stats)*2-(len(stats)-1))/len(stats), 2*boxInnerPadding+1)
+	}
+
+	fit := func(s string) string {
+		return truncateStyled(s, inner-2*boxInnerPadding)
+	}
+	place := func(s string) string {
+		if centred {
+			return centerPad(s, inner)
+		}
+		pad := strings.Repeat(" ", boxInnerPadding)
+		return pad + utils.WithPadding(s, inner-2*boxInnerPadding) + pad
+	}
+
+	rule := strings.Repeat("─", inner)
+	top := make([]string, len(stats))
+	labels := make([]string, len(stats))
+	values := make([]string, len(stats))
+	bottom := make([]string, len(stats))
+	for i, s := range stats {
+		top[i] = "┌" + rule + "┐"
+		labels[i] = "│" + place(utils.ColoredString(fit(s.Label), color.Faint)) + "│"
+		values[i] = "│" + place(utils.Cell{Text: fit(s.Value.Text), Color: s.Value.Color}.Rendered()) + "│"
+		bottom[i] = "└" + rule + "┘"
+	}
+
+	return strings.Join([]string{
+		strings.Join(top, gap),
+		strings.Join(labels, gap),
+		strings.Join(values, gap),
+		strings.Join(bottom, gap),
+	}, "\n")
+}
+
+// centerPad pads a styled string to width cells with the slack split evenly, the odd cell going right.
+func centerPad(s string, width int) string {
+	slack := width - runewidth.StringWidth(utils.Decolorise(s))
+	if slack <= 0 {
+		return s
+	}
+	left := slack / 2
+
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", slack-left)
+}
+
+// mergeRightAligned zips a right block onto the right edge of a left block, which Columns cannot do: its columns split the width, and a header's stat cards want exactly their own width, flush right.
+// When the width cannot hold both, the right block stacks underneath instead of squeezing the header into slivers.
+func mergeRightAligned(width int, left, right string) string {
+	if right == "" {
+		return left
+	}
+
+	rightLines := strings.Split(right, "\n")
+	rightWidth := 0
+	for _, line := range rightLines {
+		rightWidth = max(rightWidth, runewidth.StringWidth(utils.Decolorise(line)))
+	}
+
+	const gap = 2
+	leftBudget := width - rightWidth - gap
+	// The mockups wrap the stat cards under the header at narrow widths; half the pane is the point where the header text stops being readable beside them.
+	if leftBudget < width/2 {
+		return left + "\n" + truncateBlock(right, width)
+	}
+
+	leftLines := strings.Split(left, "\n")
+	lines := make([]string, max(len(leftLines), len(rightLines)))
+	for i := range lines {
+		var leftLine, rightLine string
+		if i < len(leftLines) {
+			leftLine = truncateStyled(leftLines[i], leftBudget)
+		}
+		if i < len(rightLines) {
+			rightLine = rightLines[i]
+		}
+		lines[i] = strings.TrimRight(utils.WithPadding(leftLine, leftBudget+gap)+rightLine, " ")
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// SectionTitleWithNote is SectionTitle with a faint note pushed to the section's right edge, the mockups' "Service Summary … 1 service" row.
+func SectionTitleWithNote(width int, title, note string) string {
+	styled := SectionTitle(title)
+	if note == "" {
+		return styled
+	}
+
+	slack := width - runewidth.StringWidth(utils.Decolorise(styled)) - runewidth.StringWidth(note)
+	if slack < 1 {
+		return styled + " " + utils.ColoredString(note, color.Faint)
+	}
+
+	return styled + strings.Repeat(" ", slack) + utils.ColoredString(note, color.Faint)
+}
+
 // kv is one label/value row of an overview's key-value block.
 type kv struct{ label, value string }
 
@@ -188,12 +354,89 @@ func kvBlock(rows []kv) string {
 	return strings.Join(lines, "\n")
 }
 
-// TagLine renders one tag row with the value in the palette's metadata colour, so every pane's tag list reads the same.
-func TagLine(key, value string) string {
-	if value == "" {
-		value = "none"
+// tagStyleChips flips every tag section between the mockups' bordered chips and plain "key: value" lines.
+// The owner picked the plain lines off the gallery (2026-08-28); the chips stay behind this switch as the deliberate one-line way back.
+var tagStyleChips = false
+
+// tagsBody renders a tag list in the selected style. Every pane's tag section routes through here, so the style cannot drift per panel.
+func tagsBody(width int, tags []kv) string {
+	if tagStyleChips {
+		return tagChips(width, tags)
 	}
-	return key + ": " + utils.ColoredString(value, color.FgMagenta)
+
+	lines := make([]string, len(tags))
+	for i, tag := range tags {
+		value := tag.value
+		if value == "" {
+			value = "none"
+		}
+		lines[i] = tag.label + ": " + utils.ColoredString(value, color.FgMagenta)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// tagChips renders tags as the mockups' bordered chips, flowing left to right and wrapping onto a new chip row when the pane runs out of width.
+// Each chip is content-sized (unlike StatBoxes' equal cards) because tag keys and values vary wildly, and the flow-wrap is what keeps a pane with many tags from growing one 3-row box per tag.
+func tagChips(width int, tags []kv) string {
+	const gap = " "
+	pad := strings.Repeat(" ", boxInnerPadding)
+
+	var lines []string
+	var top, mid, bot []string
+	used := 0
+	flush := func() {
+		if len(top) == 0 {
+			return
+		}
+		lines = append(lines, strings.Join(top, gap), strings.Join(mid, gap), strings.Join(bot, gap))
+		top, mid, bot = nil, nil, nil
+		used = 0
+	}
+
+	for _, tag := range tags {
+		value := tag.value
+		if value == "" {
+			value = "none"
+		}
+		styled := utils.ColoredString(tag.label+":", color.Faint) + " " + utils.ColoredString(value, color.FgMagenta)
+		// A chip is never wider than the pane: the text inside is cut before the border would break the row.
+		styled = truncateStyled(styled, max(width-2-2*boxInnerPadding, 1))
+		inner := runewidth.StringWidth(utils.Decolorise(styled)) + 2*boxInnerPadding
+		chip := inner + 2
+
+		if used > 0 && used+len(gap)+chip > width {
+			flush()
+		}
+		if used > 0 {
+			used += len(gap)
+		}
+		used += chip
+
+		rule := strings.Repeat("─", inner)
+		top = append(top, "┌"+rule+"┐")
+		mid = append(mid, "│"+pad+styled+pad+"│")
+		bot = append(bot, "└"+rule+"┘")
+	}
+	flush()
+
+	return strings.Join(lines, "\n")
+}
+
+// tagsBodyFrom is the map-shaped entry to tagsBody, sorted because Go randomizes map iteration and an unsorted tag block reshuffles itself on every re-render.
+func tagsBodyFrom(width int, tags map[string]string) string {
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	rows := make([]kv, len(keys))
+	for i, key := range keys {
+		rows[i] = kv{key, tags[key]}
+	}
+
+	return tagsBody(width, rows)
 }
 
 // pluralize renders a count with its noun, "1 rule" / "2 rules".

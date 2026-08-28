@@ -3,7 +3,6 @@ package presentation
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
@@ -23,7 +22,7 @@ func FormatEKSClusterOverview(c *aws.EKSCluster, o *aws.EKSOverview, width int) 
 	header := truncateBlock(ResourceHeader("EKS cluster", c.Name, Badge(c.Status), "", eksVersionLabel(c.Version), c.Region, eksCreated(c)), width)
 
 	column := ColumnWidth(width, overviewGap)
-	left := joinBlocks(eksConfigBlock(c, o), eksNetworkingBlock(o), eksLoggingBlock(o), eksTagsBlock(o))
+	left := joinBlocks(eksConfigBlock(c, o), eksNetworkingBlock(o), eksLoggingBlock(o), eksTagsBlock(o, column))
 	right := joinBlocks(eksNodeGroupsBlock(c, o, column), eksAddonsBlock(o, column))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
@@ -187,7 +186,7 @@ func eksDisabledLogTypes(off []string) string {
 	return utils.ColoredString(strings.Join(off, ", "), color.FgYellow)
 }
 
-func eksTagsBlock(o *aws.EKSOverview) string {
+func eksTagsBlock(o *aws.EKSOverview, width int) string {
 	title := SectionTitle("Tags")
 	if err := eksDetailsErr(o); err != nil {
 		return sectionUnavailable("Tags", err)
@@ -196,15 +195,7 @@ func eksTagsBlock(o *aws.EKSOverview) string {
 		return title + "\nnone"
 	}
 
-	// Sorted because Go randomizes map iteration, and an unsorted tag block reshuffles itself on every re-render of the same cluster.
-	keys := slices.Sorted(maps.Keys(o.Details.Tags))
-	lines := make([]string, 0, len(keys)+1)
-	lines = append(lines, title)
-	for _, key := range keys {
-		lines = append(lines, TagLine(key, o.Details.Tags[key]))
-	}
-
-	return strings.Join(lines, "\n")
+	return title + "\n" + tagsBodyFrom(width, o.Details.Tags)
 }
 
 func eksNodeGroupsBlock(c *aws.EKSCluster, o *aws.EKSOverview, width int) string {

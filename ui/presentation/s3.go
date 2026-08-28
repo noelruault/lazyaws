@@ -2,7 +2,6 @@ package presentation
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -47,7 +46,7 @@ func FormatBucketOverview(b *aws.Bucket, o *aws.BucketOverview, width int, now t
 	header := truncateBlock(ResourceHeader("Bucket", b.Name, bucketExposureBadge(o), "", bucketRegion(o), bucketCreated(b, now)), width)
 
 	left := joinBlocks(bucketSecurityBlock(o), bucketDataBlock(o))
-	right := joinBlocks(bucketAccessBlock(o), bucketTagsBlock(o))
+	right := joinBlocks(bucketAccessBlock(o), bucketTagsBlock(o, ColumnWidth(width, overviewGap)))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
 }
@@ -322,7 +321,7 @@ func bucketNotificationsLine(n *aws.NotificationConfig) string {
 	return strings.Join(parts, ", ")
 }
 
-func bucketTagsBlock(o *aws.BucketOverview) string {
+func bucketTagsBlock(o *aws.BucketOverview, width int) string {
 	title := SectionTitle("Tags")
 	if err := o.Err(aws.SectionTags); err != nil {
 		return title + "\n" + fieldOr(err, "")
@@ -331,19 +330,7 @@ func bucketTagsBlock(o *aws.BucketOverview) string {
 		return title + "\nnone"
 	}
 
-	// Go randomizes map iteration, so an unsorted tag block would reorder itself on every re-render of the same bucket.
-	keys := make([]string, 0, len(o.Tags))
-	for key := range o.Tags {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	lines := []string{title}
-	for _, key := range keys {
-		lines = append(lines, TagLine(key, o.Tags[key]))
-	}
-
-	return strings.Join(lines, "\n")
+	return title + "\n" + tagsBodyFrom(width, o.Tags)
 }
 
 func yesNo(b bool) string {

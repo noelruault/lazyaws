@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/ui/utils"
 )
@@ -201,5 +202,199 @@ func TestFormatByteCount(t *testing.T) {
 		if got := FormatByteCount(tc.bytes); got != tc.want {
 			t.Errorf("FormatByteCount(%v) = %q, want %q", tc.bytes, got, tc.want)
 		}
+	}
+}
+
+// The border, the rule under the header and the aligned columns are the whole point of the boxed table; each is asserted on the plain text so styling cannot hide a broken frame.
+func TestBoxedTable(t *testing.T) {
+	forceColor(t)
+
+	got := utils.Decolorise(BoxedTable(40, []int{1, 0}, []string{"Name", "Status"}, [][]utils.Cell{
+		{{Text: "app-service"}, {Text: "HEALTHY", Color: color.FgGreen}},
+		{{Text: "checkout"}, {Text: "FAILED", Color: color.FgRed}},
+	}))
+	lines := strings.Split(got, "\n")
+
+	if len(lines) != 6 {
+		t.Fatalf("a two-row table renders as 6 lines (border, header, rule, rows, border), got %d:\n%s", len(lines), got)
+	}
+	for i, prefix := range []string{"┌", "│", "├", "│", "│", "└"} {
+		if !strings.HasPrefix(lines[i], prefix) {
+			t.Errorf("line %d does not open the frame with %q: %q", i, prefix, lines[i])
+		}
+	}
+	// Every line spans the same width, or the right border zigzags.
+	for i, line := range lines {
+		if w := runewidth.StringWidth(line); w != 40 {
+			t.Errorf("line %d is %d cells wide, want 40: %q", i, w, line)
+		}
+	}
+	// The header and its values share one column layout.
+	if strings.Index(lines[1], "Status") != strings.Index(lines[3], "HEALTHY") {
+		t.Errorf("the Status column drifted between header and body:\n%s", got)
+	}
+}
+
+// Below the minimum inner width the frame costs more than it organises, so the table degrades to the borderless layout rather than to crushed columns.
+func TestBoxedTableDropsTheFrameWhenSqueezed(t *testing.T) {
+	got := BoxedTable(12, []int{1}, []string{"Name"}, [][]utils.Cell{{{Text: "app"}}})
+
+	if strings.Contains(got, "┌") {
+		t.Errorf("a 12-cell table still spends cells on a frame:\n%s", got)
+	}
+	if !strings.Contains(got, "app") {
+		t.Errorf("the frameless fallback lost the content:\n%s", got)
+	}
+}
+
+// Compact cards size to the widest of them and centre their text; that is the header's stat row.
+func TestStatBoxesCompact(t *testing.T) {
+	forceColor(t)
+
+	got := utils.Decolorise(StatBoxes(0, []Stat{
+		{Label: "Services", Value: utils.Cell{Text: "1 / 1", Color: color.FgGreen}},
+		{Label: "Pending", Value: utils.Cell{Text: "0"}},
+	}))
+	lines := strings.Split(got, "\n")
+
+	if len(lines) != 4 {
+		t.Fatalf("a stat row renders as 4 lines, got %d:\n%s", len(lines), got)
+	}
+	for _, want := range []string{"Services", "1 / 1", "Pending", "0"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the stat row lost %q:\n%s", want, got)
+		}
+	}
+	// Two cards side by side means two frames per line.
+	if strings.Count(lines[0], "┌") != 2 {
+		t.Errorf("want 2 cards on the top line: %q", lines[0])
+	}
+	// All cards share the widest card's width, or the row's bottoms misalign.
+	if len(lines[0]) != len(lines[3]) {
+		t.Errorf("the frame's top and bottom differ in width:\n%s", got)
+	}
+}
+
+// Filled cards split the width evenly and never overrun it; that is the Health row.
+func TestStatBoxesFilledStaysInsideItsWidth(t *testing.T) {
+	got := StatBoxes(60, []Stat{
+		{Label: "Cluster", Value: utils.Cell{Text: "● ACTIVE"}},
+		{Label: "Services", Value: utils.Cell{Text: "1 healthy"}},
+		{Label: "Deployments", Value: utils.Cell{Text: "stable"}},
+	})
+
+	for _, line := range strings.Split(got, "\n") {
+		if w := runewidth.StringWidth(utils.Decolorise(line)); w > 60 {
+			t.Errorf("a health-card line is %d cells, over the 60-cell budget: %q", w, line)
+		}
+	}
+	for _, want := range []string{"Cluster", "● ACTIVE", "Services", "1 healthy", "Deployments", "stable"} {
+		if !strings.Contains(utils.Decolorise(got), want) {
+			t.Errorf("the health cards lost %q:\n%s", want, got)
+		}
+	}
+}
+
+// A value wider than its card is cut inside the card rather than pushing the border out of line.
+func TestStatBoxesTruncateRatherThanBreakTheFrame(t *testing.T) {
+	got := utils.Decolorise(StatBoxes(30, []Stat{
+		{Label: "Cluster", Value: utils.Cell{Text: "a-status-word-far-too-long-for-a-card"}},
+		{Label: "Services", Value: utils.Cell{Text: "1"}},
+	}))
+
+	lines := strings.Split(got, "\n")
+	first := runewidth.StringWidth(lines[0])
+	for i, line := range lines {
+		if w := runewidth.StringWidth(line); w != first {
+			t.Errorf("line %d is %d cells wide while the frame is %d:\n%s", i, w, first, got)
+		}
+	}
+}
+
+// The header's stat cards sit flush right and the header text keeps the rest; on a pane too narrow for both, the cards drop underneath instead of crushing the text.
+func TestMergeRightAligned(t *testing.T) {
+	right := "┌───┐\n│box│\n└───┘"
+
+	got := mergeRightAligned(60, "title line\nsecond", right)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want 3 merged lines, got %d:\n%s", len(lines), got)
+	}
+	for i, wants := range [][]string{{"title line", "┌───┐"}, {"second", "│box│"}, {"└───┘"}} {
+		for _, want := range wants {
+			if !strings.Contains(lines[i], want) {
+				t.Errorf("merged line %d lost %q: %q", i, want, lines[i])
+			}
+		}
+		if w := runewidth.StringWidth(utils.Decolorise(lines[i])); w > 60 {
+			t.Errorf("merged line %d is %d cells, over the 60-cell budget: %q", i, w, lines[i])
+		}
+	}
+	if !strings.HasSuffix(lines[0], "┌───┐") {
+		t.Errorf("the box is not flush right: %q", lines[0])
+	}
+
+	if narrow := mergeRightAligned(12, "title line", right); !strings.HasPrefix(narrow, "title line\n") {
+		t.Errorf("a pane too narrow for both must stack the box under the text:\n%s", narrow)
+	}
+}
+
+// The note lands on the section's right edge, and a width too small for both degrades to a single space rather than a negative repeat panic.
+func TestSectionTitleWithNote(t *testing.T) {
+	forceColor(t)
+
+	got := utils.Decolorise(SectionTitleWithNote(40, "Service Summary", "1 service"))
+	if !strings.HasSuffix(got, "1 service") {
+		t.Errorf("the note is not at the line's end: %q", got)
+	}
+	if w := runewidth.StringWidth(got); w != 40 {
+		t.Errorf("the titled line is %d cells, want exactly the 40-cell width: %q", w, got)
+	}
+
+	if squeezed := utils.Decolorise(SectionTitleWithNote(10, "Service Summary", "1 service")); !strings.Contains(squeezed, "Service Summary 1 service") {
+		t.Errorf("a squeezed title must keep both parts: %q", squeezed)
+	}
+}
+
+// Chips flow left to right and wrap onto a new 3-row chip line when the width runs out, and no line ever overruns the pane.
+func TestTagChipsFlowAndWrap(t *testing.T) {
+	forceColor(t)
+
+	got := utils.Decolorise(tagChips(36, []kv{
+		{"Environment", "staging"},
+		{"Team", "security"},
+		{"Owner", ""},
+	}))
+	lines := strings.Split(got, "\n")
+
+	// 36 cells hold the first chip (24) but not the second beside it (18), so the row wraps; the second and third (15) share the next row: two chip rows of 3 lines each.
+	if len(lines) != 6 {
+		t.Fatalf("want 2 chip rows (6 lines), got %d:\n%s", len(lines), got)
+	}
+	if !strings.Contains(lines[1], "Environment: staging") {
+		t.Errorf("the first chip row lost its tag:\n%s", got)
+	}
+	// An empty value renders as "none" rather than an empty chip.
+	if !strings.Contains(lines[4], "Team: security") || !strings.Contains(lines[4], "Owner: none") {
+		t.Errorf("the second chip row lost a tag:\n%s", got)
+	}
+	for i, line := range lines {
+		if w := runewidth.StringWidth(line); w > 36 {
+			t.Errorf("chip line %d is %d cells, over the 36-cell budget: %q", i, w, line)
+		}
+	}
+}
+
+// A tag longer than the pane is cut inside its chip rather than breaking the border.
+func TestTagChipsTruncateRatherThanBreakTheFrame(t *testing.T) {
+	got := utils.Decolorise(tagChips(24, []kv{{"Name", "a-value-far-too-long-for-any-chip"}}))
+
+	for i, line := range strings.Split(got, "\n") {
+		if w := runewidth.StringWidth(line); w > 24 {
+			t.Errorf("chip line %d is %d cells, over the 24-cell budget: %q", i, w, line)
+		}
+	}
+	if !strings.Contains(got, "…") {
+		t.Errorf("the over-long value shows no cut mark:\n%s", got)
 	}
 }

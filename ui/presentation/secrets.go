@@ -51,7 +51,7 @@ const secretVersionsShown = 15
 // Everything rendered here comes from the DescribeSecret / ListSecretVersionIds / GetResourcePolicy fetch the Config tab already makes, so the tab costs no additional AWS call, and the value itself is never read.
 func FormatSecretOverview(d *aws.SecretDetails, width int, now time.Time) string {
 	header := ResourceHeader("Secret", d.Name, secretRotationBadge(&d.SecretSummary), "", d.PrimaryRegion)
-	body := Columns(width, 2, secretDetailsBlock(d, now), secretPostureBlock(d))
+	body := Columns(width, 2, secretDetailsBlock(d, now), secretPostureBlock(d, ColumnWidth(width, 2)))
 
 	return header + "\n\n" + body + "\n\n" + secretVersionsBlock(d, width, now)
 }
@@ -88,7 +88,7 @@ func secretDetailsBlock(d *aws.SecretDetails, now time.Time) string {
 	return SectionTitle("Details") + "\n" + kvBlock(rows)
 }
 
-func secretPostureBlock(d *aws.SecretDetails) string {
+func secretPostureBlock(d *aws.SecretDetails, width int) string {
 	lines := []string{SectionTitle("Replication")}
 	if len(d.Replication) == 0 {
 		lines = append(lines, "Not replicated")
@@ -102,9 +102,12 @@ func secretPostureBlock(d *aws.SecretDetails) string {
 	lines = append(lines, "", SectionTitle("Tags"))
 	if len(d.Tags) == 0 {
 		lines = append(lines, "none")
-	}
-	for _, tag := range d.Tags {
-		lines = append(lines, TagLine(orNone(deref(tag.Key)), deref(tag.Value)))
+	} else {
+		tags := make([]kv, len(d.Tags))
+		for i, tag := range d.Tags {
+			tags[i] = kv{orNone(deref(tag.Key)), deref(tag.Value)}
+		}
+		lines = append(lines, tagsBody(width, tags))
 	}
 
 	return strings.Join(lines, "\n")

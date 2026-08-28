@@ -3,6 +3,7 @@ package presentation
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -291,12 +292,16 @@ func TestClusterOverviewRendersEverySection(t *testing.T) {
 		"batch-cluster",
 		"eu-west-1",
 		"1/1 services steady",
-		"12 running / 0 pending",
+		// The counts moved off the header's meta line into the stat cards and the Health grid.
+		"12 running",
+		"Running tasks:",
+		"Pending tasks:",
 		"arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
 		"Container Insights: enabled",
 		"DEFAULT (task awslogs driver)",
 		"kicker-web",
-		"3/3 running",
+		// The service table spells its columns out; the row under them is asserted by the narrow-width test.
+		"Desired", "Running", "Pending",
 		"● steady",
 		"a1b2c3d4e5f6",
 		// The image is the hard requirement this pane exists for, with the registry host dropped and the sidecar counted rather than listed.
@@ -583,7 +588,8 @@ func TestClusterOverviewTaskWithoutContainersSaysUnavailable(t *testing.T) {
 
 	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
 
-	if !strings.Contains(got, "a1b2c3d4e5f6 unavailable") {
+	row := lineContaining(got, "a1b2c3d4e5f6")
+	if !strings.Contains(row, "unavailable") {
 		t.Errorf("a task with no readable containers must say so in the image column\n%s", got)
 	}
 }
@@ -599,17 +605,19 @@ func TestClusterOverviewNarrowServiceRowKeepsItsStabilityBadge(t *testing.T) {
 	}}
 
 	// Either side of minTwoColWidth, so both the stacked and the two-column layouts are covered.
+	// The counts read left to right as Desired, Running, Pending, so their order in the row is part of what is pinned.
+	countsThenBadge := regexp.MustCompile(`3\s+1\s+2\s+● deploying`)
 	for _, width := range []int{80, 110, 120, 160} {
 		got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, width))
 
-		for _, want := range []string{"1/3 running", "2 pending", "● deploying"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("at width %d the service row lost %q to a long name\n%s", width, want, got)
-			}
-		}
+		row := lineContaining(got, "a-very-long")
 		// A prefix short enough to survive the narrowest column here: the point is that the name is still identifiable, not how many of its cells were paid for.
-		if !strings.Contains(got, "a-very-long") {
+		if row == "" {
 			t.Errorf("at width %d the service name was cut away entirely\n%s", width, got)
+			continue
+		}
+		if !countsThenBadge.MatchString(row) {
+			t.Errorf("at width %d the service row lost its counts or its badge to a long name: %q", width, row)
 		}
 	}
 }
