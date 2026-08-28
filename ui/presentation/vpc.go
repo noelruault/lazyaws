@@ -40,12 +40,47 @@ func GetVPCDisplayCells(v *aws.VPC) []utils.Cell {
 // Everything but the DNS attributes comes off the list row or the tabs' own loaders, so the pane costs no call the Subnets, Gateways and Endpoints tabs do not already make.
 func FormatVPCOverview(v *aws.VPC, o *aws.VPCOverview, width int) string {
 	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and a long Name tag beside the CIDR and the id runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("VPC", vpcLabel(v), Badge(v.State), v.ID, v.CIDR, vpcDefaultNote(v)), width)
+	header := HeaderWithStats(width,
+		ResourceHeader("VPC", vpcLabel(v), Badge(v.State), v.ID, v.CIDR, vpcDefaultNote(v)),
+		vpcStatCards(o),
+	)
 
 	left := joinBlocks(vpcConfigBlock(v), vpcDNSBlock(o), vpcTagsBlock(v, ColumnWidth(width, overviewGap)))
 	right := joinBlocks(vpcSubnetsBlock(o), vpcGatewaysBlock(o), vpcEndpointsBlock(o))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+func vpcStatCards(o *aws.VPCOverview) []Stat {
+	public, freeIPs := vpcSubnetTotals(o.Subnets)
+	subnets := utils.Cell{Text: fmt.Sprintf("%d · %d pub / %d priv", len(o.Subnets), public, len(o.Subnets)-public)}
+	free := utils.Cell{Text: fmt.Sprintf("%d", freeIPs)}
+	if o.Err(aws.SectionSubnets) != nil {
+		subnets = utils.Cell{Text: "unavailable", Color: color.FgRed}
+		free = utils.Cell{Text: "unavailable", Color: color.FgRed}
+	}
+
+	endpoints := utils.Cell{Text: fmt.Sprintf("%d", len(o.Endpoints))}
+	if o.Err(aws.SectionEndpoints) != nil {
+		endpoints = utils.Cell{Text: "unavailable", Color: color.FgRed}
+	}
+
+	return []Stat{
+		{Label: "Subnets", Value: subnets},
+		{Label: "Free IPs", Value: free},
+		{Label: "Endpoints", Value: endpoints},
+	}
+}
+
+func vpcSubnetTotals(subnets []aws.Subnet) (public int, freeIPs int32) {
+	for _, subnet := range subnets {
+		if subnet.Public {
+			public++
+		}
+		freeIPs += subnet.AvailableIPs
+	}
+
+	return public, freeIPs
 }
 
 func vpcLabel(v *aws.VPC) string {
@@ -103,13 +138,9 @@ func vpcSubnetsBlock(o *aws.VPCOverview) string {
 		return title + "\nnone"
 	}
 
-	public, available := 0, int32(0)
+	public, available := vpcSubnetTotals(o.Subnets)
 	byAZ := map[string]int{}
 	for _, subnet := range o.Subnets {
-		if subnet.Public {
-			public++
-		}
-		available += subnet.AvailableIPs
 		byAZ[subnet.AZ]++
 	}
 

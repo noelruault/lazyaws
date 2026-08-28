@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -75,6 +76,64 @@ func TestVPCOverviewRendersEverySection(t *testing.T) {
 			t.Errorf("overview is missing %q\n%s", want, got)
 		}
 	}
+
+	plain := utils.Decolorise(FormatVPCOverview(overviewVPC(), fullVPCOverview(), stackedWidth))
+	header := strings.SplitN(plain, "\n\n", 2)[0]
+	if strings.Count(header, "┌") != 3 {
+		t.Errorf("header does not contain three stat cards\n%s", header)
+	}
+	if strings.Count(plain, "├") != 0 || strings.Count(plain, "┌") != 3 || strings.Contains(plain, "Health") {
+		t.Errorf("overview contains health cards or a boxed table\n%s", plain)
+	}
+}
+
+func TestVPCOverviewCardsSummariseExistingFetches(t *testing.T) {
+	want := []Stat{
+		{Label: "Subnets", Value: utils.Cell{Text: "4 · 2 pub / 2 priv"}},
+		{Label: "Free IPs", Value: utils.Cell{Text: "1500"}},
+		{Label: "Endpoints", Value: utils.Cell{Text: "2"}},
+	}
+
+	cards := vpcStatCards(fullVPCOverview())
+	if len(cards) != len(want) {
+		t.Fatalf("vpcStatCards() returned %d cards, want %d", len(cards), len(want))
+	}
+	for i := range want {
+		if cards[i] != want[i] {
+			t.Errorf("card %d = %+v, want %+v", i, cards[i], want[i])
+		}
+	}
+
+	failed := fullVPCOverview()
+	failed.Errs[aws.SectionSubnets] = errors.New("subnets denied")
+	failed.Errs[aws.SectionEndpoints] = errors.New("endpoints denied")
+	for i, card := range vpcStatCards(failed) {
+		if card.Value.Text != "unavailable" || card.Value.Color != color.FgRed {
+			t.Errorf("failed-fetch card %d = %+v, want red unavailable", i, card.Value)
+		}
+	}
+}
+
+func TestVPCOverviewHeaderCardsFitWidthBudgets(t *testing.T) {
+	forceColor(t)
+
+	for _, width := range []int{80, 110, 120, 160} {
+		got := FormatVPCOverview(overviewVPC(), fullVPCOverview(), width)
+		header := strings.SplitN(utils.Decolorise(got), "\n\n", 2)[0]
+		for _, want := range []string{"Subnets", "4 · 2 pub / 2 priv", "Free IPs", "1500", "Endpoints", "2"} {
+			if !strings.Contains(header, want) {
+				t.Errorf("at width %d header card is missing %q\n%s", width, want, header)
+			}
+		}
+		if strings.Count(header, "┌") != 3 {
+			t.Errorf("at width %d header does not contain three stat cards\n%s", width, header)
+		}
+		for _, line := range strings.Split(got, "\n") {
+			if cells := runewidth.StringWidth(utils.Decolorise(line)); cells > width {
+				t.Errorf("at width %d line is %d cells wide: %q", width, cells, utils.Decolorise(line))
+			}
+		}
+	}
 }
 
 // The default VPC is the one every account has and the one an unexpected resource usually turns out to be in, so it is called out rather than left to a boolean row.
@@ -133,14 +192,15 @@ func TestVPCOverviewSeparatesDNSOffFromDNSUnreadable(t *testing.T) {
 // Each attachment is its own describe, so one denial costs its own section and leaves the rest of the pane standing.
 func TestVPCOverviewSectionsFailIndependently(t *testing.T) {
 	tests := []struct {
-		section string
-		want    string
+		section     string
+		want        string
+		unavailable int
 	}{
-		{aws.SectionDNS, "DNS\nunavailable: boom"},
-		{aws.SectionSubnets, "Subnets\nunavailable: boom"},
-		{aws.SectionIGW, "Internet gateway: unavailable: boom"},
-		{aws.SectionNAT, "NAT gateways: unavailable: boom"},
-		{aws.SectionEndpoints, "Endpoints\nunavailable: boom"},
+		{aws.SectionDNS, "DNS\nunavailable: boom", 1},
+		{aws.SectionSubnets, "Subnets\nunavailable: boom", 3},
+		{aws.SectionIGW, "Internet gateway: unavailable: boom", 1},
+		{aws.SectionNAT, "NAT gateways: unavailable: boom", 1},
+		{aws.SectionEndpoints, "Endpoints\nunavailable: boom", 2},
 	}
 
 	for _, test := range tests {
@@ -156,8 +216,8 @@ func TestVPCOverviewSectionsFailIndependently(t *testing.T) {
 			if !strings.Contains(got, "vpc-0abcdef1234567890") || !strings.Contains(got, "Configuration") {
 				t.Errorf("a failed %s took the pane down with it\n%s", test.section, got)
 			}
-			if count := strings.Count(got, "unavailable"); count != 1 {
-				t.Errorf("a failed %s made %d sections unavailable, want 1\n%s", test.section, count, got)
+			if count := strings.Count(got, "unavailable"); count != test.unavailable {
+				t.Errorf("a failed %s rendered %d unavailable states, want %d\n%s", test.section, count, test.unavailable, got)
 			}
 		})
 	}
