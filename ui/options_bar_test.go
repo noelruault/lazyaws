@@ -125,9 +125,9 @@ func TestAnUnfilterablePanelDoesNotAdvertiseFilter(t *testing.T) {
 func TestDashboardOptionsFollowARebind(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 
-	keymap, problems := buildKeymap(map[string]string{"copy-id": "Y", "filter": "f"})
+	keymap, problems := buildKeymap(map[string]string{"copy-id": "Y", "filter": "f", "nav-down": "n"})
 	if len(problems) > 0 {
-		t.Fatalf("rebinding copy-id and filter reported problems: %v", problems)
+		t.Fatalf("rebinding copy-id, filter and nav-down reported problems: %v", problems)
 	}
 	gui.Keys = keymap
 
@@ -140,6 +140,18 @@ func TestDashboardOptionsFollowARebind(t *testing.T) {
 	}
 	if strings.Contains(line, "y Copy ARN") || strings.Contains(line, "/ Filter") {
 		t.Errorf("the footer still shows a default keycap the user moved: %s", line)
+	}
+
+	var foundRebind, foundDefault bool
+	for _, binding := range gui.GetInitialKeybindings() {
+		if binding.ViewName != "ec2" || binding.Name != KeyNavDown {
+			continue
+		}
+		foundRebind = foundRebind || binding.Key == 'n'
+		foundDefault = foundDefault || binding.Key == 'j'
+	}
+	if !foundRebind || foundDefault {
+		t.Errorf("ec2 nav-down binding did not move from j to n")
 	}
 }
 

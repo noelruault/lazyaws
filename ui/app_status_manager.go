@@ -110,7 +110,7 @@ func (gui *Gui) renderGlobalOptions() error {
 }
 
 // dashboardOptions is the options line for the eight lists and the main pane, in reading order rather than alphabetically by keycap.
-// Every rebindable label resolves through the keymap, so a user who moves a key sees the key they bound; the arrow, tab and page keys are literals no config can move, which is why those keycaps are written out.
+// Every rebindable label resolves through the keymap; arrows, Enter, Esc and Tab stay literal so config cannot remove baseline navigation.
 // It is deliberately shorter than the set of keys that work here: the line is one row of a shared bottom line, and the menu (x / ?) is where the full list lives.
 func (gui *Gui) dashboardOptions(viewName string) []option {
 	named := func(name KeyName, label string) option {

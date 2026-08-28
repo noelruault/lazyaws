@@ -37,6 +37,14 @@ const (
 	KeyChatNewConversation  KeyName = "chat-new-conversation"
 	KeyChatToggleFolds      KeyName = "chat-toggle-folds"
 	KeyRedraw               KeyName = "redraw"
+	KeyNavUp                KeyName = "nav-up"
+	KeyNavDown              KeyName = "nav-down"
+	KeyNavLeft              KeyName = "nav-left"
+	KeyNavRight             KeyName = "nav-right"
+	KeyScrollMainUp         KeyName = "scroll-main-up"
+	KeyScrollMainDown       KeyName = "scroll-main-down"
+	KeyScrollMainPageUp     KeyName = "scroll-main-page-up"
+	KeyScrollMainPageDown   KeyName = "scroll-main-page-down"
 )
 
 // Chord owns its description so the options bar and README cannot drift from the binding.
@@ -49,8 +57,16 @@ type Chord struct {
 	Where string
 }
 
-// DefaultKeys leaves navigation primitives fixed so configurable commands remain a focused surface.
+// DefaultKeys includes every configurable chord; fixed literals preserve baseline navigation when overrides break.
 var DefaultKeys = []Chord{
+	{Name: KeyNavUp, Key: 'k', Description: "Move up in the focused view"},
+	{Name: KeyNavDown, Key: 'j', Description: "Move down in the focused view"},
+	{Name: KeyNavLeft, Key: 'h', Description: "Move left in the focused view"},
+	{Name: KeyNavRight, Key: 'l', Description: "Move right in the focused view"},
+	{Name: KeyScrollMainUp, Key: gocui.KeyCtrlU, Description: "Scroll the main panel up"},
+	{Name: KeyScrollMainDown, Key: gocui.KeyCtrlD, Description: "Scroll the main panel down"},
+	{Name: KeyScrollMainPageUp, Key: gocui.KeyPgup, Description: "Scroll the main panel up"},
+	{Name: KeyScrollMainPageDown, Key: gocui.KeyPgdn, Description: "Scroll the main panel down"},
 	{Name: KeyCommandBar, Key: ':', Description: "Go to a resource by name, or run a command"},
 	{Name: KeyActions, Key: 'a', Description: "Open the actions menu for the focused item", Where: "every panel, and the main panel"},
 	{Name: KeyFilter, Key: '/', Description: "Filter the focused list"},
@@ -84,14 +100,14 @@ const (
 
 // RenderKeyTable derives documentation from the binding source.
 func RenderKeyTable() string {
-	lines := []string{"| Key | Action |", "| --- | --- |"}
+	lines := []string{"| Name | Default | Action |", "| --- | --- | --- |"}
 
 	for _, chord := range DefaultKeys {
 		action := chord.Description
 		if chord.Where != "" {
 			action += " (" + chord.Where + ")"
 		}
-		lines = append(lines, fmt.Sprintf("| `%s` | %s |", describeKey(chord.Key), action))
+		lines = append(lines, fmt.Sprintf("| `%s` | `%s` | %s |", chord.Name, describeKey(chord.Key), action))
 	}
 
 	return strings.Join(lines, "\n")
@@ -195,7 +211,7 @@ func checkKeyConflicts(bindings []*Binding) []error {
 		case len(c.names) > 1:
 			problems = append(problems, fmt.Errorf("keybindings: %s both want %s %s", strings.Join(keyNameStrings(c.names), " and "), describeKey(at.key), where))
 		case len(c.names) == 1 && c.literal:
-			// The literal is registered first and wins, so the rebound key would silently keep doing the old thing.
+			// Dispatch order would otherwise decide whether the named chord or fixed fallback wins.
 			problems = append(problems, fmt.Errorf("keybindings: %s wants %s %s, which is already how you navigate there", c.names[0], describeKey(at.key), where))
 		}
 	}

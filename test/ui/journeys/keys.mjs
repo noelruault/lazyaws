@@ -67,6 +67,12 @@ export async function run ({ term, seed, endpoint }) {
   const first = await term.waitForSelectedRow(/^▶ \(no name\)/)
   const footer = await cleanFooter(term)
 
+  // --- rebound navigation ---------------------------------------------------------------------
+  await term.sendKeys('n')
+  await term.waitForSelectedRow(new RegExp(`^▶ ${seed.instanceNames.db}\\b`))
+  await term.sendKeys('ArrowUp')
+  await term.waitForSelectedRow(/^▶ \(no name\)/)
+
   // --- y copy popup ---------------------------------------------------------------------------
   assertAdvertises(footer, 'y', 'Copy ARN')
   if (!first.includes('…')) {
