@@ -81,3 +81,4 @@ vendor/
 .Trashes
 .VolumeIcon.icns
 lazyawschic
+.playwright-mcp/
