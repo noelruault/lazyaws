@@ -18,14 +18,95 @@ var errClusterNotDescribed = errors.New("cluster not described")
 // FormatEKSClusterOverview lays a cluster out for the Overview tab: what the control plane is on the left, and what is running under it on the right.
 // Everything comes off the list row or the Config, Node groups and Addons tabs' own loaders, so the pane costs no call those tabs do not already make.
 func FormatEKSClusterOverview(c *aws.EKSCluster, o *aws.EKSOverview, width int) string {
-	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and a long cluster name beside the version and the region runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("EKS cluster", c.Name, Badge(c.Status), "", eksVersionLabel(c.Version), c.Region, eksCreated(c)), width)
+	header := HeaderWithStats(width,
+		ResourceHeader("EKS cluster", c.Name, Badge(c.Status), "", eksVersionLabel(c.Version), c.Region, eksCreated(c)),
+		eksStatCards(c, o),
+	)
 
 	column := ColumnWidth(width, overviewGap)
-	left := joinBlocks(eksConfigBlock(c, o), eksNetworkingBlock(o), eksLoggingBlock(o), eksTagsBlock(o, column))
+	left := joinBlocks(eksHealthBlock(c, o, column), eksConfigBlock(c, o), eksNetworkingBlock(o), eksLoggingBlock(o), eksTagsBlock(o, column))
 	right := joinBlocks(eksNodeGroupsBlock(c, o, column), eksAddonsBlock(o, column))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+func eksStatCards(c *aws.EKSCluster, o *aws.EKSOverview) []Stat {
+	addons := utils.Cell{Text: "unavailable", Color: color.FgRed}
+	if o.Err(aws.SectionAddons) == nil {
+		_, degraded := eksAddonHealthCounts(o.Addons)
+		addons = utils.Cell{Text: fmt.Sprintf("%d", len(o.Addons))}
+		if degraded > 0 {
+			addons = utils.Cell{Text: fmt.Sprintf("%d degraded", degraded), Color: color.FgRed}
+		}
+	}
+
+	return []Stat{
+		{Label: "Status", Value: BadgeCell(c.Status)},
+		{Label: "Nodes", Value: utils.Cell{Text: fmt.Sprintf("%d desired", c.NodeCount)}},
+		{Label: "Addons", Value: addons},
+	}
+}
+
+func eksHealthBlock(c *aws.EKSCluster, o *aws.EKSOverview, width int) string {
+	nodeGroups := utils.Cell{Text: "unavailable", Color: color.FgRed}
+	if o.Err(aws.SectionNodeGroups) == nil {
+		active := 0
+		for _, group := range o.NodeGroups {
+			if group.Status == "ACTIVE" {
+				active++
+			}
+		}
+
+		switch {
+		case len(o.NodeGroups) == 0:
+			nodeGroups = utils.Cell{Text: "none"}
+		case active == len(o.NodeGroups):
+			nodeGroups = utils.Cell{Text: fmt.Sprintf("%d/%d active", active, len(o.NodeGroups)), Color: color.FgGreen}
+		default:
+			nodeGroups = utils.Cell{Text: fmt.Sprintf("%d/%d active", active, len(o.NodeGroups)), Color: color.FgYellow}
+		}
+	}
+
+	addons := utils.Cell{Text: "unavailable", Color: color.FgRed}
+	if o.Err(aws.SectionAddons) == nil {
+		healthy, degraded := eksAddonHealthCounts(o.Addons)
+		switch {
+		case len(o.Addons) == 0:
+			addons = utils.Cell{Text: "none"}
+		case degraded > 0:
+			addons = utils.Cell{Text: fmt.Sprintf("%d degraded", degraded), Color: color.FgRed}
+		case healthy == len(o.Addons):
+			addons = utils.Cell{Text: fmt.Sprintf("%d healthy", healthy), Color: color.FgGreen}
+		default:
+			addons = utils.Cell{Text: fmt.Sprintf("%d/%d healthy", healthy, len(o.Addons)), Color: color.FgYellow}
+		}
+	}
+
+	cards := StatBoxes(width, []Stat{
+		{Label: "Cluster", Value: BadgeCell(c.Status)},
+		{Label: "Node groups", Value: nodeGroups},
+		{Label: "Addons", Value: addons},
+	})
+
+	return SectionTitle("Health") + "\n" + cards
+}
+
+func eksAddonHealthCounts(addons []aws.EKSAddon) (healthy, degraded int) {
+	for _, addon := range addons {
+		if addon.Status == "ACTIVE" && addon.Health == "Healthy" {
+			healthy++
+		}
+		if addon.Health != "" && addon.Health != "Healthy" {
+			degraded++
+			continue
+		}
+		switch addon.Status {
+		case "CREATE_FAILED", "DELETE_FAILED", "DEGRADED", "UPDATE_FAILED":
+			degraded++
+		}
+	}
+
+	return healthy, degraded
 }
 
 // eksVersionLabel prefixes the Kubernetes version the way kubectl and the EKS console do, so it is not mistaken for the platform version beside it.
@@ -232,7 +313,7 @@ func eksNodeGroupsBlock(c *aws.EKSCluster, o *aws.EKSOverview, width int) string
 	}
 
 	// The name is the only column without a natural width, so it takes the slack and the rest are content-sized.
-	table, _ := utils.RenderTableFit(rows, width, []int{1, 0, 0, 0})
+	table := BoxedTable(width, []int{1, 0, 0, 0}, []string{"Group", "Status", "Nodes (min-max)", "Version"}, rows)
 
 	lines := []string{
 		title,
@@ -288,25 +369,12 @@ func eksAddonsBlock(o *aws.EKSOverview, width int) string {
 	for i, addon := range addons {
 		rows[i] = []utils.Cell{
 			{Text: addon.Name},
-			BadgeCell(addon.Status),
 			{Text: orNone(addon.Version), Color: color.Faint},
-			eksAddonHealthCell(addon.Health),
+			BadgeCell(addon.Status),
 		}
 	}
 
-	table, _ := utils.RenderTableFit(rows, width, []int{1, 0, 0, 0})
+	table := BoxedTable(width, []int{1, 0, 0}, []string{"Addon", "Version", "Status"}, rows)
 
 	return title + "\n" + pluralize(len(addons), "addon") + "\n" + table
-}
-
-// eksAddonHealthCell separates a healthy addon from one AWS reported no health for at all: the describe omits the health block entirely on some addons, and reading that as healthy hides the one state worth acting on.
-func eksAddonHealthCell(health string) utils.Cell {
-	switch health {
-	case "":
-		return utils.Cell{Text: "-", Color: color.Faint}
-	case "Healthy":
-		return utils.Cell{Text: "healthy", Color: color.FgGreen}
-	default:
-		return utils.Cell{Text: health, Color: color.FgRed}
-	}
 }

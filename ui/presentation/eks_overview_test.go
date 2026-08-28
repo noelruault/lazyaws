@@ -2,9 +2,11 @@ package presentation
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -67,16 +69,53 @@ func TestEKSOverviewRendersEverySection(t *testing.T) {
 
 	for _, want := range []string{
 		"EKS cluster", "app-prod", "v1.29 · eu-west-1 · created 2026-01-14 09:12:44",
+		"Status", "● ACTIVE", "Nodes", "6 desired", "Addons", "2",
+		"Health", "Cluster", "Node groups", "2/2 active", "2 healthy",
 		"Configuration", "Version: 1.29", "Status: ACTIVE", "Endpoint: https://ABCD1234.gr7.eu-west-1.eks.amazonaws.com",
 		"Region: eu-west-1", "Nodes: 6 desired", "Platform: eks.8", "ARN: arn:aws:eks:eu-west-1:123456789012:cluster/app-prod",
 		"Networking", "VPC: vpc-0abcdef1234567890", "Endpoint access: public + private", "Allowed CIDRs: 10.0.0.0/8",
 		"Control plane logging",
 		"Tags", "Env: prod", "Owner: platform",
-		"Node groups", "2 node groups · 6 nodes desired", "types: m6i.large (1), t3.medium (1)",
-		"Addons", "2 addons",
+		"Node groups", "2 node groups · 6 nodes desired", "types: m6i.large (1), t3.medium (1)", "Group", "Nodes (min-max)",
+		"Addons", "2 addons", "Addon",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing %q\n%s", want, got)
+		}
+	}
+	if header := strings.SplitN(got, "\n\n", 2)[0]; strings.Count(header, "┌") != 3 {
+		t.Errorf("header does not contain three stat cards\n%s", header)
+	}
+	if strings.Count(got, "├") != 2 {
+		t.Errorf("overview does not contain two boxed tables\n%s", got)
+	}
+}
+
+func TestEKSOverviewCardsUseHealthColours(t *testing.T) {
+	forceColor(t)
+
+	healthy := FormatEKSClusterOverview(overviewEKSCluster(), fullEKSOverview(), stackedWidth)
+	for _, want := range []string{
+		utils.ColoredString("● ACTIVE", color.FgGreen),
+		utils.ColoredString("2/2 active", color.FgGreen),
+		utils.ColoredString("2 healthy", color.FgGreen),
+	} {
+		if !strings.Contains(healthy, want) {
+			t.Errorf("healthy overview is missing coloured card value %q\n%s", utils.Decolorise(want), utils.Decolorise(healthy))
+		}
+	}
+
+	degradedOverview := fullEKSOverview()
+	degradedOverview.NodeGroups[0].Status = "CREATING"
+	degradedOverview.Addons[0].Status = "DEGRADED"
+	degradedOverview.Addons[0].Health = "AccessDenied"
+	degraded := FormatEKSClusterOverview(overviewEKSCluster(), degradedOverview, stackedWidth)
+	for _, want := range []string{
+		utils.ColoredString("1/2 active", color.FgYellow),
+		utils.ColoredString("1 degraded", color.FgRed),
+	} {
+		if !strings.Contains(degraded, want) {
+			t.Errorf("degraded overview is missing coloured card value %q\n%s", utils.Decolorise(want), utils.Decolorise(degraded))
 		}
 	}
 }
@@ -238,29 +277,18 @@ func TestEKSNodeGroupVersionCellColoursOnlyTheDrift(t *testing.T) {
 	}
 }
 
-// The describe omits an addon's health block entirely on some addons, and reading that as healthy hides the one state worth acting on.
-func TestEKSAddonHealthSeparatesUnreportedFromHealthy(t *testing.T) {
-	tests := []struct {
-		health string
-		want   string
-	}{
-		{health: "", want: "-"},
-		{health: "Healthy", want: "healthy"},
-		{health: "AccessDenied", want: "AccessDenied"},
-	}
+// EKS omits health for some addons, so absence is neither healthy nor degraded; only a health issue or terminal failure earns the red count.
+func TestEKSAddonHealthCountsDoNotInventMissingHealth(t *testing.T) {
+	healthy, degraded := eksAddonHealthCounts([]aws.EKSAddon{
+		{Status: "ACTIVE", Health: "Healthy"},
+		{Status: "ACTIVE"},
+		{Status: "UPDATING"},
+		{Status: "DEGRADED"},
+		{Status: "ACTIVE", Health: "AccessDenied"},
+	})
 
-	for _, test := range tests {
-		if got := eksAddonHealthCell(test.health).Text; got != test.want {
-			t.Errorf("eksAddonHealthCell(%q).Text = %q, want %q", test.health, got, test.want)
-		}
-	}
-
-	// An unreported health must not be coloured as an answer, and a real issue must not be left plain.
-	if got := eksAddonHealthCell(""); got.Text == "healthy" {
-		t.Errorf("eksAddonHealthCell(\"\") = %+v, want it distinct from a healthy addon", got)
-	}
-	if got := eksAddonHealthCell("AccessDenied"); got.Color == 0 {
-		t.Errorf("eksAddonHealthCell(%q) = %+v, want an unhealthy addon coloured", "AccessDenied", got)
+	if healthy != 1 || degraded != 2 {
+		t.Errorf("eksAddonHealthCounts() = (%d, %d), want (1, 2)", healthy, degraded)
 	}
 }
 
@@ -292,11 +320,39 @@ func TestEKSOverviewRendersItsTableRowsInFull(t *testing.T) {
 	for _, want := range []string{
 		"general ● ACTIVE 4 (2-8) v1.29",
 		"workers-spot ● ACTIVE 2 (1-4) v1.29",
-		"coredns ● ACTIVE v1.11.1-eksbuild.4 healthy",
-		"vpc-cni ● ACTIVE v1.18.1-eksbuild.1 healthy",
+		"coredns v1.11.1-eksbuild.4 ● ACTIVE",
+		"vpc-cni v1.18.1-eksbuild.1 ● ACTIVE",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing the row %q\n%s", want, got)
+		}
+	}
+}
+
+func TestEKSOverviewNarrowTablesKeepEveryColumn(t *testing.T) {
+	forceColor(t)
+
+	o := fullEKSOverview()
+	o.NodeGroups = []aws.EKSNodeGroup{{
+		Name: "a-very-long-node-group-name-that-must-flex", Status: "ACTIVE", DesiredSize: 12, MinSize: 3, MaxSize: 40, Version: "1.29",
+	}}
+	o.Addons = []aws.EKSAddon{{
+		Name: "addon-with-a-very-long-name-that-must-flex", Version: "v1.18.1-eksbuild.1", Status: "DEGRADED", Health: "AccessDenied",
+	}}
+
+	nodeColumns := regexp.MustCompile(`● ACTIVE\s+12 \(3-40\)\s+v1\.29`)
+	addonColumns := regexp.MustCompile(`v1\.18\.1-eksbuild\.1\s+● DEGRADED`)
+	for _, width := range []int{80, 110, 120, 160} {
+		got := utils.Decolorise(FormatEKSClusterOverview(overviewEKSCluster(), o, width))
+
+		nodeRow := lineContaining(got, "a-very-long-no")
+		if nodeRow == "" || !nodeColumns.MatchString(nodeRow) {
+			t.Errorf("at width %d node-group table lost a column: %q\n%s", width, nodeRow, got)
+		}
+
+		addonRow := lineContaining(got, "addon-wi")
+		if addonRow == "" || !addonColumns.MatchString(addonRow) {
+			t.Errorf("at width %d addon table lost a column: %q\n%s", width, addonRow, got)
 		}
 	}
 }
