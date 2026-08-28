@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/jesseduffield/gocui"
 	"github.com/noelruault/lazyaws/ui/layout"
 
@@ -18,6 +19,10 @@ import (
 var testScreen *gocui.Gui
 
 func TestMain(m *testing.M) {
+	// Colour is forced ONCE, before the loop goroutine exists: color.NoColor is a package global the render path reads on the loop goroutine, so a per-test toggle races whatever update a previous test left queued (caught by -race on main 688628d).
+	os.Unsetenv("NO_COLOR")
+	color.NoColor = false
+
 	g, err := gocui.NewGui(gocui.NewGuiOpts{Headless: true, Width: 120, Height: 40})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "headless gocui:", err)

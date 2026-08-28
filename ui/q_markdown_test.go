@@ -281,13 +281,13 @@ func TestWrapLineIsLossless(t *testing.T) {
 	}
 }
 
+// forceColor is the marker for tests that depend on styled output. The actual write happens once in TestMain, before the render loop's goroutine exists: toggling the color.NoColor global per test raced a RerenderList closure a previous test left queued on the loop.
 func forceColor(t *testing.T) {
 	t.Helper()
 
-	t.Setenv("NO_COLOR", "")
-	previous := color.NoColor
-	color.NoColor = false
-	t.Cleanup(func() { color.NoColor = previous })
+	if color.NoColor {
+		t.Fatal("colour is off: TestMain must force it before the loop starts, and nothing may toggle it per test")
+	}
 }
 
 func stripANSIForTest(s string) string {

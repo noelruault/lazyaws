@@ -79,7 +79,8 @@ func TestRenderMainRowsEmpty(t *testing.T) {
 // A tab with no header must not lose its first row to the header offset.
 func TestRenderMainRowsWithoutHeader(t *testing.T) {
 	rows := &panels.MainRows{Cells: [][]string{{"first"}, {"second"}}}
-	out := renderMainRows(rows, 0)
+	// Stripped because colour is on for the whole test binary and the cursor row is styled; the prefix under test is the marker, not the escape.
+	out := stripANSIForTest(renderMainRows(rows, 0))
 
 	if !strings.HasPrefix(out, "> ") {
 		t.Errorf("the first row should be the cursor row, got %q", out)
@@ -103,8 +104,7 @@ func TestMainRowsLenIsNilSafe(t *testing.T) {
 	}
 }
 
-// navigableMainRows is the gate every arrow key passes through. A prose tab and a drilled-in detail
-// view both have to scroll; treating either as navigable re-renders the pane and wipes what it shows.
+// navigableMainRows is the gate every arrow key passes through. A prose tab and a drilled-in detail view both have to scroll; treating either as navigable re-renders the pane and wipes what it shows.
 func TestNavigableMainRows(t *testing.T) {
 	cases := []struct {
 		name string
