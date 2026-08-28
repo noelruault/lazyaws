@@ -11,7 +11,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.72.1
 	github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.6
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.57.3
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.5
+	// Deliberately pinned: v1.66+ is CBOR-only and moto 404s that protocol; unpin when moto serves RPCv2 CBOR.
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.52.6
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.82.2
 	github.com/aws/aws-sdk-go-v2/service/codedeploy v1.38.6
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.321.2

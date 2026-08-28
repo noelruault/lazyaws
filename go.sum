@@ -24,8 +24,8 @@ github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.6 h1:VZxz2SILULvluRU9g92ZDCdq
 github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.6/go.mod h1:E4BGQ5oTXmgMZhHavHrix+6rzp3nfjHt82P7mWtEzqs=
 github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.57.3 h1:owjauLAE3bW8PZDN1xLo9B/JQ0sbUCNFoNhkXCSNri0=
 github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.57.3/go.mod h1:dn4LwmeCdEtY0vnHnFz48VtLf+9GFnnjRvS7su00tt0=
-github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.5 h1:dmtGTLndMJvBB10lfkP6F+MAxdDN7yOf/W9Cq1iTygc=
-github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.5/go.mod h1:3BPwkSv/Rr3J6Fl7TAv3QKzgpymxJaXsYYJ0xWBqHls=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.52.6 h1:sYHFJrflRClDOA/UZ9Y56DS7Rf2CNgjEzE2dlSGU7Yg=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.52.6/go.mod h1:MJCj4G367pVtvEfNpfJaw1NFipVkBkIEtIp9PwTi+3Y=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.82.2 h1:g0Hm/up9LDheflUekqCl19nTJatL6MHyvZHJSXOVyBI=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.82.2/go.mod h1:AdyGGib8td8DR+9F5xKLooxlSSoXo4pBVl+FkTpzpNA=
 github.com/aws/aws-sdk-go-v2/service/codedeploy v1.38.6 h1:DfOmWhTYI9r5QnhOOhuO8n0RmXtGyifqzylmOUbKx4I=

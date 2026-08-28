@@ -41,6 +41,16 @@ trap cleanup EXIT HUP INT TERM
 
 docker rm -f "$container" >/dev/null 2>&1 || true
 docker run -d --name "$container" -p "$moto_port:5000" "$moto_image" >/dev/null
+# Real ECS answers DescribeTasks with container cpu/memory as STRINGS; moto (5.2.2 and latest, checked 2026-08-28) echoes the registration integers, which aws-sdk-go-v2 strict-decoding rejects ("expected String, got json.Number") and every task-reading pane renders as unavailable.
+# Patched here rather than tolerated in the app: the app's decoding matches the real API, and the fake is what is wrong. Drop when moto stringifies Container.cpu/memory upstream.
+for _ in $(seq 1 20); do
+	docker exec "$container" sed -i \
+		-e 's/self.cpu = container_def.get("cpu")/self.cpu = str(container_def["cpu"]) if container_def.get("cpu") is not None else None/' \
+		-e 's/self.memory = container_def.get("memory")/self.memory = str(container_def["memory"]) if container_def.get("memory") is not None else None/' \
+		/moto/moto/ecs/models.py 2>/dev/null && break
+	sleep 0.5
+done
+docker restart "$container" >/dev/null
 for _ in $(seq 1 60); do
 	curl -fsS "$endpoint/moto-api/" >/dev/null 2>&1 && break
 	sleep 0.5
