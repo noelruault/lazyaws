@@ -1,8 +1,8 @@
 package presentation
 
 import (
+	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -49,8 +49,10 @@ func MetricReading(p aws.MetricPoint, stat string, format func(float64) string) 
 // FormatInstanceOverview lays an instance out for the Overview tab: a header that always renders, then the two-column body the six detail tabs are consolidated into.
 // The header is built from the list row rather than from the fetch, so an instance whose every section failed is still identified by name and id instead of leaving an anonymous pane of errors.
 func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width int, now time.Time) string {
-	// Cut to the pane: the header spans the full width rather than a column, so Columns never sees it, and with wrap off a long name plus its badge and id runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("EC2 Instance", instanceName(inst), Badge(inst.State), inst.ID, inst.InstanceType, inst.AZ), width)
+	header := HeaderWithStats(width,
+		ResourceHeader("EC2 Instance", instanceName(inst), Badge(inst.State), inst.ID, inst.InstanceType, inst.AZ),
+		instanceStatCards(inst, o),
+	)
 
 	column := ColumnWidth(width, overviewGap)
 	left := joinBlocks(
@@ -59,7 +61,7 @@ func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width i
 		instanceMetricsBlock(o),
 	)
 	right := joinBlocks(
-		instanceStatusBlock(o),
+		instanceStatusBlock(o, column),
 		instanceStorageBlock(o, column),
 		instanceSecurityBlock(o),
 		instanceConsoleBlock(o, now),
@@ -67,6 +69,62 @@ func FormatInstanceOverview(inst *aws.Instance, o *aws.InstanceOverview, width i
 	)
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+var errInstanceStatusUnavailable = errors.New("instance status not returned")
+
+func instanceStatCards(inst *aws.Instance, o *aws.InstanceOverview) []Stat {
+	return []Stat{
+		{Label: "State", Value: BadgeCell(inst.State)},
+		{Label: "Checks", Value: instanceChecksCell(o)},
+		{Label: "Alarms", Value: instanceAlarmsCell(o)},
+	}
+}
+
+func instanceChecksCell(o *aws.InstanceOverview) utils.Cell {
+	if instanceStatusErr(o) != nil || o.Status.SystemStatus == "" || o.Status.InstanceStatus == "" {
+		return utils.Cell{Text: "unavailable", Color: color.FgRed}
+	}
+
+	failed := 0
+	if !o.Status.SystemStatusOk {
+		failed++
+	}
+	if !o.Status.InstanceStatusOk {
+		failed++
+	}
+	if failed == 0 {
+		return utils.Cell{Text: "2/2 ok", Color: color.FgGreen}
+	}
+
+	return utils.Cell{Text: fmt.Sprintf("%d/2 failed", failed), Color: color.FgRed}
+}
+
+func instanceAlarmsCell(o *aws.InstanceOverview) utils.Cell {
+	if o.Err(aws.SectionAlarms) != nil {
+		return utils.Cell{Text: "unavailable", Color: color.FgRed}
+	}
+	if o.ExtrasPending {
+		return utils.Cell{Text: "…", Color: color.Faint}
+	}
+
+	alarms := utils.Cell{Text: strconv.Itoa(len(o.Alarms))}
+	if len(o.Alarms) > 0 {
+		alarms.Color = color.FgRed
+	}
+
+	return alarms
+}
+
+func instanceStatusErr(o *aws.InstanceOverview) error {
+	if err := o.Err(aws.SectionStatus); err != nil {
+		return err
+	}
+	if o.Status == nil {
+		return errInstanceStatusUnavailable
+	}
+
+	return nil
 }
 
 // overviewGap is the blank cells Columns leaves on each side of its rule, fixed here so the width the storage table is built for is the width its column is cut to.
@@ -237,34 +295,54 @@ func instanceMetricsBlock(o *aws.InstanceOverview) string {
 	})
 }
 
-func instanceStatusBlock(o *aws.InstanceOverview) string {
-	if err := o.Err(aws.SectionStatus); err != nil {
+func instanceStatusBlock(o *aws.InstanceOverview, width int) string {
+	if err := instanceStatusErr(o); err != nil {
 		return sectionUnavailable("Status", err)
 	}
 	s := o.Status
 
-	lines := []string{SectionTitle("Status"), kvBlock([]kv{
-		{"State", Badge(s.InstanceState)},
-		{"System", Badge(s.SystemStatus)},
-		{"Instance", Badge(s.InstanceStatus)},
-	})}
-
-	lines = append(lines, "Scheduled events:")
-	if len(s.ScheduledEvents) == 0 {
-		lines = append(lines, "  none")
+	cards := StatBoxes(width, []Stat{
+		{Label: "System", Value: instanceStatusCell(s.SystemStatus)},
+		{Label: "Instance", Value: instanceStatusCell(s.InstanceStatus)},
+		{Label: "Alarms", Value: instanceAlarmsCell(o)},
+	})
+	rows := []kv{
+		{"Scheduled events", instanceScheduledEventsValue(s.ScheduledEvents)},
+		{"Auto Scaling", instanceASGValue(o)},
 	}
-	for _, event := range s.ScheduledEvents {
-		line := "  " + utils.ColoredString(event.Code, color.FgYellow) + " " + event.NotBefore
+	if err := o.Err(aws.SectionAlarms); err != nil {
+		rows = append(rows, kv{"Alarms", fieldOr(err, "")})
+	}
+
+	return SectionTitle("Status") + "\n" + cards + "\n" + kvBlock(rows)
+}
+
+func instanceStatusCell(status string) utils.Cell {
+	if status == "" {
+		return utils.Cell{Text: "unavailable", Color: color.FgRed}
+	}
+
+	return BadgeCell(status)
+}
+
+func instanceScheduledEventsValue(events []aws.ScheduledEvent) string {
+	if len(events) == 0 {
+		return "none"
+	}
+
+	lines := make([]string, len(events))
+	for i, event := range events {
+		line := utils.ColoredString(event.Code, color.FgYellow) + " " + event.NotBefore
 		if event.NotAfter != "" {
 			line += " - " + event.NotAfter
 		}
 		if event.Description != "" {
 			line += " " + utils.ColoredString(event.Description, color.Faint)
 		}
-		lines = append(lines, line)
+		lines[i] = line
 	}
 
-	return strings.Join(lines, "\n") + "\n" + instanceAlarmsLines(o) + "\n" + instanceASGLines(o)
+	return strings.Join(lines, "; ")
 }
 
 // pendingValue is what a selection-time field says on the pane's first paint, before its fetch has answered: an ellipsis, never a value the fetch has not verified.
@@ -272,43 +350,20 @@ func pendingValue() string {
 	return utils.ColoredString("…", color.Faint)
 }
 
-// instanceAlarmsLines and instanceASGLines sit inside Status rather than in sections of their own: both are one line on almost every instance, and a heading per line turns the column into a list of headings.
-func instanceAlarmsLines(o *aws.InstanceOverview) string {
-	if err := o.Err(aws.SectionAlarms); err != nil {
-		return "Alarms: " + utils.ColoredString("unavailable", color.FgRed)
-	}
-	if o.ExtrasPending {
-		return "Alarms: " + pendingValue()
-	}
-	if len(o.Alarms) == 0 {
-		return "Alarms:\n  none"
-	}
-
-	lines := []string{"Alarms:"}
-	for _, alarm := range o.Alarms {
-		lines = append(lines, "  "+Badge(alarm.State)+" "+alarm.Name+" "+utils.ColoredString(alarm.MetricName, color.Faint))
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func instanceASGLines(o *aws.InstanceOverview) string {
+func instanceASGValue(o *aws.InstanceOverview) string {
 	if err := o.Err(aws.SectionASG); err != nil {
-		return "Auto Scaling: " + utils.ColoredString("unavailable", color.FgRed)
+		return fieldOr(err, "")
 	}
 	if o.ExtrasPending {
-		return "Auto Scaling: " + pendingValue()
+		return pendingValue()
 	}
 	// A nil membership is the answer for an instance that belongs to no group, not a missing read: GetInstanceASGMembership reports that case as nil with no error.
 	if o.ASG == nil {
-		return "Auto Scaling: none"
+		return "none"
 	}
 
-	return fmt.Sprintf("Auto Scaling: %s (desired %d, min %d, max %d)", o.ASG.GroupName, o.ASG.Desired, o.ASG.Min, o.ASG.Max)
+	return fmt.Sprintf("%s (desired %d, min %d, max %d)", o.ASG.GroupName, o.ASG.Desired, o.ASG.Min, o.ASG.Max)
 }
-
-// storageVolumeIDWidth is the table width at which the volume-id column joins: the widest realistic row with it stays whole there. A tune-by-eye number like minTwoColWidth, not a derived one.
-const storageVolumeIDWidth = 80
 
 func instanceStorageBlock(o *aws.InstanceOverview, width int) string {
 	if err := o.Err(aws.SectionDetails); err != nil {
@@ -321,30 +376,18 @@ func instanceStorageBlock(o *aws.InstanceOverview, width int) string {
 		return title + "\nno EBS volumes"
 	}
 
-	// gp2 volumes report no throughput at all, so the column is carried only when some volume actually has one: an unconditional "0 MiB/s" is a reading nobody published.
-	throughput := slices.ContainsFunc(devices, func(d aws.BlockDevice) bool { return d.Throughput > 0 })
-	// The volume id is 21 cells the narrow pane cannot spare without cutting the encryption flag, which is the one column anybody acts on; wide panes carry it, narrow ones keep the row whole.
-	withVolume := width >= storageVolumeIDWidth
-
 	rows := make([][]utils.Cell, len(devices))
 	for i, d := range devices {
-		cells := []utils.Cell{{Text: d.DeviceName}}
-		if withVolume {
-			cells = append(cells, utils.Cell{Text: d.VolumeID, Color: color.Faint})
+		rows[i] = []utils.Cell{
+			{Text: d.DeviceName},
+			{Text: fmt.Sprintf("%d GiB", d.VolumeSize)},
+			{Text: d.VolumeType},
+			{Text: fmt.Sprintf("%d IOPS", d.Iops)},
+			encryptionCell(d.Encrypted),
 		}
-		cells = append(cells,
-			utils.Cell{Text: fmt.Sprintf("%d GiB", d.VolumeSize)},
-			utils.Cell{Text: d.VolumeType},
-			utils.Cell{Text: fmt.Sprintf("%d IOPS", d.Iops)},
-		)
-		if throughput {
-			cells = append(cells, utils.Cell{Text: fmt.Sprintf("%d MiB/s", d.Throughput)})
-		}
-		rows[i] = append(cells, encryptionCell(d.Encrypted))
 	}
 
-	// Every column holds a value of its own natural width, so none takes a weight; the rows and the weights are built together, which is why neither error RenderTableFit reports can happen.
-	table, _ := utils.RenderTableFit(rows, width, make([]int, len(rows[0])))
+	table := BoxedTable(width, []int{0, 0, 0, 0, 1}, []string{"Device", "Size", "Type", "IOPS", "Encrypted"}, rows)
 
 	return title + "\n" + table + "\n" + instanceSnapshotLines(o)
 }
@@ -397,8 +440,7 @@ func instanceConsoleBlock(o *aws.InstanceOverview, now time.Time) string {
 	})
 }
 
-// encryptionCell says which state it is in words, because this table has no header row and a bare "no" between a volume type and an IOPS figure says nothing.
-// Amber marks only the unencrypted case: encryption at rest is the expected posture, and colouring both spends the reader's attention on the one that needs none.
+// encryptionCell spends warning colour only on the posture needing attention.
 func encryptionCell(encrypted bool) utils.Cell {
 	if encrypted {
 		return utils.Cell{Text: "encrypted"}

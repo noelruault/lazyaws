@@ -2,10 +2,12 @@ package presentation
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -54,10 +56,12 @@ func fullOverview() *aws.InstanceOverview {
 			ElasticIPs:        []aws.ElasticIP{{PublicIP: "203.0.113.10"}},
 		},
 		Status: &aws.InstanceStatus{
-			InstanceState:   "running",
-			SystemStatus:    "ok",
-			InstanceStatus:  "ok",
-			ScheduledEvents: []aws.ScheduledEvent{{Code: "instance-reboot", NotBefore: "2026-09-01"}},
+			InstanceState:    "running",
+			SystemStatus:     "ok",
+			InstanceStatus:   "ok",
+			SystemStatusOk:   true,
+			InstanceStatusOk: true,
+			ScheduledEvents:  []aws.ScheduledEvent{{Code: "instance-reboot", NotBefore: "2026-09-01"}},
 		},
 		Metrics: &aws.InstanceMetrics{
 			CPUUtilization: aws.MetricPoint{Value: 0.523, At: time.Date(2026, 8, 27, 11, 43, 0, 0, time.UTC), OK: true},
@@ -87,14 +91,17 @@ func TestInstanceOverviewPendingExtrasSaySoInsteadOfClaimingAbsences(t *testing.
 	o.ASG, o.Alarms, o.Console, o.Snapshots = nil, nil, nil, nil
 	o.Details.ElasticIPs = nil
 
-	got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, stackedWidth, overviewNow))
+	got := kvPadding.ReplaceAllString(utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, stackedWidth, overviewNow)), " ")
 
-	for _, want := range []string{"Alarms: …", "Auto Scaling: …", "Snapshots: …", "Elastic IPs: …"} {
+	for _, want := range []string{"Auto Scaling: …", "Snapshots: …", "Elastic IPs: …"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("pending overview is missing %q\n%s", want, got)
 		}
 	}
-	for _, absent := range []string{"Alarms:\n  none", "Auto Scaling: none", "Snapshots: none", "not fetched yet"} {
+	if got := instanceAlarmsCell(o).Text; got != "…" {
+		t.Errorf("pending alarms card = %q, want %q", got, "…")
+	}
+	for _, absent := range []string{"Auto Scaling: none", "Snapshots: none", "not fetched yet"} {
 		if strings.Contains(got, absent) {
 			t.Errorf("pending overview claims %q before the fetch answered\n%s", absent, got)
 		}
@@ -106,18 +113,63 @@ func TestInstanceOverviewRendersEverySection(t *testing.T) {
 
 	for _, want := range []string{
 		"Instance", "web-1", "i-0abcdef1234567890",
+		"State", "● running", "Checks", "2/2 ok", "Alarms", "1",
 		"Configuration", "t3a.micro · 2 vCPU · 1.0 GiB", "eu-west-1a", "x86_64", "Linux/UNIX", "web-kp", "web-role",
 		"Network", "198.51.100.178", "203.0.113.10", "vpc-0abcdef1234567890", "Up to 5 Gigabit", "eni-0abcdef1234567890",
 		// The CPU row carries the mockups' bar; a reading of 0.5% fills no cells at this width, so the empty bar plus its number is the recorded render.
 		"Metrics", "▕░░░░░░░░░░▏ 0.5%  (5-min avg @ 11:43Z)", "235.0 KiB (5-min total @ 11:43Z)",
-		"Status", "instance-reboot", "cpu-high", "web-asg (desired 2, min 1, max 4)",
-		"Storage", "/dev/sda1", "8 GiB", "gp2", "100 IOPS", "unencrypted",
+		"Status", "System", "● ok", "Instance", "instance-reboot", "web-asg (desired 2, min 1, max 4)",
+		"Storage", "Device", "Size", "Type", "IOPS", "Encrypted", "/dev/sda1", "8 GiB", "gp2", "100 IOPS", "unencrypted", "Snapshots: none",
 		"Security", "web-sg", "sg-0abcdef1234567890",
 		"Tags", "Env: prod",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing %q\n%s", want, got)
 		}
+	}
+
+	plain := utils.Decolorise(got)
+	if header := strings.SplitN(plain, "\n\n", 2)[0]; strings.Count(header, "┌") != 3 {
+		t.Errorf("header does not contain three stat cards\n%s", header)
+	}
+	_, statusAndAfter, found := strings.Cut(plain, "♡ Status\n")
+	if !found {
+		t.Fatalf("overview has no Status section\n%s", plain)
+	}
+	status, _, found := strings.Cut(statusAndAfter, "\n\n▣ Storage")
+	if !found || strings.Count(status, "┌") != 3 {
+		t.Errorf("Status does not contain three filled cards\n%s", status)
+	}
+	if strings.Count(plain, "├") != 1 {
+		t.Errorf("overview does not contain one boxed storage table\n%s", plain)
+	}
+}
+
+func TestInstanceOverviewCardsUseHealthColours(t *testing.T) {
+	forceColor(t)
+
+	healthy := FormatInstanceOverview(overviewInstance(), fullOverview(), stackedWidth, overviewNow)
+	for _, want := range []string{
+		utils.ColoredString("● running", color.FgGreen),
+		utils.ColoredString("2/2 ok", color.FgGreen),
+		utils.ColoredString("● ok", color.FgGreen),
+		utils.ColoredString("1", color.FgRed),
+	} {
+		if !strings.Contains(healthy, want) {
+			t.Errorf("healthy overview is missing coloured card value %q\n%s", utils.Decolorise(want), utils.Decolorise(healthy))
+		}
+	}
+
+	failed := fullOverview()
+	failed.Status.InstanceStatus = "impaired"
+	failed.Status.InstanceStatusOk = false
+	got := FormatInstanceOverview(overviewInstance(), failed, stackedWidth, overviewNow)
+	if want := utils.ColoredString("1/2 failed", color.FgRed); !strings.Contains(got, want) {
+		t.Errorf("failed checks card is missing %q in red\n%s", utils.Decolorise(want), utils.Decolorise(got))
+	}
+
+	if alarms := instanceAlarmsCell(emptyOverview()); alarms.Text != "0" || alarms.Color != 0 {
+		t.Errorf("zero alarms card = %+v, want a plain zero", alarms)
 	}
 }
 
@@ -142,25 +194,49 @@ func TestInstanceOverviewLaunchTimeSurvivesAnUnparseableStamp(t *testing.T) {
 
 // Every list an instance can report empty says so, rather than leaving a heading with nothing under it.
 func TestInstanceOverviewStatesEveryAbsence(t *testing.T) {
-	got := FormatInstanceOverview(overviewInstance(), emptyOverview(), stackedWidth, overviewNow)
+	got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), emptyOverview(), stackedWidth, overviewNow))
 
 	for _, want := range []string{
 		"Interfaces:\n  none",
 		"Elastic IPs:\n  none",
-		"Scheduled events:\n  none",
-		"Alarms:\n  none",
-		"Auto Scaling: none",
 		"no EBS volumes",
 		"no security groups",
 	} {
-		if !strings.Contains(utils.Decolorise(got), want) {
+		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing %q\n%s", want, got)
 		}
 	}
+	for _, want := range []*regexp.Regexp{
+		regexp.MustCompile(`Scheduled events:\s+none`),
+		regexp.MustCompile(`Auto Scaling:\s+none`),
+	} {
+		if !want.MatchString(got) {
+			t.Errorf("overview is missing %q\n%s", want, got)
+		}
+	}
+	if alarms := instanceAlarmsCell(emptyOverview()); alarms.Text != "0" {
+		t.Errorf("empty overview alarms card = %q, want %q", alarms.Text, "0")
+	}
 
 	// Tags is the one absence that is a bare "none" under its heading, so it is asserted as the line it occupies rather than by Contains, which "none" would satisfy from any other section.
-	if !strings.Contains(utils.Decolorise(got), "Tags\nnone") {
+	if !strings.Contains(got, "Tags\nnone") {
 		t.Errorf("overview does not state that there are no tags\n%s", got)
+	}
+}
+
+func TestInstanceOverviewKeepsAlarmAndASGErrorsVisible(t *testing.T) {
+	o := fullOverview()
+	o.Errs[aws.SectionAlarms] = errors.New("alarm lookup failed: AccessDenied")
+	o.Errs[aws.SectionASG] = errors.New("ASG lookup failed: ThrottlingException")
+
+	got := kvPadding.ReplaceAllString(utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, stackedWidth, overviewNow)), " ")
+	for _, want := range []string{
+		"Alarms: unavailable: alarm lookup failed: AccessDenied",
+		"Auto Scaling: unavailable: ASG lookup failed: ThrottlingException",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("overview dropped fetch error %q\n%s", want, got)
+		}
 	}
 }
 
@@ -190,15 +266,15 @@ func TestInstanceOverviewRendersMissingNetworkPerformanceAsUnavailable(t *testin
 
 // An instance in no Auto Scaling group is a nil membership with no error, and reading that as a failed lookup would report a broken permission on the commonest case there is.
 func TestInstanceOverviewSeparatesNoASGFromAFailedASGLookup(t *testing.T) {
-	absent := FormatInstanceOverview(overviewInstance(), emptyOverview(), stackedWidth, overviewNow)
-	if !strings.Contains(utils.Decolorise(absent), "Auto Scaling: none") {
+	absent := kvPadding.ReplaceAllString(utils.Decolorise(FormatInstanceOverview(overviewInstance(), emptyOverview(), stackedWidth, overviewNow)), " ")
+	if !strings.Contains(absent, "Auto Scaling: none") {
 		t.Errorf("a nil ASG membership should read as none\n%s", absent)
 	}
 
 	o := emptyOverview()
 	o.Errs[aws.SectionASG] = errors.New("AccessDenied")
-	failed := FormatInstanceOverview(overviewInstance(), o, stackedWidth, overviewNow)
-	if !strings.Contains(utils.Decolorise(failed), "Auto Scaling: unavailable") {
+	failed := kvPadding.ReplaceAllString(utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, stackedWidth, overviewNow)), " ")
+	if !strings.Contains(failed, "Auto Scaling: unavailable") {
 		t.Errorf("a failed ASG lookup should say so\n%s", failed)
 	}
 }
@@ -251,6 +327,16 @@ func TestInstanceOverviewSectionsFailIndependently(t *testing.T) {
 	}
 }
 
+func TestInstanceOverviewReportsAStatusFetchThatReturnedNothing(t *testing.T) {
+	o := fullOverview()
+	o.Status = nil
+
+	got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, stackedWidth, overviewNow))
+	if want := "Status\nunavailable: instance status not returned"; !strings.Contains(got, want) {
+		t.Errorf("overview does not report missing status data\n%s", got)
+	}
+}
+
 // The header is built from the list row, so an instance whose every fetch failed is still identified instead of leaving an anonymous pane of errors.
 func TestInstanceOverviewHeaderSurvivesEverySectionFailing(t *testing.T) {
 	o := &aws.InstanceOverview{Errs: map[string]error{
@@ -278,27 +364,6 @@ func TestInstanceOverviewHeaderNamesAnUnnamedInstance(t *testing.T) {
 	}
 }
 
-// Throughput is a gp3 field: gp2 volumes report none, and a column of "0 MiB/s" would be a reading nobody published.
-func TestInstanceOverviewStorageCarriesThroughputOnlyWhenSomeVolumeHasIt(t *testing.T) {
-	gp2Only := fullOverview()
-	if got := utils.Decolorise(instanceStorageBlock(gp2Only, 80)); strings.Contains(got, "MiB/s") {
-		t.Errorf("storage table carries a throughput column no volume filled\n%s", got)
-	}
-
-	withGP3 := fullOverview()
-	withGP3.Details.BlockDevices = append(withGP3.Details.BlockDevices, aws.BlockDevice{
-		DeviceName: "/dev/sdb", VolumeID: "vol-0abcdef1234567890", VolumeSize: 8, VolumeType: "gp3", Iops: 3000, Throughput: 125,
-	})
-	got := utils.Decolorise(instanceStorageBlock(withGP3, 80))
-	if !strings.Contains(got, "125 MiB/s") {
-		t.Errorf("storage table dropped the throughput a volume reports\n%s", got)
-	}
-	// The gp2 volume shares the column once it exists, and it has nothing to put in it.
-	if !strings.Contains(got, "0 MiB/s") {
-		t.Errorf("a volume with no throughput should still occupy the column\n%s", got)
-	}
-}
-
 // Encryption is the one thing on the storage row that needs acting on, so it says which state it is in words and marks only the state that needs attention.
 func TestInstanceOverviewStorageMarksUnencryptedVolumes(t *testing.T) {
 	forceColor(t)
@@ -320,66 +385,33 @@ func TestInstanceOverviewStorageMarksUnencryptedVolumes(t *testing.T) {
 	}
 }
 
-// The encryption flag is the last column and RenderTableFit spends its budget left to right, so it is the one a miscalculated width eats.
-// Contains is not enough to see that: a cut row still contains the prefix it was asked about, so this asserts the BOUNDARY — every storage row ends on a whole flag.
-func TestInstanceOverviewStorageKeepsEncryptionAtTheTwoColumnThreshold(t *testing.T) {
-	o := fullOverview()
-	o.Details.BlockDevices = append(o.Details.BlockDevices, aws.BlockDevice{
-		DeviceName: "/dev/sdb", VolumeID: "vol-0abcdef1234567890", VolumeSize: 8, VolumeType: "gp3", Iops: 3000, Throughput: 125,
-	})
-
-	rows := storageRows(t, utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, minTwoColWidth, overviewNow)))
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 storage rows, got %d: %q", len(rows), rows)
-	}
-	for _, row := range rows {
-		if !strings.HasSuffix(row, "unencrypted") {
-			t.Errorf("storage row does not end on a whole encryption flag: %q", row)
-		}
-	}
-}
-
-// The widest row EBS can produce does NOT fit the narrowest two-column pane, and this pins what it degrades to rather than leaving it to be discovered.
-// The flag is cut, but the cut lands after the letters that tell the two states apart and the amber survives it, so the row still reports the one thing on it anybody acts on.
-func TestInstanceOverviewStorageDegradesTheWidestVolumeReadably(t *testing.T) {
+func TestInstanceOverviewStorageTableKeepsEveryColumn(t *testing.T) {
 	forceColor(t)
 
 	o := fullOverview()
-	o.Details.BlockDevices = []aws.BlockDevice{
-		// io2 Block Express, at the service's documented ceilings for size, IOPS and throughput.
-		{DeviceName: "/dev/xvdba", VolumeSize: 16384, VolumeType: "io2", Iops: 64000, Throughput: 4000, Encrypted: true},
-		{DeviceName: "/dev/sda1", VolumeSize: 8, VolumeType: "gp2", Iops: 100},
-	}
+	o.Details.BlockDevices = append(o.Details.BlockDevices, aws.BlockDevice{
+		DeviceName: "/dev/xvdba", VolumeID: "vol-0abcdef1234567890", VolumeSize: 16384, VolumeType: "io2", Iops: 64000, Throughput: 4000, Encrypted: true,
+	})
 
-	out := FormatInstanceOverview(overviewInstance(), o, minTwoColWidth, overviewNow)
-	rows := storageRows(t, utils.Decolorise(out))
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 storage rows, got %d: %q", len(rows), rows)
-	}
-	if !strings.HasSuffix(rows[0], "encr…") || !strings.HasSuffix(rows[1], "unen…") {
-		t.Errorf("the widest volume's rows degraded differently than recorded: %q", rows)
-	}
-	if !strings.Contains(out, "\x1b[33munen") {
-		t.Errorf("a cut unencrypted flag lost its amber, which is what carries it once the word is truncated:\n%s", out)
-	}
-}
+	headerColumns := regexp.MustCompile(`Device\s+Size\s+Type\s+IOPS\s+Encrypted`)
+	gp2Columns := regexp.MustCompile(`/dev/sda1\s+8 GiB\s+gp2\s+100 IOPS\s+unencrypted`)
+	io2Columns := regexp.MustCompile(`/dev/xvdba\s+16384 GiB\s+io2\s+64000 IOPS\s+encrypted`)
+	for _, width := range []int{80, 110, 120, 160} {
+		got := utils.Decolorise(FormatInstanceOverview(overviewInstance(), o, width, overviewNow))
 
-// storageRows returns the device rows of a rendered overview, which on a stacked or zipped pane are the lines under the Storage heading.
-func storageRows(t *testing.T, plain string) []string {
-	t.Helper()
-
-	var rows []string
-	for _, line := range strings.Split(plain, "\n") {
-		// Above minTwoColWidth the storage block sits in the right column, so each line still carries the left column and the rule.
-		if _, right, found := strings.Cut(line, "│"); found {
-			line = right
+		header := lineContaining(got, "Device")
+		if header == "" || !headerColumns.MatchString(header) {
+			t.Errorf("at width %d storage header lost a column: %q\n%s", width, header, got)
 		}
-		if line = strings.TrimSpace(line); strings.HasPrefix(line, "/dev/") {
-			rows = append(rows, line)
+		gp2 := lineContaining(got, "/dev/sda1")
+		if gp2 == "" || !gp2Columns.MatchString(gp2) {
+			t.Errorf("at width %d gp2 row lost a column: %q\n%s", width, gp2, got)
+		}
+		io2 := lineContaining(got, "/dev/xvdba")
+		if io2 == "" || !io2Columns.MatchString(io2) {
+			t.Errorf("at width %d io2 row lost a column: %q\n%s", width, io2, got)
 		}
 	}
-
-	return rows
 }
 
 // Sections inside a column are separated by a blank line: without one, the last row of a section and the next heading read as a single list.
