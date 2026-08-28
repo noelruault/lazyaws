@@ -42,13 +42,58 @@ const bucketRulesShown = 5
 // FormatBucketOverview re-lays the Config tab's data as the bucket's Overview: what can reach it, what happens to its objects, who is watching it.
 // The size is deliberately absent — it is a full object scan — so this pane costs exactly the calls the Config tab already made.
 func FormatBucketOverview(b *aws.Bucket, o *aws.BucketOverview, width int, now time.Time) string {
-	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and with wrap off a long bucket name plus its badge runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("Bucket", b.Name, bucketExposureBadge(o), "", bucketRegion(o), bucketCreated(b, now)), width)
+	header := HeaderWithStats(width,
+		ResourceHeader("Bucket", b.Name, bucketExposureBadge(o), "", bucketRegion(o), bucketCreated(b, now)),
+		bucketStatCards(o),
+	)
 
 	left := joinBlocks(bucketSecurityBlock(o), bucketDataBlock(o))
 	right := joinBlocks(bucketAccessBlock(o), bucketTagsBlock(o, ColumnWidth(width, overviewGap)))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+func bucketStatCards(o *aws.BucketOverview) []Stat {
+	access := utils.Cell{Text: "public", Color: color.FgRed}
+	if err := o.Err(aws.SectionPublicAccess); err != nil {
+		access = utils.Cell{Text: "unavailable", Color: color.FgRed}
+	} else if o.PublicAccess != nil {
+		private := true
+		for _, blocked := range publicAccessFlags(o.PublicAccess) {
+			private = private && blocked
+		}
+		if private {
+			access = utils.Cell{Text: "private", Color: color.FgGreen}
+		}
+	}
+
+	versioning := utils.Cell{Text: orNone(o.Versioning)}
+	if err := o.Err(aws.SectionVersioning); err != nil {
+		versioning = utils.Cell{Text: "unavailable", Color: color.FgRed}
+	} else if o.Versioning == "Enabled" {
+		versioning.Color = color.FgGreen
+	}
+
+	// No bucket-level configuration is not "none": S3 applies SSE-S3 regardless, and a card claiming none would read as plaintext objects. Amber still marks it as worth configuring.
+	encryption := utils.Cell{Text: "S3 default", Color: color.FgYellow}
+	if err := o.Err(aws.SectionEncryption); err != nil {
+		encryption = utils.Cell{Text: "unavailable", Color: color.FgRed}
+	} else if o.Encryption != nil {
+		switch o.Encryption.Algorithm {
+		case "AES256":
+			encryption = utils.Cell{Text: "AES256"}
+		case "aws:kms":
+			encryption = utils.Cell{Text: "KMS"}
+		default:
+			encryption = utils.Cell{Text: orNone(o.Encryption.Algorithm)}
+		}
+	}
+
+	return []Stat{
+		{Label: "Access", Value: access},
+		{Label: "Versioning", Value: versioning},
+		{Label: "Encryption", Value: encryption},
+	}
 }
 
 // bucketExposureBadge answers the one question a bucket is opened for. The word carries the state and the colour only reinforces it.
