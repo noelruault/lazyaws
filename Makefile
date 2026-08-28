@@ -108,6 +108,7 @@ release-all: ## Build license-complete archives for every supported platform
 
 # release-archive builds ONE platform's archive with no gate of its own: prepare-release runs `go test -race`, which cannot execute a cross-compiled binary, so the gate runs once on the host and the archives trust it.
 # GOOS/GOARCH arrive via the environment; TARGET_GOOS/TARGET_GOARCH read `go env`, which honours them, so the archive name and the binary inside can never disagree.
+# go-licenses is installed host-native (GOOS/GOARCH cleared for the install only): under `go run` the target's GOOS leaked into building the tool itself, which then could not exec on the host. Its `save` run keeps the target env so the analysed dependency set stays the target's.
 release-archive:
 	@if [ -e "$(DIST_DIR)/$(RELEASE_NAME).tar.gz" ]; then echo "refusing to overwrite $(DIST_DIR)/$(RELEASE_NAME).tar.gz"; exit 1; fi
 	@set -eu; \
@@ -121,7 +122,8 @@ release-archive:
 		go build $(BUILD_FLAGS) $(LDFLAGS) -o "$$release_dir/$(BIN)$(EXE_SUFFIX)" .; \
 		cp LICENSE ACKNOWLEDGMENTS.md README.md SECURITY.md "$$release_dir/"; \
 		cp -R LICENSES "$$release_dir/"; \
-		go run github.com/google/go-licenses/v2@$(GO_LICENSES_VERSION) save . --save_path="$$release_dir/third_party_licenses"; \
+		GOOS= GOARCH= GOBIN="$(CURDIR)/$(DIST_DIR)/.tools" go install github.com/google/go-licenses/v2@$(GO_LICENSES_VERSION); \
+		"$(CURDIR)/$(DIST_DIR)/.tools/go-licenses" save . --save_path="$$release_dir/third_party_licenses"; \
 		tar -C "$$staging_root" -czf "$$archive_tmp" "$(RELEASE_NAME)"; \
 		mv "$$archive_tmp" "$$archive"; \
 		echo "Built $$archive"
