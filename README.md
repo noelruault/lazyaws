@@ -13,6 +13,7 @@ Drill from an ECS cluster to a service to live logs in a few keypresses. Switch 
 
 ```sh
 go install github.com/noelruault/lazyaws@latest
+aws sso login --sso-session <your-session>   # or: aws sso login --profile <profile>
 lazyaws
 ```
 
@@ -21,6 +22,7 @@ Or clone the repo and run `make build`, which builds `./lazyaws` with the versio
 You need:
 
 - AWS credentials in `~/.aws/config`. `AWS_PROFILE` is respected on startup, and profiles can be switched from inside the app.
+- For SSO (IAM Identity Center), a valid session: `aws sso login` against the `sso-session` your profiles share covers all of them at once. Setting the file up is [AWS's CLI SSO guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html); static credential profiles work too and need no login step.
 - A region, from `AWS_REGION` or `-region <region>`.
 
 Credentials are checked before the UI starts: an expired SSO session gets one clear message with the exact `aws sso login` line to run, not the same SDK error repeated in every panel. `-version` prints the build version, `-debug` logs to `~/.lazyaws/debug.log`. Temporary session credentials are cached in plaintext at `~/.lazyaws/session` (0600) to speed startup; delete the file to clear it, and exclude `~/.lazyaws` from dotfile syncers and backups.
