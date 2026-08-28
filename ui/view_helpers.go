@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
+	"github.com/fatih/color"
 	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/ui/panels"
@@ -221,12 +223,18 @@ func (gui *Gui) reRenderString(viewName, s string) {
 }
 
 func (gui *Gui) optionsMapToString(optionsMap map[string]string) string {
-	optionsArray := make([]string, 0)
-	for key, description := range optionsMap {
-		optionsArray = append(optionsArray, key+": "+description)
+	// Sorted before colouring: an ANSI prefix would sort every entry by escape byte instead of keycap.
+	keys := make([]string, 0, len(optionsMap))
+	for key := range optionsMap {
+		keys = append(keys, key)
 	}
-	sort.Strings(optionsArray)
-	return strings.Join(optionsArray, ", ")
+	sort.Strings(keys)
+
+	optionsArray := make([]string, len(keys))
+	for i, key := range keys {
+		optionsArray[i] = utils.ColoredString(key, color.FgCyan) + " " + capitalized(optionsMap[key])
+	}
+	return strings.Join(optionsArray, optionsSeparator)
 }
 
 func (gui *Gui) renderOptionsMap(optionsMap map[string]string) error {
@@ -239,14 +247,26 @@ type option struct {
 	label string
 }
 
+// optionsSeparator is the three-space gap the redesign mockups put between footer entries; the journeys split the footer on it, so the two must move together.
+const optionsSeparator = "   "
+
+// capitalized uppercases only the first rune, so labels stay lowercase where they are declared and the mockup's Title Case is a rendering concern.
+func capitalized(label string) string {
+	runes := []rune(label)
+	if len(runes) == 0 {
+		return label
+	}
+	return string(unicode.ToUpper(runes[0])) + string(runes[1:])
+}
+
 // optionsToString reads the line in the order given, so the first thing cut when the terminal is narrow is the last thing listed.
 func optionsToString(options []option) string {
 	parts := make([]string, len(options))
 	for i, opt := range options {
-		parts[i] = opt.key + " " + opt.label
+		parts[i] = utils.ColoredString(opt.key, color.FgCyan) + " " + capitalized(opt.label)
 	}
 
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, optionsSeparator)
 }
 
 func (gui *Gui) GetMainView() *gocui.View {

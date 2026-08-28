@@ -142,24 +142,24 @@ func (gui *Gui) qScreenBox(infoSectionSize int, infoSectionChildren []*layout.Bo
 }
 
 func (gui *Gui) infoSectionChildren(informationStr string, appStatus string) []*layout.Box {
-	result := []*layout.Box{}
-
+	// The status trails the whole line so a load in flight never shifts the hints the user is reading.
+	var statusBox []*layout.Box
 	if len(appStatus) > 0 {
-		result = append(result,
-			&layout.Box{
+		statusBox = []*layout.Box{
+			{
 				Window: "appStatus",
 				Size:   runewidth.StringWidth(appStatus) + runewidth.StringWidth(infoSectionPadding),
 			},
-		)
+		}
 	}
 
 	// The two bottom-line inputs take over the whole line while they are open, the command bar first: it is the one that can open the filter.
 	if gui.State.Command.active {
-		return append(result, gui.commandBarBoxes()...)
+		return append(gui.commandBarBoxes(), statusBox...)
 	}
 
 	if gui.State.Filter.active {
-		return append(result, []*layout.Box{
+		return append([]*layout.Box{
 			{
 				Window: "filterPrefix",
 				Size:   runewidth.StringWidth(gui.filterPrompt()),
@@ -168,24 +168,20 @@ func (gui *Gui) infoSectionChildren(informationStr string, appStatus string) []*
 				Window: "filter",
 				Weight: 1,
 			},
-		}...)
+		}, statusBox...)
 	}
 
-	result = append(result,
-		[]*layout.Box{
-			{
-				Window: "options",
-				Weight: 1,
-			},
-			{
-				Window: "information",
-				// ANSI escapes occupy bytes but no terminal cells, so strip them before measuring.
-				Size: runewidth.StringWidth(infoSectionPadding) + runewidth.StringWidth(utils.Decolorise(informationStr)),
-			},
-		}...,
-	)
-
-	return result
+	return append([]*layout.Box{
+		{
+			Window: "options",
+			Weight: 1,
+		},
+		{
+			Window: "information",
+			// ANSI escapes occupy bytes but no terminal cells, so strip them before measuring.
+			Size: runewidth.StringWidth(infoSectionPadding) + runewidth.StringWidth(utils.Decolorise(informationStr)),
+		},
+	}, statusBox...)
 }
 
 func (gui *Gui) sidePanelChildren(width int, height int) []*layout.Box {

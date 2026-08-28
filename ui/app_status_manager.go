@@ -123,31 +123,31 @@ func (gui *Gui) dashboardOptions(viewName string) []option {
 	// The chat screen hands focus to main, and there the dashboard's keys do nothing: the lists are hidden, so there is no selection to inspect, copy or act on, and main holds a conversation rather than tabs.
 	if onMain && gui.mainBelongsToQ() {
 		return []option{
-			{key: "←→↑↓", label: "scroll"},
-			{key: "tab", label: "next pane"},
-			{key: "esc", label: "dashboard"},
+			{key: "Arrows", label: "scroll"},
+			{key: "Tab", label: "next pane"},
+			{key: "Esc", label: "dashboard"},
 			named(KeyQuit, "quit"),
 		}
 	}
 
-	options := []option{{key: "←→↑↓", label: "navigate"}}
+	options := []option{{key: "Arrows", label: "navigate"}}
 	if onMain {
-		options = []option{{key: "←→↑↓", label: "scroll"}, {key: "[ ]", label: "tabs"}}
+		options = []option{{key: "Arrows", label: "scroll"}, {key: "[ ]", label: "tabs"}}
 	}
 
 	switch {
 	case onMain:
-		options = append(options, option{key: "enter", label: "select"})
+		options = append(options, option{key: "Enter", label: "select"})
 	case viewName == "profile":
-		options = append(options, option{key: "enter", label: "switch"})
+		options = append(options, option{key: "Enter", label: "switch"})
 	case viewName == "ecs":
-		options = append(options, option{key: "enter", label: "drill down"})
+		options = append(options, option{key: "Enter", label: "drill down"})
 	case isList:
-		options = append(options, option{key: "enter", label: "inspect"})
+		options = append(options, option{key: "Enter", label: "inspect"})
 	}
 
 	if isList || onMain {
-		options = append(options, named(KeyCopyID, "copy"))
+		options = append(options, named(KeyCopyID, "copy ARN"))
 	}
 	options = append(options, named(KeyRefreshPanel, "refresh"))
 

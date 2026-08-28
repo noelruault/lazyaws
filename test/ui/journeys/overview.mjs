@@ -10,7 +10,7 @@ const narrow = { width: 1000, height: 900 }
 // The tab lists are the pruned sets: a tab that only repeated the Overview is gone, and what survives carries content the Overview only summarises.
 // Section titles carry the mockups' icons, and the ECS/EC2/Secret header kinds are the mockups' full names.
 const resources = [
-  { key: '2', name: 'ECS cluster', tabs: ['Overview', 'Instances'], header: '⬡ ECS Cluster', sections: ['▤ Configuration', '⬡ Capacity', '◒ Metrics', '▦ Services', '≡ Tasks', '◇ Tags'] },
+  { key: '2', name: 'ECS cluster', tabs: ['Overview', 'Instances'], header: '⬡ ECS Cluster', sections: ['♡ Health', '▤ Configuration', '⬡ Capacity', '◒ Metrics', '▦ Service Summary', '≡ Tasks', '◇ Tags'] },
   { key: '3', name: 'EC2 instance', tabs: ['Overview'], header: '◇ EC2 Instance', sections: ['▤ Configuration', '⇄ Network', '◒ Metrics', '♡ Status', '▣ Storage', '⌾ Security', '⌘ Console', '◇ Tags'] },
   { key: '4', name: 'S3 bucket', tabs: ['Overview', 'Config', 'Objects', 'Policy'], header: '▣ Bucket', sections: ['⌾ Access', '▣ Data management', '⌾ Security', '◇ Tags'] },
   { key: '6', name: 'ECR repository', tabs: ['Overview', 'Images', 'Scan', 'Policies'], header: '⬡ Repository', sections: ['▤ Configuration', '▣ Images', '⌾ Policies'] },
@@ -33,9 +33,13 @@ function paneCells (screen) {
   return screen.split('\n').flatMap(line => line.split('│').slice(1).map(cell => cell.trim()))
 }
 
-// The header and the section titles are both whole pane lines, and both are asserted as whole cells.
-// A substring check would pass on text the Overview did not draw: "VPC" is also the side panel's own frame title, and "Instance" sits inside the ECS pane's "Instances" tab.
+// The header and the section titles each OPEN a pane line: a title may carry right-aligned content after a run of spaces (the header's stat cards, Service Summary's count note), so the match is "the whole cell, or the cell's start followed by a gap".
+// A bare substring check would pass on text the Overview did not draw: "VPC" is also the side panel's own frame title, and "Instance" sits inside the ECS pane's "Instances" tab.
 // It WAITS rather than reading once: the tab bar is drawn from the registry the moment the panel takes focus, while the body arrives with the fetches behind it (the bucket overview alone makes eleven calls), so a single read asserts against whichever sections happened to have landed.
+function holdsTitle (cells, title) {
+  return cells.some(cell => cell === title || cell.startsWith(title + '  '))
+}
+
 async function assertSections (term, resource, { timeout = 20000 } = {}) {
   const want = [resource.header, ...resource.sections]
   const deadline = Date.now() + timeout
@@ -44,7 +48,7 @@ async function assertSections (term, resource, { timeout = 20000 } = {}) {
   while (Date.now() < deadline) {
     screen = await term.readScreen()
     const cells = paneCells(screen)
-    missing = want.filter(title => !cells.includes(title))
+    missing = want.filter(title => !holdsTitle(cells, title))
     if (missing.length === 0) return screen
     await term.page.waitForTimeout(250)
   }
@@ -63,7 +67,7 @@ export async function run ({ term, seed }) {
     throw new Error(`EKS has no seeded cluster, so the pane must not offer an Overview; tab bar is ${JSON.stringify(eks)}`)
   }
   // The app is still live and the focus really moved: the empty panel's own options line is what a list offers, not what main offers.
-  assertScreen(await term.footer(), 'enter inspect', 'focus on the empty EKS panel')
+  assertScreen(await term.footer(), 'Enter Inspect', 'focus on the empty EKS panel')
   assertScreen(await term.readScreen(), 'no EKS clusters', 'EKS in-panel empty state')
 
   await term.resize(wide.width, wide.height)

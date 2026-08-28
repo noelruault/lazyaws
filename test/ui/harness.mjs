@@ -7,7 +7,7 @@ import { chromium } from 'playwright'
 const defaultViewport = { width: 1280, height: 720 }
 
 // The last entry of every options bar this app draws, and the cheapest proof that it has finished its first frame.
-const optionsBarMarker = 'q quit'
+const optionsBarMarker = 'q Quit'
 
 export async function openTerminal ({ url, screenshotDir, viewport = defaultViewport } = {}) {
   const browser = await chromium.launch()

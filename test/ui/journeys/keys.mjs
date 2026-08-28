@@ -4,20 +4,21 @@ import { assertScreen } from '../harness.mjs'
 // The footer is the claim under test: it is built per focused view from the keymap, so every keycap it prints has to be bound HERE and do what its label says.
 // It is parsed rather than hardcoded, so a rebound key moves the assertion with it instead of failing it.
 function footerKeys (footer) {
-  return new Map(footer.split(', ').map(entry => {
+  // Entries are separated by the renderer's three-space gap (optionsSeparator in ui/view_helpers.go); the wider run before a trailing app status splits away with it.
+  return new Map(footer.split(/\s{3,}/).map(entry => {
     const [key, ...label] = entry.trim().split(' ')
     return [key, label.join(' ')]
   }))
 }
 
 // The options line shares the bottom row with the app status and the version, and gocui cuts whatever does not fit.
-// So a footer read while a load is in flight can arrive prefixed ("loading s3 / ←→↑↓ navigate, …") and short of its tail, which silently removes keys from the very list this journey checks. Waiting for a line that still has BOTH ends is what makes the snapshot trustworthy.
+// So a footer read while a load is in flight can arrive with a trailing status ("…   q Quit        loading s3 ⠋") and short of its tail, which silently removes keys from the very list this journey checks. Waiting for a line that still has BOTH ends and nothing after them is what makes the snapshot trustworthy.
 async function cleanFooter (term, { timeout = 15000 } = {}) {
   const deadline = Date.now() + timeout
   let footer = ''
   while (Date.now() < deadline) {
     footer = await term.footer()
-    if (footer.startsWith('←→↑↓') && footer.endsWith('quit')) return footer
+    if (footer.startsWith('←→↑↓') && footer.endsWith('Quit')) return footer
     await term.page.waitForTimeout(150)
   }
   throw new Error(`the options line never came back clean; last read ${JSON.stringify(footer)}`)
@@ -67,7 +68,7 @@ export async function run ({ term, seed, endpoint }) {
   const footer = await cleanFooter(term)
 
   // --- y copy popup ---------------------------------------------------------------------------
-  assertAdvertises(footer, 'y', 'copy')
+  assertAdvertises(footer, 'y', 'Copy ARN')
   if (!first.includes('…')) {
     throw new Error(`the copy popup only proves something against a truncated row, and this row is not truncated: ${JSON.stringify(first)}`)
   }
@@ -82,7 +83,7 @@ export async function run ({ term, seed, endpoint }) {
 
   // --- a actions menu -------------------------------------------------------------------------
   // Opened and closed, never chosen from: every entry in here mutates infrastructure, and this loop reads only.
-  assertAdvertises(footer, 'a', 'actions')
+  assertAdvertises(footer, 'a', 'Actions')
   await term.sendKeys('a')
   await term.waitForText('EC2 Instances actions')
   await assertClosed(term, 'EC2 Instances actions', 'a')
@@ -103,7 +104,7 @@ export async function run ({ term, seed, endpoint }) {
   await assertClosed(term, '╭─Menu', 'x')
 
   // --- / filter -------------------------------------------------------------------------------
-  assertAdvertises(footer, '/', 'filter')
+  assertAdvertises(footer, '/', 'Filter')
   await term.sendKeys('/')
   await term.type('web')
   // The filter takes over the bottom row from the options line, which is how the app says it is capturing keys.
@@ -128,7 +129,7 @@ export async function run ({ term, seed, endpoint }) {
   }
 
   // --- r refresh ------------------------------------------------------------------------------
-  assertAdvertises(footer, 'r', 'refresh')
+  assertAdvertises(footer, 'r', 'Refresh')
   // r cannot be told from the panel tier's own tick by anything on screen: it TRIGGERS the same throttle the 2s tier triggers (ui/refresh.go, reloadFocusedPanel), deliberately, so a reload arriving after r is not evidence that r caused it.
   // What is assertable is that it is bound here and costs nothing — the panel keeps its rows and its selection.
   const before = await term.selectedRow()
@@ -160,7 +161,7 @@ export async function run ({ term, seed, endpoint }) {
 
   // --- q quit ---------------------------------------------------------------------------------
   // Last, because it takes the app away: ttyd's session ends with the process, and the terminal is dead after this.
-  assertAdvertises(footer, 'q', 'quit')
+  assertAdvertises(footer, 'q', 'Quit')
   await term.screenshot('keys')
   await term.sendKeys('q')
   const deadline = Date.now() + 10000

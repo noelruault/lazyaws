@@ -108,8 +108,7 @@ func TestGetMidSectionWeightsHalfScreen(t *testing.T) {
 	}
 }
 
-// Panels are addressed by row, so a gap or an overlap anywhere in the side column puts every
-// click below it on the wrong panel. This walks every configuration the app can produce.
+// Panels are addressed by row, so a gap or an overlap anywhere in the side column puts every click below it on the wrong panel. This walks every configuration the app can produce.
 func TestSidePanelsTileTheColumnExactly(t *testing.T) {
 	names := []string{"profile", "ecs", "ec2", "s3", "eks", "ecr", "secrets"}
 	modes := []WindowMaximisation{SCREEN_NORMAL, SCREEN_HALF, SCREEN_FULL}
@@ -146,5 +145,35 @@ func TestSidePanelsTileTheColumnExactly(t *testing.T) {
 
 	if checked != 336 {
 		t.Errorf("checked %d configurations, want the full 336-configuration matrix", checked)
+	}
+}
+
+// The app status trails the bottom line so a load in flight never shifts the hints the user is reading, in every bottom-line mode the status can appear in.
+func TestAppStatusIsTheBottomLinesLastBox(t *testing.T) {
+	gui, _ := newHeadlessGui(t)
+
+	assertLast := func(mode string) {
+		t.Helper()
+		boxes := gui.infoSectionChildren("v1.0", "loading ec2 ⠋")
+		if got := boxes[len(boxes)-1].Window; got != "appStatus" {
+			t.Errorf("with %s the status is not the line's last box; the last is %q", mode, got)
+		}
+	}
+
+	assertLast("the options line showing")
+
+	gui.State.Filter.active = true
+	assertLast("the filter open")
+	gui.State.Filter.active = false
+
+	gui.State.Command.active = true
+	assertLast("the command bar open")
+	gui.State.Command.active = false
+
+	// No load in flight leaves no status box at all rather than an empty sliver.
+	for _, box := range gui.infoSectionChildren("v1.0", "") {
+		if box.Window == "appStatus" {
+			t.Errorf("an empty status still claims a box on the bottom line")
+		}
 	}
 }
