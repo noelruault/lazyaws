@@ -149,12 +149,17 @@ func TestSidePanelsTileTheColumnExactly(t *testing.T) {
 }
 
 // The app status trails the bottom line so a load in flight never shifts the hints the user is reading, in every bottom-line mode the status can appear in.
+// Every State write and every infoSectionChildren call runs on the loop's goroutine through run/ask: the render loop reads the same state, and touching it from the test goroutine is a data race under -race.
 func TestAppStatusIsTheBottomLinesLastBox(t *testing.T) {
-	gui, _ := newHeadlessGui(t)
+	gui, g := newHeadlessGui(t)
+
+	bottomBoxes := func(status string) []*layout.Box {
+		return ask(g, func() []*layout.Box { return gui.infoSectionChildren("v1.0", status) })
+	}
 
 	assertLast := func(mode string) {
 		t.Helper()
-		boxes := gui.infoSectionChildren("v1.0", "loading ec2 ⠋")
+		boxes := bottomBoxes("loading ec2 ⠋")
 		if got := boxes[len(boxes)-1].Window; got != "appStatus" {
 			t.Errorf("with %s the status is not the line's last box; the last is %q", mode, got)
 		}
@@ -162,16 +167,14 @@ func TestAppStatusIsTheBottomLinesLastBox(t *testing.T) {
 
 	assertLast("the options line showing")
 
-	gui.State.Filter.active = true
+	run(t, g, func() error { gui.State.Filter.active = true; return nil })
 	assertLast("the filter open")
-	gui.State.Filter.active = false
-
-	gui.State.Command.active = true
+	run(t, g, func() error { gui.State.Filter.active = false; gui.State.Command.active = true; return nil })
 	assertLast("the command bar open")
-	gui.State.Command.active = false
+	run(t, g, func() error { gui.State.Command.active = false; return nil })
 
 	// No load in flight leaves no status box at all rather than an empty sliver.
-	for _, box := range gui.infoSectionChildren("v1.0", "") {
+	for _, box := range bottomBoxes("") {
 		if box.Window == "appStatus" {
 			t.Errorf("an empty status still claims a box on the bottom line")
 		}
