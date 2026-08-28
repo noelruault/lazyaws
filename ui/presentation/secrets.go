@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	secretsmanagertypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/fatih/color"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -50,21 +51,37 @@ const secretVersionsShown = 15
 // FormatSecretOverview lays a secret's metadata out for the Overview tab: the header, a two-column body, then the version history that rotation is actually visible in.
 // Everything rendered here comes from the DescribeSecret / ListSecretVersionIds / GetResourcePolicy fetch the Config tab already makes, so the tab costs no additional AWS call, and the value itself is never read.
 func FormatSecretOverview(d *aws.SecretDetails, width int, now time.Time) string {
-	header := ResourceHeader("Secret", d.Name, secretRotationBadge(&d.SecretSummary), "", d.PrimaryRegion)
-	body := Columns(width, 2, secretDetailsBlock(d, now), secretPostureBlock(d))
+	// No rotation badge beside the name: the Rotation card is the same fields in the same vocabulary, and one of the two had to go in the dedup pass.
+	header := HeaderWithStats(width,
+		ResourceHeader("Secret", d.Name, "", "", d.PrimaryRegion),
+		secretStatCards(d),
+	)
+	body := Columns(width, 2, secretDetailsBlock(d, now), secretPostureBlock(d, ColumnWidth(width, 2)))
 
 	return header + "\n\n" + body + "\n\n" + secretVersionsBlock(d, width, now)
 }
 
-// secretRotationBadge speaks the same vocabulary as the left panel's rotation column, including its rule that a cadence of zero days is an unreported cadence rather than a configured one.
-func secretRotationBadge(s *aws.SecretSummary) string {
-	switch {
-	case !s.RotationEnabled:
-		return utils.ColoredString("Rotation off", color.Faint)
-	case s.RotationDays > 0:
-		return utils.ColoredString(fmt.Sprintf("Rotation every %dd", s.RotationDays), color.FgGreen)
-	default:
-		return utils.ColoredString("Rotation on", color.FgGreen)
+func secretStatCards(d *aws.SecretDetails) []Stat {
+	rotation := utils.Cell{Text: "off"}
+	if d.RotationEnabled {
+		rotation = utils.Cell{Text: "on", Color: color.FgGreen}
+		if d.RotationDays > 0 {
+			rotation.Text = fmt.Sprintf("every %dd", d.RotationDays)
+		}
+	}
+
+	replicas := utils.Cell{Text: fmt.Sprintf("%d", len(d.Replication))}
+	for _, replica := range d.Replication {
+		if replica.Status != secretsmanagertypes.StatusTypeInSync {
+			replicas.Color = color.FgRed
+			break
+		}
+	}
+
+	return []Stat{
+		{Label: "Rotation", Value: rotation},
+		{Label: "Replicas", Value: replicas},
+		{Label: "Versions", Value: utils.Cell{Text: fmt.Sprintf("%d", len(d.Versions))}},
 	}
 }
 
@@ -78,6 +95,7 @@ func secretDetailsBlock(d *aws.SecretDetails, now time.Time) string {
 		{"KMS key", orNone(d.KMSKeyID)},
 		{"Description", orNone(d.Description)},
 		{"Owning service", orNone(d.OwningService)},
+		{"Console", orNone(secretConsoleURL(d))},
 	}
 	// A secret awaiting deletion still reports every field above unchanged, so without this line the pane describes a healthy secret that is about to disappear.
 	if d.DeletedDate != nil {
@@ -87,7 +105,7 @@ func secretDetailsBlock(d *aws.SecretDetails, now time.Time) string {
 	return SectionTitle("Details") + "\n" + kvBlock(rows)
 }
 
-func secretPostureBlock(d *aws.SecretDetails) string {
+func secretPostureBlock(d *aws.SecretDetails, width int) string {
 	lines := []string{SectionTitle("Replication")}
 	if len(d.Replication) == 0 {
 		lines = append(lines, "Not replicated")
@@ -101,9 +119,12 @@ func secretPostureBlock(d *aws.SecretDetails) string {
 	lines = append(lines, "", SectionTitle("Tags"))
 	if len(d.Tags) == 0 {
 		lines = append(lines, "none")
-	}
-	for _, tag := range d.Tags {
-		lines = append(lines, orNone(deref(tag.Key))+": "+orNone(deref(tag.Value)))
+	} else {
+		tags := make([]kv, len(d.Tags))
+		for i, tag := range d.Tags {
+			tags[i] = kv{orNone(deref(tag.Key)), deref(tag.Value)}
+		}
+		lines = append(lines, tagsBody(width, tags))
 	}
 
 	return strings.Join(lines, "\n")
@@ -118,10 +139,19 @@ func secretPolicyBlock(d *aws.SecretDetails) string {
 
 	policy := "Not configured"
 	if d.ResourcePolicy != "" {
-		policy = "Configured, shown on the Config tab"
+		policy = "Configured, shown on the Policy tab"
 	}
 
 	return SectionTitle("Resource policy") + "\n" + policy
+}
+
+// secretConsoleURL rebuilds what the Config tab used to compute, empty when the region never loaded.
+func secretConsoleURL(d *aws.SecretDetails) string {
+	if d.PrimaryRegion == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("https://%s.console.aws.amazon.com/secretsmanager/secret?name=%s&region=%s", d.PrimaryRegion, d.Name, d.PrimaryRegion)
 }
 
 func secretVersionsBlock(d *aws.SecretDetails, width int, now time.Time) string {
@@ -144,15 +174,34 @@ func secretVersionsBlock(d *aws.SecretDetails, width int, now time.Time) string 
 		}
 	}
 
-	// Every column here holds a value of its own natural width, so none of them takes a weight; the rows and the weights are built together, which is why neither error RenderTableFit reports can happen.
-	table, _ := utils.RenderTableFit(rows, width, []int{0, 0, 0})
+	// Version IDs absorb the squeeze so stage and creation state stay readable.
+	table := BoxedTable(width, []int{1, 0, 0}, []string{"Version", "Stages", "Created"}, rows)
 
 	out := title + "\n" + table
 	if hidden := len(d.Versions) - len(shown); hidden > 0 {
-		out += "\n" + utils.ColoredString(fmt.Sprintf("(%d more on the Config tab)", hidden), color.Faint)
+		out += "\n" + utils.ColoredString(fmt.Sprintf("(%d more on the Versions tab)", hidden), color.Faint)
 	}
 
 	return out
+}
+
+// FormatSecretVersions is the Versions tab: the same table as the Overview's, uncapped, for the rotation history the glance deliberately cuts.
+func FormatSecretVersions(d *aws.SecretDetails, width int, now time.Time) string {
+	if len(d.Versions) == 0 {
+		return "none\n"
+	}
+
+	rows := make([][]utils.Cell, len(d.Versions))
+	for i, version := range d.Versions {
+		rows[i] = []utils.Cell{
+			{Text: orNone(deref(version.VersionId))},
+			secretStagesCell(version.VersionStages),
+			{Text: RelTime(derefTime(version.CreatedDate), now), Color: color.Faint},
+		}
+	}
+	table, _ := utils.RenderTableFit(rows, width, []int{0, 0, 0})
+
+	return table
 }
 
 // secretStagesCell joins a version's staging labels into one cell.

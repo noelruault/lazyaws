@@ -2,10 +2,12 @@ package presentation
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -42,7 +44,7 @@ func overviewImages() []aws.ECRImage {
 	older := overviewNow.Add(-30 * 24 * time.Hour)
 
 	return []aws.ECRImage{
-		{Digest: "sha256:aaaabbbbccccdddd", Tags: []string{"1.4.0", "latest"}, SizeBytes: 104857600, PushedAt: &newest, Severity: map[string]int32{"HIGH": 2, "LOW": 9}},
+		{Digest: "sha256:aaaabbbbccccdddd", Tags: []string{"1.4.0", "latest"}, SizeBytes: 104857600, PushedAt: &newest},
 		{Digest: "sha256:eeeeffff00001111", SizeBytes: 52428800, PushedAt: &older},
 	}
 }
@@ -51,28 +53,75 @@ func TestRepositoryOverviewRendersEverySection(t *testing.T) {
 	got := plainRepository(overviewRepository(), overviewImages(), nil, stackedWidth)
 
 	for _, want := range []string{
-		"Repository", "app-api", "mutable",
+		"Repository", "app-api",
+		"Images", "2", "Mutability", "MUTABLE", "Scan on push", "on",
 		"123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-api",
-		"Configuration", "Tag mutability: MUTABLE", "Scan on push: on", "KMS · arn:aws:kms:eu-west-1:123456789012:key/2f7c", "Registry: 123456789012",
+		// No scan-on-push row and no header badge: the cards carry both, and the raw enum row stays because MUTABLE_WITH_EXCLUSION and MUTABLE are one card word but two policies.
+		"Configuration", "Tag mutability: MUTABLE", "KMS · arn:aws:kms:eu-west-1:123456789012:key/2f7c", "Registry: 123456789012",
 		"Policies", "Repository policy: attached, shown on the Config tab", "Lifecycle policy: attached, evaluated 6h ago",
 		"Images", "2 images · 150.0 MiB",
-		"1.4.0, latest", "aaaabbbbcccc", "100.0 MiB", "2h ago", "high 2",
+		"Tag", "Pushed", "Size", "Digest",
+		"1.4.0, latest", "2h ago", "100.0 MiB", "aaaabbbbcccc",
 		"(untagged)", "30d ago",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing %q\n%s", want, got)
 		}
 	}
+
+	plain := utils.Decolorise(FormatECRRepositoryOverview(overviewRepository(), overviewImages(), nil, stackedWidth, overviewNow))
+	header := strings.SplitN(plain, "\n\n", 2)[0]
+	if strings.Count(header, "┌") != 3 {
+		t.Errorf("header does not contain three stat cards\n%s", header)
+	}
+	if strings.Count(plain, "├") != 1 {
+		t.Errorf("overview does not contain one boxed image table\n%s", plain)
+	}
+}
+
+func TestRepositoryOverviewCardsUsePostureColours(t *testing.T) {
+	forceColor(t)
+
+	cards := ecrStatCards(overviewRepository(), overviewImages(), nil)
+	want := []Stat{
+		{Label: "Images", Value: utils.Cell{Text: "2"}},
+		{Label: "Mutability", Value: utils.Cell{Text: "MUTABLE", Color: color.FgYellow}},
+		{Label: "Scan on push", Value: utils.Cell{Text: "on", Color: color.FgGreen}},
+	}
+	if len(cards) != len(want) {
+		t.Fatalf("ecrStatCards() returned %d cards, want %d", len(cards), len(want))
+	}
+	for i := range want {
+		if cards[i] != want[i] {
+			t.Errorf("card %d = %+v, want %+v", i, cards[i], want[i])
+		}
+	}
+
+	repo := overviewRepository()
+	repo.TagMutability = "IMMUTABLE"
+	repo.ScanOnPush = false
+	cards = ecrStatCards(repo, nil, nil)
+	if got := cards[1].Value; got.Text != "IMMUTABLE" || got.Color != color.FgGreen {
+		t.Errorf("immutable card = %+v, want green IMMUTABLE", got)
+	}
+	if got := cards[2].Value; got.Text != "off" || got.Color != 0 {
+		t.Errorf("scan-off card = %+v, want plain off", got)
+	}
+
+	rendered := FormatECRRepositoryOverview(overviewRepository(), overviewImages(), nil, stackedWidth, overviewNow)
+	if digest := utils.ColoredString("aaaabbbbcccc", color.Faint); !strings.Contains(rendered, digest) {
+		t.Errorf("image digest is not faint\n%s", utils.Decolorise(rendered))
+	}
 }
 
 // The creation stamp carries its age: how old a repository is decides whether an empty one is new or abandoned.
-// Asserted on the function and then at a width the header fits in, because the header spans the whole pane and at stackedWidth the URI in front of it eats the age.
+// Asserted on the function and then at a width the header and cards fit in, because narrower panes correctly truncate the URI and age before either can overrun the pane.
 func TestRepositoryOverviewDatesTheCreationStamp(t *testing.T) {
 	if got, want := ecrCreated(overviewRepository(), overviewNow), "created 2026-05-29T12:00:00Z (90d ago)"; got != want {
 		t.Errorf("ecrCreated() = %q, want %q", got, want)
 	}
 
-	if got := plainRepository(overviewRepository(), overviewImages(), nil, overviewWidth); !strings.Contains(got, "(90d ago)") {
+	if got := plainRepository(overviewRepository(), overviewImages(), nil, 180); !strings.Contains(got, "(90d ago)") {
 		t.Errorf("overview does not date the creation stamp\n%s", got)
 	}
 }
@@ -82,7 +131,9 @@ func TestRepositoryOverviewStatesEveryAbsence(t *testing.T) {
 	got := plainRepository(&aws.ECRRepository{Name: "bare"}, nil, nil, stackedWidth)
 
 	for _, want := range []string{
-		"Scan on push: off",
+		// Scan on push lives in its header card, off and plain for a bare repository.
+		"Scan on push",
+		"off",
 		"Encryption: none",
 		"Registry: none",
 		"ARN: none",
@@ -147,15 +198,19 @@ func TestRepositoryOverviewSeparatesAnUnevaluatedLifecyclePolicy(t *testing.T) {
 
 // A failed DescribeImages costs the image table and nothing else: the repository's own posture came off the list row and is still answerable.
 func TestRepositoryOverviewSurvivesAFailedImageFetch(t *testing.T) {
-	got := plainRepository(overviewRepository(), nil, errors.New("AccessDenied"), stackedWidth)
+	err := errors.New("AccessDenied")
+	got := plainRepository(overviewRepository(), nil, err, stackedWidth)
 
 	if !strings.Contains(got, "Images\nunavailable: AccessDenied") {
 		t.Errorf("overview does not report the failed image fetch\n%s", got)
 	}
-	for _, want := range []string{"app-api", "Scan on push: on", "Repository policy: attached"} {
+	for _, want := range []string{"app-api", "Tag mutability: MUTABLE", "Repository policy: attached"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("a failed image fetch took %q down with it\n%s", want, got)
 		}
+	}
+	if count := ecrStatCards(overviewRepository(), nil, err)[0].Value; count.Text != "unavailable" || count.Color != color.FgRed {
+		t.Errorf("failed image count card = %+v, want red unavailable", count)
 	}
 }
 
@@ -207,28 +262,22 @@ func TestRepositoryOverviewCapsTheImageTableAndSaysSo(t *testing.T) {
 	}
 }
 
-// A scan summary reduces to the worst severity present, and a repository with scanning off reports nothing at all, which is not a clean scan.
-func TestECRFindingsCell(t *testing.T) {
+func TestRepositoryOverviewImageTableKeepsEveryColumn(t *testing.T) {
 	forceColor(t)
 
-	tests := []struct {
-		name     string
-		severity map[string]int32
-		want     string
-	}{
-		{"no scan", nil, "-"},
-		{"critical outranks high", map[string]int32{"CRITICAL": 1, "HIGH": 7}, "critical 1"},
-		{"high outranks medium", map[string]int32{"MEDIUM": 4, "HIGH": 2}, "high 2"},
-		{"informational only", map[string]int32{"INFORMATIONAL": 3}, "informational 3"},
-		{"every count zero is a clean scan", map[string]int32{"CRITICAL": 0, "HIGH": 0}, "clean"},
-	}
+	headerColumns := regexp.MustCompile(`Tag\s+Pushed\s+Size\s+Digest`)
+	imageColumns := regexp.MustCompile(`1\.4\.0, latest\s+2h ago\s+100\.0 MiB\s+aaaabbbbcccc`)
+	for _, width := range []int{80, 110, 120, 160} {
+		got := utils.Decolorise(FormatECRRepositoryOverview(overviewRepository(), overviewImages(), nil, width, overviewNow))
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := utils.Decolorise(ecrFindingsCell(test.severity).Rendered()); got != test.want {
-				t.Errorf("findings = %q, want %q", got, test.want)
-			}
-		})
+		header := lineContaining(got, "Digest")
+		if header == "" || !headerColumns.MatchString(header) {
+			t.Errorf("at width %d image header lost a column: %q\n%s", width, header, got)
+		}
+		image := lineContaining(got, "1.4.0")
+		if image == "" || !imageColumns.MatchString(image) {
+			t.Errorf("at width %d image row lost a column: %q\n%s", width, image, got)
+		}
 	}
 }
 

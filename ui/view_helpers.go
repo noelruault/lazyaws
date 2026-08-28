@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
+	"github.com/fatih/color"
 	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/ui/panels"
@@ -169,7 +171,17 @@ func (gui *Gui) RenderStringMain(s string) {
 }
 
 func (gui *Gui) reRenderStringMain(s string) {
-	gui.g.Update(func(*gocui.Gui) error {
+	gui.g.Update(gui.setMainContent(s))
+}
+
+// reRenderStringMainOrdered is reRenderStringMain with the enqueue done on THIS goroutine: gocui's Update spawns a goroutine per call, so two writes made back to back can apply in either order, and a pane painted "loading" before its content would sometimes keep the loading line.
+// Only worth reaching for when one goroutine writes main twice in a row; a single write has nothing to race with.
+func (gui *Gui) reRenderStringMainOrdered(s string) {
+	gui.g.UpdateAsync(gui.setMainContent(s))
+}
+
+func (gui *Gui) setMainContent(s string) func(*gocui.Gui) error {
+	return func(*gocui.Gui) error {
 		if gui.mainBelongsToQ() {
 			return nil
 		}
@@ -178,7 +190,7 @@ func (gui *Gui) reRenderStringMain(s string) {
 			return nil
 		}
 		return gui.setViewContent(v, s)
-	})
+	}
 }
 
 // mainBelongsToQ checks queued updates so stale chat work cannot overwrite the dashboard.
@@ -211,12 +223,18 @@ func (gui *Gui) reRenderString(viewName, s string) {
 }
 
 func (gui *Gui) optionsMapToString(optionsMap map[string]string) string {
-	optionsArray := make([]string, 0)
-	for key, description := range optionsMap {
-		optionsArray = append(optionsArray, key+": "+description)
+	// Sorted before colouring: an ANSI prefix would sort every entry by escape byte instead of keycap.
+	keys := make([]string, 0, len(optionsMap))
+	for key := range optionsMap {
+		keys = append(keys, key)
 	}
-	sort.Strings(optionsArray)
-	return strings.Join(optionsArray, ", ")
+	sort.Strings(keys)
+
+	optionsArray := make([]string, len(keys))
+	for i, key := range keys {
+		optionsArray[i] = utils.ColoredString(key, color.FgCyan) + " " + capitalized(optionsMap[key])
+	}
+	return strings.Join(optionsArray, optionsSeparator)
 }
 
 func (gui *Gui) renderOptionsMap(optionsMap map[string]string) error {
@@ -229,14 +247,26 @@ type option struct {
 	label string
 }
 
+// optionsSeparator is the three-space gap the redesign mockups put between footer entries; the journeys split the footer on it, so the two must move together.
+const optionsSeparator = "   "
+
+// capitalized uppercases only the first rune, so labels stay lowercase where they are declared and the mockup's Title Case is a rendering concern.
+func capitalized(label string) string {
+	runes := []rune(label)
+	if len(runes) == 0 {
+		return label
+	}
+	return string(unicode.ToUpper(runes[0])) + string(runes[1:])
+}
+
 // optionsToString reads the line in the order given, so the first thing cut when the terminal is narrow is the last thing listed.
 func optionsToString(options []option) string {
 	parts := make([]string, len(options))
 	for i, opt := range options {
-		parts[i] = opt.key + " " + opt.label
+		parts[i] = utils.ColoredString(opt.key, color.FgCyan) + " " + capitalized(opt.label)
 	}
 
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, optionsSeparator)
 }
 
 func (gui *Gui) GetMainView() *gocui.View {

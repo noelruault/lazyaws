@@ -3,7 +3,6 @@ package presentation
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
@@ -19,14 +18,77 @@ var errClusterNotDescribed = errors.New("cluster not described")
 // FormatEKSClusterOverview lays a cluster out for the Overview tab: what the control plane is on the left, and what is running under it on the right.
 // Everything comes off the list row or the Config, Node groups and Addons tabs' own loaders, so the pane costs no call those tabs do not already make.
 func FormatEKSClusterOverview(c *aws.EKSCluster, o *aws.EKSOverview, width int) string {
-	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and a long cluster name beside the version and the region runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("EKS cluster", c.Name, Badge(c.Status), "", eksVersionLabel(c.Version), c.Region, eksCreated(c)), width)
+	header := HeaderWithStats(width,
+		ResourceHeader("EKS cluster", c.Name, Badge(c.Status), "", eksVersionLabel(c.Version), c.Region, eksCreated(c)),
+		eksStatCards(c, o),
+	)
 
 	column := ColumnWidth(width, overviewGap)
-	left := joinBlocks(eksConfigBlock(c, o), eksNetworkingBlock(o), eksLoggingBlock(o), eksTagsBlock(o))
+	left := joinBlocks(eksConfigBlock(c, o), eksNetworkingBlock(o), eksLoggingBlock(o), eksTagsBlock(o, column))
 	right := joinBlocks(eksNodeGroupsBlock(c, o, column), eksAddonsBlock(o, column))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+// eksStatCards is the header's glance row. No Status card and no separate Health grid: the header badge already carries the cluster status, and repeating it framed was the owner's dedup complaint (2026-08-28), so the node-group and addon verdicts moved up here instead.
+func eksStatCards(c *aws.EKSCluster, o *aws.EKSOverview) []Stat {
+	nodeGroups := utils.Cell{Text: "unavailable", Color: color.FgRed}
+	if o.Err(aws.SectionNodeGroups) == nil {
+		active := 0
+		for _, group := range o.NodeGroups {
+			if group.Status == "ACTIVE" {
+				active++
+			}
+		}
+
+		switch {
+		case len(o.NodeGroups) == 0:
+			nodeGroups = utils.Cell{Text: "none"}
+		case active == len(o.NodeGroups):
+			nodeGroups = utils.Cell{Text: fmt.Sprintf("%d/%d active", active, len(o.NodeGroups)), Color: color.FgGreen}
+		default:
+			nodeGroups = utils.Cell{Text: fmt.Sprintf("%d/%d active", active, len(o.NodeGroups)), Color: color.FgYellow}
+		}
+	}
+
+	addons := utils.Cell{Text: "unavailable", Color: color.FgRed}
+	if o.Err(aws.SectionAddons) == nil {
+		healthy, degraded := eksAddonHealthCounts(o.Addons)
+		switch {
+		case len(o.Addons) == 0:
+			addons = utils.Cell{Text: "none"}
+		case degraded > 0:
+			addons = utils.Cell{Text: fmt.Sprintf("%d degraded", degraded), Color: color.FgRed}
+		case healthy == len(o.Addons):
+			addons = utils.Cell{Text: fmt.Sprintf("%d healthy", healthy), Color: color.FgGreen}
+		default:
+			addons = utils.Cell{Text: fmt.Sprintf("%d/%d healthy", healthy, len(o.Addons)), Color: color.FgYellow}
+		}
+	}
+
+	return []Stat{
+		{Label: "Nodes", Value: utils.Cell{Text: fmt.Sprintf("%d desired", c.NodeCount)}},
+		{Label: "Node groups", Value: nodeGroups},
+		{Label: "Addons", Value: addons},
+	}
+}
+
+func eksAddonHealthCounts(addons []aws.EKSAddon) (healthy, degraded int) {
+	for _, addon := range addons {
+		if addon.Status == "ACTIVE" && addon.Health == "Healthy" {
+			healthy++
+		}
+		if addon.Health != "" && addon.Health != "Healthy" {
+			degraded++
+			continue
+		}
+		switch addon.Status {
+		case "CREATE_FAILED", "DELETE_FAILED", "DEGRADED", "UPDATE_FAILED":
+			degraded++
+		}
+	}
+
+	return healthy, degraded
 }
 
 // eksVersionLabel prefixes the Kubernetes version the way kubectl and the EKS console do, so it is not mistaken for the platform version beside it.
@@ -59,15 +121,11 @@ func eksDetailsErr(o *aws.EKSOverview) error {
 	return nil
 }
 
-// eksConfigBlock reads the list row, not the describe, so a denied DescribeCluster still leaves the cluster's version, status and endpoint on the pane.
+// eksConfigBlock carries only what the header does not: the version, region, created stamp and node count all live on the header and its cards, and repeating them here was the dedup pass's finding.
+// The endpoint still reads the list row, so a denied DescribeCluster only costs the platform-version row.
 func eksConfigBlock(c *aws.EKSCluster, o *aws.EKSOverview) string {
 	rows := []kv{
-		{"Version", orNone(c.Version)},
-		{"Status", orNone(c.Status)},
 		{"Endpoint", orNone(c.Endpoint)},
-		{"Region", orNone(c.Region)},
-		{"Created", orNone(c.CreatedAt)},
-		{"Nodes", fmt.Sprintf("%d desired", c.NodeCount)},
 		{"Platform", eksPlatformVersion(o)},
 		{"ARN", orNone(c.Arn)},
 	}
@@ -187,7 +245,7 @@ func eksDisabledLogTypes(off []string) string {
 	return utils.ColoredString(strings.Join(off, ", "), color.FgYellow)
 }
 
-func eksTagsBlock(o *aws.EKSOverview) string {
+func eksTagsBlock(o *aws.EKSOverview, width int) string {
 	title := SectionTitle("Tags")
 	if err := eksDetailsErr(o); err != nil {
 		return sectionUnavailable("Tags", err)
@@ -196,15 +254,7 @@ func eksTagsBlock(o *aws.EKSOverview) string {
 		return title + "\nnone"
 	}
 
-	// Sorted because Go randomizes map iteration, and an unsorted tag block reshuffles itself on every re-render of the same cluster.
-	keys := slices.Sorted(maps.Keys(o.Details.Tags))
-	lines := make([]string, 0, len(keys)+1)
-	lines = append(lines, title)
-	for _, key := range keys {
-		lines = append(lines, key+": "+orNone(o.Details.Tags[key]))
-	}
-
-	return strings.Join(lines, "\n")
+	return title + "\n" + tagsBodyFrom(width, o.Details.Tags)
 }
 
 func eksNodeGroupsBlock(c *aws.EKSCluster, o *aws.EKSOverview, width int) string {
@@ -241,7 +291,7 @@ func eksNodeGroupsBlock(c *aws.EKSCluster, o *aws.EKSOverview, width int) string
 	}
 
 	// The name is the only column without a natural width, so it takes the slack and the rest are content-sized.
-	table, _ := utils.RenderTableFit(rows, width, []int{1, 0, 0, 0})
+	table := BoxedTable(width, []int{1, 0, 0, 0}, []string{"Group", "Status", "Nodes (min-max)", "Version"}, rows)
 
 	lines := []string{
 		title,
@@ -297,25 +347,12 @@ func eksAddonsBlock(o *aws.EKSOverview, width int) string {
 	for i, addon := range addons {
 		rows[i] = []utils.Cell{
 			{Text: addon.Name},
-			BadgeCell(addon.Status),
 			{Text: orNone(addon.Version), Color: color.Faint},
-			eksAddonHealthCell(addon.Health),
+			BadgeCell(addon.Status),
 		}
 	}
 
-	table, _ := utils.RenderTableFit(rows, width, []int{1, 0, 0, 0})
+	table := BoxedTable(width, []int{1, 0, 0}, []string{"Addon", "Version", "Status"}, rows)
 
 	return title + "\n" + pluralize(len(addons), "addon") + "\n" + table
-}
-
-// eksAddonHealthCell separates a healthy addon from one AWS reported no health for at all: the describe omits the health block entirely on some addons, and reading that as healthy hides the one state worth acting on.
-func eksAddonHealthCell(health string) utils.Cell {
-	switch health {
-	case "":
-		return utils.Cell{Text: "-", Color: color.Faint}
-	case "Healthy":
-		return utils.Cell{Text: "healthy", Color: color.FgGreen}
-	default:
-		return utils.Cell{Text: health, Color: color.FgRed}
-	}
 }

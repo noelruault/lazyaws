@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/fatih/color"
@@ -61,6 +60,11 @@ func (r *ecsRow) arn() string {
 	}
 }
 
+// ecsRowKey identifies a row for the overview pane cache: the kind keeps a cluster and a service that share an ARN prefix apart.
+func ecsRowKey(r *ecsRow) string {
+	return fmt.Sprintf("ecs-%d-%s", r.Kind, r.arn())
+}
+
 func (r *ecsRow) name() string {
 	switch r.Kind {
 	case ecsRowKindService:
@@ -91,11 +95,10 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 				switch gui.ecsDrill.level {
 				case ecsLevelServices:
 					return []panels.MainTab[*ecsRow]{
-						overviewTab(gui, gui.ecsServiceOverview),
+						overviewTab(gui, ecsRowKey, gui.ecsServiceOverview),
 						{Key: "config", Title: "Config", Render: gui.renderECSServiceConfig},
 						{Key: "deployments", Title: "Deployments", Render: gui.renderECSServiceDeployments},
 						{Key: "events", Title: "Events", Render: gui.renderECSServiceEvents},
-						{Key: "scaling", Title: "Scaling", Render: gui.renderECSServiceScaling},
 						{Key: "taskdef", Title: "Task Def", Render: func(row *ecsRow) tasks.TaskFunc {
 							return gui.renderECSTaskDefDiff(row.Service.TaskDefinition)
 						}},
@@ -109,11 +112,10 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 						}},
 					}
 				default:
+					// Instances stays a tab of its own: the container-instance table is a per-node fetch the 2s Overview ticker has no business repeating, and on Fargate clusters it is empty anyway.
 					return []panels.MainTab[*ecsRow]{
-						overviewTab(gui, gui.ecsClusterOverview),
-						{Key: "config", Title: "Config", Render: gui.renderECSClusterConfig},
+						overviewTab(gui, ecsRowKey, gui.ecsClusterOverview),
 						{Key: "instances", Title: "Instances", Render: gui.renderECSClusterInstances},
-						{Key: "tags", Title: "Tags", Render: gui.renderECSClusterTags},
 					}
 				}
 			},
@@ -187,72 +189,6 @@ func (gui *Gui) ecsServiceOverview(ctx context.Context, row *ecsRow, width int) 
 	return presentation.FormatECSServiceOverview(row.Service, overview, width, time.Now())
 }
 
-func (gui *Gui) renderECSClusterConfig(row *ecsRow) tasks.TaskFunc {
-	c := row.Cluster
-	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
-		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		data, err := gui.Client.LoadECSClusterData(fetchCtx, c.Name)
-		if gen != gui.Gen {
-			return
-		}
-		if err != nil {
-			gui.RenderStringMain("error loading cluster data: " + err.Error())
-			return
-		}
-		// Best-effort: Container Insights may be disabled on the cluster, which isn't an error, just zero utilization.
-		insights, _ := gui.Client.GetECSContainerInsights(fetchCtx, c.Name, "")
-		if gen != gui.Gen {
-			return
-		}
-		gui.RenderStringMain(formatECSClusterConfig(c, data, insights))
-	}})
-}
-
-func formatECSClusterConfig(c *aws.ECSCluster, data *aws.ECSClusterData, insights *aws.ECSContainerInsights) string {
-	out := utils.FormatMap(0, map[string]string{
-		"Name":                  c.Name,
-		"Status":                c.Status,
-		"Running tasks":         strconv.Itoa(int(c.RunningTasksCount)),
-		"Pending tasks":         strconv.Itoa(int(c.PendingTasksCount)),
-		"Active services":       strconv.Itoa(int(c.ActiveServicesCount)),
-		"Registered containers": strconv.Itoa(int(c.RegisteredContainerCount)),
-		"CPU utilization":       formatUtilizationPercent(insights, func(i *aws.ECSContainerInsights) float64 { return i.CPUPercent }),
-		"Memory utilization":    formatUtilizationPercent(insights, func(i *aws.ECSContainerInsights) float64 { return i.MemPercent }),
-		"Console":               c.ConsoleURL,
-	})
-
-	if len(c.DefaultCapacityProviderStrat) > 0 {
-		out += "\nCapacity Providers:\n"
-		for _, s := range c.DefaultCapacityProviderStrat {
-			out += fmt.Sprintf("  %s", s.CapacityProvider)
-			if s.Base > 0 || s.Weight > 0 {
-				out += fmt.Sprintf(" (base: %d, weight: %d)", s.Base, s.Weight)
-			}
-			out += "\n"
-		}
-	} else if len(c.CapacityProviders) > 0 {
-		out += fmt.Sprintf("\nCapacity Providers: %s\n", strings.Join(c.CapacityProviders, ", "))
-	}
-
-	sort.Slice(data.Services, func(i, j int) bool { return data.Services[i].Name < data.Services[j].Name })
-
-	out += "\nServices:\n"
-	if len(data.Services) == 0 {
-		return out + "none\n"
-	}
-	rows := make([][]string, len(data.Services))
-	for i, s := range data.Services {
-		rows[i] = presentation.GetECSServiceDisplayStrings(&s)
-	}
-	table, err := utils.RenderTable(rows)
-	if err != nil {
-		return out + err.Error()
-	}
-	return out + table + "\n"
-}
-
 // formatServiceMetric distinguishes a service CloudWatch has not answered for from one measured at zero, which the Insights-derived percentages could not: they divided by a reservation that is absent exactly when the data is.
 func formatServiceMetric(m *aws.ECSServiceMetrics, get func(*aws.ECSServiceMetrics) aws.MetricPoint) string {
 	if m == nil {
@@ -265,36 +201,6 @@ func formatServiceMetric(m *aws.ECSServiceMetrics, get func(*aws.ECSServiceMetri
 func formatCPUUnits(v float64) string { return fmt.Sprintf("%.0f (%.2f vCPU)", v, v/1024) }
 
 func formatMebibytes(v float64) string { return fmt.Sprintf("%.0f MiB", v) }
-
-// formatUtilizationPercent renders zero as unavailable because disabled Insights has no reservation denominator.
-func formatUtilizationPercent(insights *aws.ECSContainerInsights, get func(*aws.ECSContainerInsights) float64) string {
-	if insights == nil {
-		return "n/a"
-	}
-	if pct := get(insights); pct != 0 {
-		return fmt.Sprintf("%.1f%%", pct)
-	}
-	return "n/a"
-}
-
-// renderECSClusterTags refetches because cluster details have no shared cache.
-func (gui *Gui) renderECSClusterTags(row *ecsRow) tasks.TaskFunc {
-	c := row.Cluster
-	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
-		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		data, err := gui.Client.LoadECSClusterData(fetchCtx, c.Name)
-		if gen != gui.Gen {
-			return
-		}
-		if err != nil {
-			gui.RenderStringMain("error loading tags: " + err.Error())
-			return
-		}
-		gui.RenderStringMain(utils.FormatMap(0, data.Tags))
-	}})
-}
 
 func (gui *Gui) renderECSClusterInstances(row *ecsRow) tasks.TaskFunc {
 	c := row.Cluster
@@ -513,56 +419,6 @@ func (gui *Gui) renderECSServiceEvents(row *ecsRow) tasks.TaskFunc {
 		}
 		return out
 	})
-}
-
-func (gui *Gui) renderECSServiceScaling(row *ecsRow) tasks.TaskFunc {
-	s := row.Service
-	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
-		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		scaling, err := gui.Client.GetECSServiceAutoScaling(fetchCtx, s.Cluster, s.Name)
-		if gen != gui.Gen {
-			return
-		}
-		if err != nil {
-			gui.RenderStringMain("error loading auto scaling: " + err.Error())
-			return
-		}
-		gui.RenderStringMain(formatECSServiceScaling(scaling))
-	}})
-}
-
-func formatECSServiceScaling(scaling *aws.ECSServiceAutoScaling) string {
-	if scaling == nil {
-		return "no Application Auto Scaling registered for this service\n"
-	}
-	out := utils.FormatMap(0, map[string]string{
-		"Min capacity": strconv.Itoa(int(scaling.MinCapacity)),
-		"Max capacity": strconv.Itoa(int(scaling.MaxCapacity)),
-	})
-	out += "\nPolicies:\n"
-	if len(scaling.Policies) == 0 {
-		return out + "none\n"
-	}
-	for _, p := range scaling.Policies {
-		out += fmt.Sprintf("  %s (%s)\n", p.Name, p.Type)
-		switch p.Type {
-		case "TargetTrackingScaling":
-			out += fmt.Sprintf("    target %.1f%s, scale-in cooldown %ds, scale-out cooldown %ds\n",
-				p.TargetValue, formatScalingMetricSuffix(p.TargetMetric), p.ScaleInCooldownSecs, p.ScaleOutCooldownSecs)
-		case "StepScaling":
-			out += fmt.Sprintf("    %d step adjustment(s), cooldown %ds\n", p.StepAdjustments, p.ScaleOutCooldownSecs)
-		}
-	}
-	return out
-}
-
-func formatScalingMetricSuffix(metric string) string {
-	if metric == "" {
-		return ""
-	}
-	return " (" + metric + ")"
 }
 
 // renderECSTaskConfig uses row data to avoid an unnecessary AWS call.

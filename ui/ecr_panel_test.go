@@ -5,25 +5,20 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/noelruault/lazyaws/apps/aws"
 )
 
-func TestFormatECRConfigNoLifecycle(t *testing.T) {
-	repo := &aws.ECRRepository{Name: "svc-api", URI: "123.dkr.ecr.us-east-1.amazonaws.com/svc-api", TagMutability: "MUTABLE"}
-	out := formatECRConfig(repo)
-	if !strings.Contains(out, "svc-api") || !strings.Contains(out, repo.URI) {
-		t.Errorf("expected name and URI, got:\n%s", out)
-	}
+func TestFormatECRPoliciesNoLifecycle(t *testing.T) {
+	out := formatECRPolicies(&aws.ECRRepository{Name: "svc-api"})
 	if !strings.Contains(out, "Lifecycle Policy:\nnot configured") {
 		t.Errorf("expected 'not configured' lifecycle, got:\n%s", out)
 	}
 }
 
-// The Config tab publishes the same two policy fields the Overview does, so it has the same two states to keep apart: "not configured" is a claim only a successful read supports.
-func TestFormatECRConfigTellsAFailedPolicyReadFromAnAbsentPolicy(t *testing.T) {
-	out := formatECRConfig(&aws.ECRRepository{
+// The Policies tab publishes the same two policy fields the Overview does, so it has the same two states to keep apart: "not configured" is a claim only a successful read supports.
+func TestFormatECRPoliciesTellsAFailedPolicyReadFromAnAbsentPolicy(t *testing.T) {
+	out := formatECRPolicies(&aws.ECRRepository{
 		Name:               "svc-api",
 		PolicyErr:          errors.New("ThrottlingException"),
 		LifecyclePolicyErr: errors.New("AccessDenied"),
@@ -54,23 +49,11 @@ func TestECROverviewErrsCarriesEveryThrottleableRead(t *testing.T) {
 	}
 }
 
-func TestFormatECRConfigWithLifecycle(t *testing.T) {
+func TestFormatECRPoliciesWithLifecycle(t *testing.T) {
 	repo := &aws.ECRRepository{Name: "svc-api", LifecyclePolicy: `{"rules":[]}`}
-	out := formatECRConfig(repo)
+	out := formatECRPolicies(repo)
 	if !strings.Contains(out, `{"rules":[]}`) {
 		t.Errorf("expected lifecycle policy text, got:\n%s", out)
-	}
-}
-
-func TestFormatECREncryption(t *testing.T) {
-	if got := formatECREncryption(&aws.ECRRepository{}); got != "-" {
-		t.Errorf("expected '-' for no encryption, got %q", got)
-	}
-	if got := formatECREncryption(&aws.ECRRepository{EncryptionType: "KMS", KMSKey: "arn:aws:kms:1"}); got != "KMS (arn:aws:kms:1)" {
-		t.Errorf("expected KMS with key, got %q", got)
-	}
-	if got := formatECREncryption(&aws.ECRRepository{EncryptionType: "AES256"}); got != "AES256" {
-		t.Errorf("expected bare algorithm, got %q", got)
 	}
 }
 
@@ -158,13 +141,5 @@ func TestFixableLabel(t *testing.T) {
 		if got := fixableLabel(in); got != want {
 			t.Errorf("fixableLabel(%q) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-func TestFormatECRConfigCreatedDate(t *testing.T) {
-	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	out := formatECRConfig(&aws.ECRRepository{Name: "x", CreatedAt: &created})
-	if !strings.Contains(out, "2026-01-02") {
-		t.Errorf("expected formatted created date, got:\n%s", out)
 	}
 }

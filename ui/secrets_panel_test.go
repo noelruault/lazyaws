@@ -4,10 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	secretsmanagertypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/aws/smithy-go"
 
 	awsapp "github.com/noelruault/lazyaws/apps/aws"
@@ -136,68 +133,30 @@ func TestFormatSecretValueStaysQuietWhenNothingIsLost(t *testing.T) {
 	}
 }
 
-func TestFormatSecretRotation(t *testing.T) {
-	if got := formatSecretRotation(&awsapp.SecretDetails{}); got != "disabled" {
-		t.Errorf("formatSecretRotation(disabled) = %q", got)
-	}
+// GetSecretDetails never fetches the value, so the policy render must not leak a value-shaped field.
+func TestFormatSecretPolicyNeverIncludesValue(t *testing.T) {
+	out := formatSecretPolicy(&awsapp.SecretDetails{ResourcePolicy: `{"Version":"2012-10-17"}`})
 
-	enabled := &awsapp.SecretDetails{SecretSummary: awsapp.SecretSummary{RotationEnabled: true}}
-	if got := formatSecretRotation(enabled); got != "enabled" {
-		t.Errorf("formatSecretRotation(enabled, no rules) = %q", got)
-	}
-
-	withDays := &awsapp.SecretDetails{
-		SecretSummary: awsapp.SecretSummary{RotationEnabled: true},
-		Rotation:      &secretsmanagertypes.RotationRulesType{AutomaticallyAfterDays: aws.Int64(30)},
-	}
-	if got := formatSecretRotation(withDays); got != "enabled, every 30 day(s)" {
-		t.Errorf("formatSecretRotation(30 days) = %q", got)
-	}
-}
-
-func TestFormatSecretsConfigNeverIncludesValue(t *testing.T) {
-	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	details := &awsapp.SecretDetails{
-		SecretSummary: awsapp.SecretSummary{
-			Name:      "db-password",
-			Arn:       "arn:aws:secretsmanager:us-east-1:1:secret:db-password",
-			CreatedAt: &created,
-			KMSKeyID:  "alias/app",
-		},
-		Versions: []secretsmanagertypes.SecretVersionsListEntry{
-			{VersionId: aws.String("v1"), VersionStages: []string{"AWSCURRENT"}, CreatedDate: &created},
-		},
-		ResourcePolicy: `{"Version":"2012-10-17"}`,
-	}
-
-	out := formatSecretsConfig(details)
-
-	// GetSecretDetails never fetches the value, so the config render must not leak a value-shaped field.
 	if strings.Contains(strings.ToLower(out), "secretstring") {
-		t.Errorf("formatSecretsConfig leaked a value-shaped field:\n%s", out)
+		t.Errorf("formatSecretPolicy leaked a value-shaped field:\n%s", out)
 	}
-	if !strings.Contains(out, "db-password") || !strings.Contains(out, "AWSCURRENT") || !strings.Contains(out, "2012-10-17") {
-		t.Errorf("expected name, version stage, and resource policy in output, got:\n%s", out)
+	if !strings.Contains(out, "2012-10-17") {
+		t.Errorf("expected the resource policy in the output, got:\n%s", out)
 	}
 }
 
-// The Config tab publishes the same field as the Overview, so it renders the same three states: a failed read left saying "not configured" here would contradict the pane next to it.
-func TestFormatSecretsConfigSeparatesAnUnreadablePolicyFromAnAbsentOne(t *testing.T) {
-	unreadable := &awsapp.SecretDetails{
-		SecretSummary:     awsapp.SecretSummary{Name: "db-password"},
-		ResourcePolicyErr: errors.New("AccessDenied"),
-	}
+// The Policy tab publishes the same field as the Overview, so it renders the same three states: a failed read left saying "not configured" here would contradict the pane next to it.
+func TestFormatSecretPolicySeparatesAnUnreadablePolicyFromAnAbsentOne(t *testing.T) {
+	failed := formatSecretPolicy(&awsapp.SecretDetails{ResourcePolicyErr: errors.New("AccessDenied")})
+	absent := formatSecretPolicy(&awsapp.SecretDetails{})
 
-	failed := formatSecretsConfig(unreadable)
-	absent := formatSecretsConfig(&awsapp.SecretDetails{SecretSummary: awsapp.SecretSummary{Name: "db-password"}})
-
-	if !strings.Contains(failed, "Resource Policy:\nunavailable: AccessDenied\n") {
+	if !strings.Contains(failed, "unavailable: AccessDenied") {
 		t.Errorf("a policy read that failed does not say so:\n%s", failed)
 	}
 	if strings.Contains(failed, "not configured") {
 		t.Errorf("a policy read that failed still renders as an absence:\n%s", failed)
 	}
-	if !strings.Contains(absent, "Resource Policy:\nnot configured\n") {
+	if !strings.Contains(absent, "not configured") {
 		t.Errorf("a secret with no policy no longer states the absence:\n%s", absent)
 	}
 }
@@ -232,16 +191,5 @@ func TestSecretOverviewErrs(t *testing.T) {
 		if len(got) != 1 || got[0] != tt.want {
 			t.Errorf("secretOverviewErrs(%s) = %v, want [%v]", tt.name, got, tt.want)
 		}
-	}
-}
-
-func TestFormatSecretsConfigDeletedStatus(t *testing.T) {
-	deleted := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	details := &awsapp.SecretDetails{
-		SecretSummary: awsapp.SecretSummary{Name: "old-key", DeletedDate: &deleted},
-	}
-	out := formatSecretsConfig(details)
-	if !strings.Contains(out, "pending deletion") {
-		t.Errorf("expected pending-deletion status, got:\n%s", out)
 	}
 }

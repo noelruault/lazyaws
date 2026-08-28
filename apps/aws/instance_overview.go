@@ -8,13 +8,22 @@ import (
 
 // The InstanceOverview.Errs keys, one per fetch rather than one per rendered section: several sections read the same response, so a failed DescribeInstances has to be reportable once and rendered against each section that needed it.
 const (
-	SectionDetails = "details"
-	SectionStatus  = "status"
-	SectionMetrics = "metrics"
-	SectionASG     = "asg"
-	SectionAlarms  = "alarms"
-	SectionEIP     = "eip"
+	SectionDetails   = "details"
+	SectionStatus    = "status"
+	SectionMetrics   = "metrics"
+	SectionASG       = "asg"
+	SectionAlarms    = "alarms"
+	SectionEIP       = "eip"
+	SectionConsole   = "console"
+	SectionSnapshots = "snapshots"
 )
+
+// ConsoleAvailability is what the overview says about the console diagnostics without keeping them: sizes and the capture time, because AWS writes the console log at boot and never again, so the age is the only thing that says whether the content is worth opening.
+type ConsoleAvailability struct {
+	OutputBytes     int
+	CapturedAt      time.Time
+	ScreenshotBytes int
+}
 
 // InstanceOverview aggregates what the Config, Status, Metrics, Storage, Security and Tags tabs each fetch separately today.
 // Every field is independently optional: a throttled or denied call lands in Errs and costs its own section, not the pane.
@@ -27,6 +36,13 @@ type InstanceOverview struct {
 	// DescribeAlarms cannot filter by dimension server-side, so it pages every alarm in the account against the tightest quota this app touches; all three belong to a selection, never to a ticker.
 	ASG    *ASGMembership
 	Alarms []InstanceAlarm
+
+	// Console and Snapshots ride the same selection-time schedule: the console output is downloaded whole just to report its size, and the snapshot list is one more describe per volume set — neither belongs on a ticker.
+	Console   *ConsoleAvailability
+	Snapshots []VolumeSnapshot
+
+	// ExtrasPending marks a render made before the selection-time sections arrived, so the formatter can say "…" where an empty field would otherwise claim an absence nothing has verified yet.
+	ExtrasPending bool
 
 	Errs map[string]error
 }

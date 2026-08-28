@@ -123,9 +123,10 @@ func TestOverviewIsPartOfTheTabCycle(t *testing.T) {
 		t.Fatalf("initial tab = %q, want %q", got, overviewTabKey)
 	}
 
+	// EC2 is down to the one Overview tab, so cycling in either direction must land back on it rather than walking off the registry.
 	state.HandleNextMainTab()
-	if got := state.GetCurrentMainTab().Key; got != "config" {
-		t.Errorf("next from overview = %q, want %q", got, "config")
+	if got := state.GetCurrentMainTab().Key; got != overviewTabKey {
+		t.Errorf("next from overview = %q, want %q", got, overviewTabKey)
 	}
 
 	state.HandlePrevMainTab()

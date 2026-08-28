@@ -106,45 +106,108 @@ func ECSImageLabel(image aws.ECSServiceImage) string {
 // FormatECSClusterOverview lays a cluster out for the Overview tab: a header that always renders, then the two-column body the Config, Instances and Tags tabs are consolidated into.
 // The header is built from the LIST ROW rather than from the fetch, so a cluster whose every section failed is still identified and still carries the badge the side panel shows it with.
 func FormatECSClusterOverview(c *aws.ECSCluster, o *aws.ECSClusterOverview, width int) string {
-	// Cut to the pane: the header spans the full width rather than a column, so Columns never sees it, and with wrap off an over-long meta line runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("Cluster", c.Name, ecsClusterBadge(c).Rendered(), "",
-		c.Region,
-		clusterServicesSummary(c, o),
-		fmt.Sprintf("%d running / %d pending", c.RunningTasksCount, c.PendingTasksCount),
-	), width)
+	// The meta line is the region alone: the services summary and the task counts live in the stat cards beside it, and a meta line repeating a card is the first thing the cards' width truncates.
+	header := HeaderWithStats(width,
+		ResourceHeader("ECS Cluster", c.Name, ecsClusterBadge(c).Rendered(), "", c.Region),
+		clusterStatCards(c, o),
+	)
 
 	column := ColumnWidth(width, overviewGap)
 	left := joinBlocks(
+		clusterHealthBlock(c, o),
 		clusterConfigBlock(c),
-		clusterCapacityBlock(c, o),
 		clusterMetricsBlock(o),
 	)
 	right := joinBlocks(
 		clusterServicesBlock(o, column),
+		clusterCapacityBlock(c, o),
 		clusterTasksBlock(o, column),
+		clusterTagsBlock(o, column),
 	)
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
 }
 
-// clusterServicesSummary counts the services actually holding what they were asked to run, which the cluster's own ActiveServicesCount cannot say: a service stays ACTIVE while every task it wants is failing to start.
-// Only the service list carries that, so a failed services fetch falls back to the count the cluster itself reported rather than dropping the line out of the header.
-func clusterServicesSummary(c *aws.ECSCluster, o *aws.ECSClusterOverview) string {
-	if o.Err(aws.SectionServices) != nil {
-		return fmt.Sprintf("%d services", c.ActiveServicesCount)
-	}
-	if len(o.Services) == 0 {
-		return "no services"
-	}
-
-	steady := 0
+// clusterServiceHealth reduces the service list to the numbers the Health section and the header cards read: how many services hold their desired count, whether any rollout is still open, and how many tasks the open ones have lost.
+func clusterServiceHealth(o *aws.ECSClusterOverview) (steady int, rolling bool, failed int32) {
 	for i := range o.Services {
-		if ecsServiceIsSteady(&o.Services[i]) {
+		s := &o.Services[i]
+		if ecsServiceIsSteady(s) {
 			steady++
+		}
+		for _, d := range s.Deployments {
+			failed += d.FailedTasks
+			if !ecsDeploymentSettled(d) {
+				rolling = true
+			}
 		}
 	}
 
-	return fmt.Sprintf("%d/%d services steady", steady, len(o.Services))
+	return steady, rolling, failed
+}
+
+// clusterStatCards is the header's compact stat row. Values keep the palette's meaning: green is holding, amber is moving, plain is zero.
+func clusterStatCards(c *aws.ECSCluster, o *aws.ECSClusterOverview) []Stat {
+	services := utils.Cell{Text: fmt.Sprintf("%d", c.ActiveServicesCount)}
+	if o.Err(aws.SectionServices) == nil {
+		steady, _, _ := clusterServiceHealth(o)
+		services = utils.Cell{Text: fmt.Sprintf("%d / %d", steady, len(o.Services))}
+		if steady == len(o.Services) && len(o.Services) > 0 {
+			services.Color = color.FgGreen
+		}
+	}
+
+	tasks := utils.Cell{Text: fmt.Sprintf("%d running", c.RunningTasksCount)}
+	if c.RunningTasksCount > 0 {
+		tasks.Color = color.FgGreen
+	}
+
+	pending := utils.Cell{Text: fmt.Sprintf("%d", c.PendingTasksCount)}
+	if c.PendingTasksCount > 0 {
+		pending.Color = color.FgYellow
+	}
+
+	return []Stat{
+		{Label: "Services", Value: services},
+		{Label: "Tasks", Value: tasks},
+		{Label: "Pending", Value: pending},
+	}
+}
+
+// clusterHealthBlock carries only what no card already says: the deployment verdict with its failed-task count, and what the cluster runs on.
+// It shrank from the mockups' card grid on the owner's dedup rule (2026-08-28): the cluster status echoed the header badge and the service and task counts echoed the header cards, so the cards here were the same numbers in a second frame.
+func clusterHealthBlock(c *aws.ECSCluster, o *aws.ECSClusterOverview) string {
+	deployments := utils.ColoredString("unavailable", color.FgRed)
+	if err := o.Err(aws.SectionServices); err != nil {
+		deployments = fieldOr(err, "")
+	} else {
+		_, rolling, failed := clusterServiceHealth(o)
+		switch {
+		case failed > 0:
+			deployments = utils.ColoredString(fmt.Sprintf("%d failed tasks", failed), color.FgRed)
+		case rolling:
+			deployments = utils.ColoredString("deploying", color.FgYellow)
+		default:
+			deployments = utils.ColoredString("stable", color.FgGreen)
+		}
+	}
+
+	return SectionTitle("Health") + "\n" + kvBlock([]kv{
+		{"Deployments", deployments},
+		// 0 is the normal Fargate answer, not a problem.
+		{"Container instances", fmt.Sprintf("%d", c.RegisteredContainerCount)},
+	})
+}
+
+func clusterTagsBlock(o *aws.ECSClusterOverview, width int) string {
+	if err := o.Err(aws.SectionTags); err != nil {
+		return sectionUnavailable("Tags", err)
+	}
+	if len(o.Tags) == 0 {
+		return SectionTitle("Tags") + "\nnone"
+	}
+
+	return SectionTitle("Tags") + "\n" + tagsBodyFrom(width, o.Tags)
 }
 
 // ecsServiceIsSteady is the service-level twin of the cluster badge: it holds its desired count and has no rollout still open.
@@ -173,6 +236,7 @@ func clusterConfigBlock(c *aws.ECSCluster) string {
 		{"Region", orNone(c.Region)},
 		{"Container Insights", clusterInsightsValue(c.ContainerInsights)},
 		{"Execute command", executeCommandValue(c.ExecuteCommandLogging)},
+		{"Console", orNone(c.ConsoleURL)},
 	})
 }
 
@@ -203,6 +267,7 @@ func executeCommandValue(logging string) string {
 
 // clusterCapacityBlock says what the cluster places tasks on, and where there are no capacity providers says what the services use instead.
 // A cluster with none is not a cluster without capacity: it launches on a bare LaunchType, and a lone "none" reads as broken rather than as configured differently.
+// The container instance count moved to the Health section's grid, where the mockups keep it.
 func clusterCapacityBlock(c *aws.ECSCluster, o *aws.ECSClusterOverview) string {
 	title := SectionTitle("Capacity")
 
@@ -277,13 +342,13 @@ func clusterGaugeRow(label, unit string, used, reserved aws.MetricPoint) kv {
 
 func clusterServicesBlock(o *aws.ECSClusterOverview, width int) string {
 	if err := o.Err(aws.SectionServices); err != nil {
-		return sectionUnavailable("Services", err)
+		return sectionUnavailable("Service Summary", err)
 	}
 
-	title := SectionTitle("Services")
 	if len(o.Services) == 0 {
-		return title + "\nno services"
+		return SectionTitle("Service Summary") + "\nno services"
 	}
+	title := SectionTitleWithNote(width, "Service Summary", pluralize(len(o.Services), "service"))
 
 	// Sorted on a copy: the pane re-renders on a ticker, and rows that follow the order ListServices happened to answer in would reshuffle under the cursor between refreshes.
 	services := slices.Clone(o.Services)
@@ -291,15 +356,21 @@ func clusterServicesBlock(o *aws.ECSClusterOverview, width int) string {
 
 	rows := make([][]utils.Cell, len(services))
 	for i := range services {
+		running := utils.Cell{Text: fmt.Sprintf("%d", services[i].RunningCount)}
+		// Green only when the service holds what it asked for; a shortfall stays plain and lets the status badge carry the alarm.
+		if services[i].RunningCount == services[i].DesiredCount && services[i].DesiredCount > 0 {
+			running.Color = color.FgGreen
+		}
 		rows[i] = []utils.Cell{
 			{Text: services[i].Name, Color: color.Bold},
-			{Text: fmt.Sprintf("%d/%d running", services[i].RunningCount, services[i].DesiredCount)},
-			{Text: fmt.Sprintf("%d pending", services[i].PendingCount)},
+			{Text: fmt.Sprintf("%d", services[i].DesiredCount)},
+			running,
+			{Text: fmt.Sprintf("%d", services[i].PendingCount)},
 			ecsServiceStabilityCell(&services[i]),
 		}
 	}
 	// Only the name has no natural width, so it is the one column that flexes and the counts and badge keep their full text.
-	table, _ := utils.RenderTableFit(rows, width, []int{1, 0, 0, 0})
+	table := BoxedTable(width, []int{1, 0, 0, 0, 0}, []string{"Service", "Desired", "Running", "Pending", "Status"}, rows)
 
 	lines := []string{title, table}
 	for i := range services {
@@ -373,13 +444,15 @@ func clusterTasksBlock(o *aws.ECSClusterOverview, width int) string {
 	rows := make([][]utils.Cell, shown)
 	for i, t := range tasks[:shown] {
 		rows[i] = []utils.Cell{
-			StatusCellFit(t.Status, StatusStyleIcon),
 			{Text: t.ID, Color: color.Faint},
+			{Text: orNone(taskDefRef(t.TaskDefinition))},
+			StatusCellFit(t.Status, StatusStyleLong),
 			{Text: ecsTaskImageText(t)},
 		}
 	}
-	// The image is the column with no natural width, so it carries the weight. Being last, it renders identically to a content-sized column at every width measured, and the weight is what keeps that true if a column is ever added after it.
-	table, _ := utils.RenderTableFit(rows, width, []int{0, 0, 1})
+	// The mockups' task table plus the image column, which stays: showing the image a task actually runs is a standing requirement of this pane.
+	// The image is the column with no natural width, so it carries the weight.
+	table := BoxedTable(width, []int{0, 0, 0, 1}, []string{"Task", "Revision", "Status", "Image"}, rows)
 
 	lines := []string{title, table}
 	if hidden := len(tasks) - shown; hidden > 0 {
@@ -425,10 +498,51 @@ func FormatECSServiceOverview(s *aws.ECSService, o *aws.ECSServiceOverview, widt
 	)
 	right := joinBlocks(
 		serviceMetricsBlock(o),
+		serviceScalingBlock(o),
 		serviceEventsBlock(s, now),
 	)
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+// scalingMetricSuffix names the tracked metric beside its target when the policy reports one.
+func scalingMetricSuffix(metric string) string {
+	if metric == "" {
+		return ""
+	}
+	return " (" + metric + ")"
+}
+
+// serviceScalingBlock folds the old Scaling tab in: bounds and policies fit a section, and a service with none says so in one line.
+func serviceScalingBlock(o *aws.ECSServiceOverview) string {
+	if err := o.Err(aws.SectionScaling); err != nil {
+		return sectionUnavailable("Scaling", err)
+	}
+	scaling := o.Scaling
+	if scaling == nil {
+		return SectionTitle("Scaling") + "\nnot registered"
+	}
+
+	lines := []string{SectionTitle("Scaling"), kvBlock([]kv{
+		{"Capacity", fmt.Sprintf("%d - %d tasks", scaling.MinCapacity, scaling.MaxCapacity)},
+	})}
+	if len(scaling.Policies) == 0 {
+		lines = append(lines, "Policies:\n  none")
+	} else {
+		lines = append(lines, "Policies:")
+	}
+	for _, p := range scaling.Policies {
+		lines = append(lines, "  "+p.Name+" "+utils.ColoredString(p.Type, color.Faint))
+		switch p.Type {
+		case "TargetTrackingScaling":
+			lines = append(lines, fmt.Sprintf("    target %.1f%s, cooldown in %ds / out %ds",
+				p.TargetValue, scalingMetricSuffix(p.TargetMetric), p.ScaleInCooldownSecs, p.ScaleOutCooldownSecs))
+		case "StepScaling":
+			lines = append(lines, fmt.Sprintf("    %d step adjustment(s), cooldown %ds", p.StepAdjustments, p.ScaleOutCooldownSecs))
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // primaryECSDeployment is the deployment the service is trying to reach; the others are ones it is draining away from, and reporting their rollout state would describe a deployment already being replaced.
@@ -546,7 +660,7 @@ func publicIPValue(assign string) string {
 // idListBlock puts each identifier on its own line rather than joining them, because a column narrow enough to cut a joined list drops the ids at the end of it with only an ellipsis to show for them.
 func idListBlock(label string, ids []string) []string {
 	if len(ids) == 0 {
-		return []string{utils.ColoredString(label+":", color.FgYellow) + " none"}
+		return []string{utils.ColoredString(label+":", color.Faint) + " none"}
 	}
 
 	lines := make([]string, 0, len(ids)+1)

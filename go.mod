@@ -28,6 +28,7 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/jesseduffield/gocui v0.3.1-0.20240418080333-8cd33929c513
 	github.com/mattn/go-runewidth v0.0.27
+	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -54,6 +55,5 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/stretchr/testify v1.8.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 )

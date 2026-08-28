@@ -17,6 +17,7 @@ type ECSClusterOverview struct {
 	Services []ECSService
 	Tasks    []ECSTask
 	Metrics  *ECSClusterMetrics
+	Tags     map[string]string
 
 	// InsightsOff records that the metrics call was deliberately NOT made, which is a different answer from a call that failed and a different one again from a call that came back empty.
 	// Without it a cluster with Insights switched off renders the same "no data" as a cluster whose metrics are genuinely missing, and only one of those is something to go and fix.
@@ -44,6 +45,10 @@ func (c *Client) GetECSClusterOverview(ctx context.Context, cluster *ECSCluster,
 	// The empty service name is the whole cluster: one ListTasks plus one DescribeTasks page, rather than the per-service call that would make this an N+1 on a refresh ticker.
 	sections.fetch(SectionTasks, func() (err error) {
 		overview.Tasks, err = c.ListECSTasks(ctx, cluster.Name, "")
+		return err
+	})
+	sections.fetch(SectionTags, func() (err error) {
+		overview.Tags, err = c.listClusterTags(ctx, cluster.Name)
 		return err
 	})
 

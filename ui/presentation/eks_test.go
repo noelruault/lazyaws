@@ -21,7 +21,7 @@ func TestGetEKSClusterDisplayCells(t *testing.T) {
 			"a healthy cluster",
 			&aws.EKSCluster{Name: "prod-eks", Status: "ACTIVE", NodeCount: 12, CreatedAt: "2026-01-02 15:04:05"},
 			[]utils.Cell{
-				{Text: "▶ ACTIVE", Color: color.FgGreen},
+				{Text: "● ACTIVE", Color: color.FgGreen},
 				{Text: "prod-eks", Color: color.Bold},
 				{Text: "12 nodes"},
 				{Text: "2026-01-02", Color: color.Faint},
@@ -32,7 +32,7 @@ func TestGetEKSClusterDisplayCells(t *testing.T) {
 			"a status the style table does not know keeps its word",
 			&aws.EKSCluster{Name: "staging", Status: "UPDATING", CreatedAt: "2026-01-02 15:04:05"},
 			[]utils.Cell{
-				{Text: "? UPDATING", Color: color.FgWhite},
+				{Text: "● UPDATING", Color: color.FgWhite},
 				{Text: "staging", Color: color.Bold},
 				{Text: "0 nodes"},
 				{Text: "2026-01-02", Color: color.Faint},
@@ -43,7 +43,7 @@ func TestGetEKSClusterDisplayCells(t *testing.T) {
 			"a cluster the client could not describe",
 			&aws.EKSCluster{Name: "broken", Status: "unknown"},
 			[]utils.Cell{
-				{Text: "? unknown", Color: color.FgWhite},
+				{Text: "● unknown", Color: color.FgWhite},
 				{Text: "broken", Color: color.Bold},
 				{Text: "0 nodes"},
 				{Text: "", Color: color.Faint},
@@ -54,7 +54,7 @@ func TestGetEKSClusterDisplayCells(t *testing.T) {
 			"a cluster with no status at all",
 			&aws.EKSCluster{Name: "quiet", CreatedAt: "2026-01-02 15:04:05"},
 			[]utils.Cell{
-				{Text: "?", Color: color.FgWhite},
+				{Text: "●", Color: color.FgWhite},
 				{Text: "quiet", Color: color.Bold},
 				{Text: "0 nodes"},
 				{Text: "2026-01-02", Color: color.Faint},
@@ -64,7 +64,7 @@ func TestGetEKSClusterDisplayCells(t *testing.T) {
 			"a deleting cluster",
 			&aws.EKSCluster{Name: "old", Status: "DELETING", NodeCount: 3, CreatedAt: "2025-11-30 08:00:00"},
 			[]utils.Cell{
-				{Text: "− DELETING", Color: color.FgYellow},
+				{Text: "● DELETING", Color: color.FgYellow},
 				{Text: "old", Color: color.Bold},
 				{Text: "3 nodes"},
 				{Text: "2025-11-30", Color: color.Faint},
@@ -98,7 +98,7 @@ func TestEKSClusterRowKeepsTheNameAndTheWholeDateInANarrowPanel(t *testing.T) {
 	if got := runewidth.StringWidth(plain); got > width {
 		t.Errorf("row is %d cells wide, want at most %d: %q", got, width, plain)
 	}
-	if !strings.HasPrefix(plain, "▶ ACTIVE ccc") {
+	if !strings.HasPrefix(plain, "● ACTIVE ccc") {
 		t.Errorf("row = %q, want the badge and then the name still on screen", plain)
 	}
 	if !strings.Contains(plain, "…") {

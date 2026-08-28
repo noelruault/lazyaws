@@ -79,6 +79,7 @@ func TestEksUpgradeQuestionNamesTheClusterAndItsVersion(t *testing.T) {
 }
 
 // An empty side panel used to render as a blank box, with its explanation only in the main panel and only while that panel had focus.
+// The buffer is WAITED for rather than read once: RerenderList queues its render through gocui's Update, which spawns an unordered goroutine, so a one-shot read can land before the render on a loaded box.
 func TestRerenderListShowsTheEmptyMessageInTheSideView(t *testing.T) {
 	gui, g := newHeadlessGui(t)
 
@@ -87,13 +88,11 @@ func TestRerenderListShowsTheEmptyMessageInTheSideView(t *testing.T) {
 		return gui.Panels.EKS.RerenderList()
 	})
 
-	buffer := ask(g, func() string { return gui.Views.EKS.Buffer() })
-	if !strings.Contains(buffer, "no EKS clusters") {
-		t.Errorf("EKS view = %q, want the panel's empty message", buffer)
-	}
+	waitForView(t, g, gui.Views.EKS, "no EKS clusters")
 }
 
 // A panel with rows must not gain the empty message, and the rows themselves must still be there.
+// Waited for the row for the reason the test above documents; the no-empty-message check reads the same settled snapshot.
 func TestRerenderListDropsTheEmptyMessageOnceRowsArrive(t *testing.T) {
 	gui, g := newHeadlessGui(t)
 	// The EKS panel lays out with RenderTableFit, and a headless view keeps the 10-cell placeholder createAllViews gives it, which cuts every row to "▶ AC…".
@@ -104,11 +103,8 @@ func TestRerenderListDropsTheEmptyMessageOnceRowsArrive(t *testing.T) {
 		return gui.Panels.EKS.RerenderList()
 	})
 
-	buffer := stripANSIForTest(ask(g, func() string { return gui.Views.EKS.Buffer() }))
+	buffer := stripANSIForTest(waitForView(t, g, gui.Views.EKS, "prod"))
 	if strings.Contains(buffer, "no EKS clusters") {
 		t.Errorf("EKS view = %q, want no empty message when a cluster is listed", buffer)
-	}
-	if !strings.Contains(buffer, "prod") {
-		t.Errorf("EKS view = %q, want the cluster row", buffer)
 	}
 }

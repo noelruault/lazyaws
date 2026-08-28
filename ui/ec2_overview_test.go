@@ -2,9 +2,7 @@ package ui
 
 import (
 	"context"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/noelruault/lazyaws/apps/aws"
 )
@@ -27,48 +25,46 @@ func TestEC2OverviewExtrasAreFetchedOncePerSelection(t *testing.T) {
 	}
 
 	sentinel := []aws.InstanceAlarm{{Name: "held-from-the-first-fetch"}}
-	extras.alarms = sentinel
+	extras.entries["i-1"].alarms = sentinel
 
 	second := newExtrasOverview()
 	extras.fill(context.Background(), client, 1, "i-1", second)
 	if len(second.Alarms) != 1 || second.Alarms[0].Name != sentinel[0].Name {
 		t.Errorf("a second render of the same instance refetched the alarms; alarms = %v", second.Alarms)
 	}
+
+	// Moving away and back must also be free: the entry survives per instance, not per current selection.
+	extras.fill(context.Background(), client, 1, "i-2", newExtrasOverview())
+	back := newExtrasOverview()
+	extras.fill(context.Background(), client, 1, "i-1", back)
+	if len(back.Alarms) != 1 || back.Alarms[0].Name != sentinel[0].Name {
+		t.Errorf("re-selecting an instance refetched its extras; alarms = %v", back.Alarms)
+	}
+	if !extras.has(1, "i-1") || extras.has(1, "i-9") || extras.has(2, "i-1") {
+		t.Error("has() disagrees with the entries fill() kept")
+	}
 }
 
-func TestEC2OverviewExtrasRefetchWhenTheSelectionOrProfileMoves(t *testing.T) {
-	tests := []struct {
-		name       string
-		gen        int
-		instanceID string
-	}{
-		{name: "another instance", gen: 1, instanceID: "i-2"},
-		// An instance id is only unique within the account it was read from, and a profile switch replaces the account without changing the id.
-		{name: "another profile", gen: 2, instanceID: "i-1"},
-	}
+// An instance id is only unique within the account it was read from, and a profile switch replaces the account without changing the id.
+func TestEC2OverviewExtrasRefetchWhenTheProfileMoves(t *testing.T) {
+	var extras ec2OverviewExtras
+	client := &aws.Client{}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var extras ec2OverviewExtras
-			client := &aws.Client{}
+	extras.fill(context.Background(), client, 1, "i-1", newExtrasOverview())
+	extras.entries["i-1"].alarms = []aws.InstanceAlarm{{Name: "held-from-the-first-fetch"}}
 
-			extras.fill(context.Background(), client, 1, "i-1", newExtrasOverview())
-			extras.alarms = []aws.InstanceAlarm{{Name: "held-from-the-first-fetch"}}
-
-			got := newExtrasOverview()
-			extras.fill(context.Background(), client, tt.gen, tt.instanceID, got)
-			if len(got.Alarms) != 0 {
-				t.Errorf("%s reused the previous selection's alarms: %v", tt.name, got.Alarms)
-			}
-		})
+	got := newExtrasOverview()
+	extras.fill(context.Background(), client, 2, "i-1", got)
+	if len(got.Alarms) != 0 {
+		t.Errorf("a profile switch reused the previous account's alarms: %v", got.Alarms)
 	}
 }
 
 // The overview must not report an ASG failure on an instance that simply belongs to no group: nil with no error is how that is reported, and reading it as a failure would claim a broken permission on the commonest case there is.
 func TestEC2OverviewExtrasCopyErrorsWithoutInventingThem(t *testing.T) {
 	var extras ec2OverviewExtras
-	extras.instanceID, extras.gen = "i-1", 1
-	extras.errs = map[string]error{}
+	extras.gen = 1
+	extras.entries = map[string]*ec2ExtrasEntry{"i-1": {errs: map[string]error{}}}
 
 	overview := newExtrasOverview()
 	extras.fill(context.Background(), &aws.Client{}, 1, "i-1", overview)
@@ -81,25 +77,25 @@ func TestEC2OverviewExtrasCopyErrorsWithoutInventingThem(t *testing.T) {
 	}
 }
 
-// The console log is captured at boot and never again, so on an instance up for months the size reads as a live log and the capture date is the only thing that says otherwise.
-func TestFormatEC2StatusDatesTheConsoleCapture(t *testing.T) {
-	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	status := &aws.InstanceStatus{InstanceState: "running"}
-	console := aws.ConsoleOutput{Content: "abcd", At: time.Date(2025, 12, 23, 22, 58, 51, 0, time.UTC)}
+// The snapshots need the volume ids off the ticker's details fetch, so a render where details failed must not latch an empty snapshot list for the whole selection.
+func TestEC2OverviewExtrasSnapshotsWaitForTheDetails(t *testing.T) {
+	var extras ec2OverviewExtras
 
-	got := formatEC2Status(status, nil, console, "", now)
-	if want := "captured 2025-12-23T22:58:51Z (246d ago)"; !strings.Contains(got, want) {
-		t.Errorf("status is missing %q\n%s", want, got)
+	// First render: details failed, so the snapshot fetch must not run or latch.
+	withoutDetails := newExtrasOverview()
+	extras.fill(context.Background(), &aws.Client{}, 1, "i-1", withoutDetails)
+	if extras.entries["i-1"].snapsFilled {
+		t.Fatal("fill() latched the snapshot list before the volume ids were known")
 	}
 
-	// A capture with no timestamp must not be related against the zero time, which would report a log from the year 1.
-	got = formatEC2Status(status, nil, aws.ConsoleOutput{Content: "abcd"}, "", now)
-	if !strings.Contains(got, "captured unknown") {
-		t.Errorf("an unstamped console capture should say so\n%s", got)
+	// A later render of the same selection has the details; the fetch runs (and fails on the empty client), which is the latch plus a reported error.
+	withDetails := newExtrasOverview()
+	withDetails.Details = &aws.InstanceDetails{BlockDevices: []aws.BlockDevice{{VolumeID: "vol-1"}}}
+	extras.fill(context.Background(), &aws.Client{}, 1, "i-1", withDetails)
+	if !extras.entries["i-1"].snapsFilled {
+		t.Fatal("fill() did not fetch the snapshots once the details arrived")
 	}
-
-	got = formatEC2Status(status, nil, aws.ConsoleOutput{}, "", now)
-	if !strings.Contains(got, "Console output:\nnone") {
-		t.Errorf("an absent console log should read none\n%s", got)
+	if withDetails.Err(aws.SectionSnapshots) == nil {
+		t.Error("a failed snapshot fetch should be reported on the overview")
 	}
 }

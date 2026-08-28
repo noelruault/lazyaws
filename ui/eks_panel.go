@@ -68,7 +68,7 @@ func (gui *Gui) getEKSPanel() *panels.SideListPanel[*aws.EKSCluster] {
 		ContextState: &panels.ContextState[*aws.EKSCluster]{
 			GetMainTabs: func() []panels.MainTab[*aws.EKSCluster] {
 				return []panels.MainTab[*aws.EKSCluster]{
-					staticOverviewTab(gui, gui.eksClusterOverview),
+					staticOverviewTab(gui, func(c *aws.EKSCluster) string { return "eks-" + c.Name }, gui.eksClusterOverview),
 					{Key: "config", Title: "Config", Render: gui.renderEKSConfig},
 					{Key: "nodegroups", Title: "Node groups", Render: gui.renderEKSNodeGroups},
 					{Key: "addons", Title: "Addons", Render: gui.renderEKSAddons},

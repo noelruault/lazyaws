@@ -7,13 +7,18 @@ import (
 
 // SectionImage is the ECSServiceOverview.Errs key for the image resolution, which is its own fetch rather than a field of another one.
 // SectionMetrics is shared with the instance and cluster overviews: the key names the fetch that failed, and each pane has exactly one metrics fetch.
-const SectionImage = "image"
+const (
+	SectionImage   = "image"
+	SectionScaling = "scaling"
+)
 
-// ECSServiceOverview aggregates the two fetches a service pane cannot answer from the list row it already holds.
+// ECSServiceOverview aggregates the fetches a service pane cannot answer from the list row it already holds.
 // Deployments, networking, counts and events all arrive with DescribeServices, so they are read off the service itself and cannot fail independently of it.
 type ECSServiceOverview struct {
 	Metrics *ECSServiceMetrics
 	Image   ECSServiceImage
+	// Scaling is nil for a service with no Application Auto Scaling registered, which is an answer and not a failure.
+	Scaling *ECSServiceAutoScaling
 
 	Errs map[string]error
 }
@@ -44,6 +49,12 @@ func (c *Client) GetECSServiceOverview(ctx context.Context, s *ECSService, metri
 	// The image is the one section that costs a task listing, and spec.md's hard requirement is that an ECS view shows what a deployment is actually running.
 	sections.fetch(SectionImage, func() (err error) {
 		overview.Image, err = c.ResolveECSServiceImage(ctx, s)
+		return err
+	})
+	sections.fetch(SectionScaling, func() (err error) {
+		overview.Scaling, err = memoized(&c.serviceScaling, s.Cluster+"/"+s.Name, metricsMaxAge, func() (*ECSServiceAutoScaling, error) {
+			return c.GetECSServiceAutoScaling(ctx, s.Cluster, s.Name)
+		})
 		return err
 	})
 

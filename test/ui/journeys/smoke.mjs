@@ -24,6 +24,7 @@ export async function run ({ term, seed }) {
   assertScreen(screen, 'no EKS clusters', 'EKS panel')
 
   // Focus has to be where the app put it (`initiallyFocusedViewName` is the profile panel), not where the harness reached for it.
-  // The main pane's own footer offers "enter select", so this fails the moment anything in the harness sends a click.
-  assertScreen(await term.footer(), 'enter switch', 'focus after boot')
+  // The main pane's own footer offers "Enter Select", so this fails the moment anything in the harness sends a click.
+  // WAITED rather than read once: the footer renders through gocui's unordered Update, and a one-shot read at boot can race the first paint.
+  await term.waitForText('Enter Switch')
 }

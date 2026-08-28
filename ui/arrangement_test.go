@@ -108,8 +108,7 @@ func TestGetMidSectionWeightsHalfScreen(t *testing.T) {
 	}
 }
 
-// Panels are addressed by row, so a gap or an overlap anywhere in the side column puts every
-// click below it on the wrong panel. This walks every configuration the app can produce.
+// Panels are addressed by row, so a gap or an overlap anywhere in the side column puts every click below it on the wrong panel. This walks every configuration the app can produce.
 func TestSidePanelsTileTheColumnExactly(t *testing.T) {
 	names := []string{"profile", "ecs", "ec2", "s3", "eks", "ecr", "secrets"}
 	modes := []WindowMaximisation{SCREEN_NORMAL, SCREEN_HALF, SCREEN_FULL}
@@ -146,5 +145,38 @@ func TestSidePanelsTileTheColumnExactly(t *testing.T) {
 
 	if checked != 336 {
 		t.Errorf("checked %d configurations, want the full 336-configuration matrix", checked)
+	}
+}
+
+// The app status trails the bottom line so a load in flight never shifts the hints the user is reading, in every bottom-line mode the status can appear in.
+// Every State write and every infoSectionChildren call runs on the loop's goroutine through run/ask: the render loop reads the same state, and touching it from the test goroutine is a data race under -race.
+func TestAppStatusIsTheBottomLinesLastBox(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+
+	bottomBoxes := func(status string) []*layout.Box {
+		return ask(g, func() []*layout.Box { return gui.infoSectionChildren("v1.0", status) })
+	}
+
+	assertLast := func(mode string) {
+		t.Helper()
+		boxes := bottomBoxes("loading ec2 ⠋")
+		if got := boxes[len(boxes)-1].Window; got != "appStatus" {
+			t.Errorf("with %s the status is not the line's last box; the last is %q", mode, got)
+		}
+	}
+
+	assertLast("the options line showing")
+
+	run(t, g, func() error { gui.State.Filter.active = true; return nil })
+	assertLast("the filter open")
+	run(t, g, func() error { gui.State.Filter.active = false; gui.State.Command.active = true; return nil })
+	assertLast("the command bar open")
+	run(t, g, func() error { gui.State.Command.active = false; return nil })
+
+	// No load in flight leaves no status box at all rather than an empty sliver.
+	for _, box := range bottomBoxes("") {
+		if box.Window == "appStatus" {
+			t.Errorf("an empty status still claims a box on the bottom line")
+		}
 	}
 }

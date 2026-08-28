@@ -40,12 +40,49 @@ func GetVPCDisplayCells(v *aws.VPC) []utils.Cell {
 // Everything but the DNS attributes comes off the list row or the tabs' own loaders, so the pane costs no call the Subnets, Gateways and Endpoints tabs do not already make.
 func FormatVPCOverview(v *aws.VPC, o *aws.VPCOverview, width int) string {
 	// Cut to the pane: the header spans the full width rather than a column, so Columns never measures it, and a long Name tag beside the CIDR and the id runs off the edge unmarked.
-	header := truncateBlock(ResourceHeader("VPC", vpcLabel(v), Badge(v.State), v.ID, v.CIDR, vpcDefaultNote(v)), width)
+	// The state lives in the card row rather than as a badge beside the name (owner's call, 2026-08-28): one framed "available", not the same word twice.
+	header := HeaderWithStats(width,
+		ResourceHeader("VPC", vpcLabel(v), "", v.ID, v.CIDR, vpcDefaultNote(v)),
+		vpcStatCards(v, o),
+	)
 
-	left := joinBlocks(vpcConfigBlock(v), vpcDNSBlock(o), vpcTagsBlock(v))
+	left := joinBlocks(vpcConfigBlock(v), vpcDNSBlock(o), vpcTagsBlock(v, ColumnWidth(width, overviewGap)))
 	right := joinBlocks(vpcSubnetsBlock(o), vpcGatewaysBlock(o), vpcEndpointsBlock(o))
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
+}
+
+func vpcStatCards(v *aws.VPC, o *aws.VPCOverview) []Stat {
+	public, freeIPs := vpcSubnetTotals(o.Subnets)
+	subnets := utils.Cell{Text: fmt.Sprintf("%d · %d pub / %d priv", len(o.Subnets), public, len(o.Subnets)-public)}
+	free := utils.Cell{Text: fmt.Sprintf("%d", freeIPs)}
+	if o.Err(aws.SectionSubnets) != nil {
+		subnets = utils.Cell{Text: "unavailable", Color: color.FgRed}
+		free = utils.Cell{Text: "unavailable", Color: color.FgRed}
+	}
+
+	endpoints := utils.Cell{Text: fmt.Sprintf("%d", len(o.Endpoints))}
+	if o.Err(aws.SectionEndpoints) != nil {
+		endpoints = utils.Cell{Text: "unavailable", Color: color.FgRed}
+	}
+
+	return []Stat{
+		{Label: "State", Value: BadgeCell(v.State)},
+		{Label: "Subnets", Value: subnets},
+		{Label: "Free IPs", Value: free},
+		{Label: "Endpoints", Value: endpoints},
+	}
+}
+
+func vpcSubnetTotals(subnets []aws.Subnet) (public int, freeIPs int32) {
+	for _, subnet := range subnets {
+		if subnet.Public {
+			public++
+		}
+		freeIPs += subnet.AvailableIPs
+	}
+
+	return public, freeIPs
 }
 
 func vpcLabel(v *aws.VPC) string {
@@ -65,9 +102,9 @@ func vpcDefaultNote(v *aws.VPC) string {
 	return ""
 }
 
+// vpcConfigBlock has no primary-CIDR row: the header carries it as the VPC's identity, and the same string twice was the dedup pass's finding.
 func vpcConfigBlock(v *aws.VPC) string {
 	rows := []kv{
-		{"CIDR", orNone(v.CIDR)},
 		{"Secondary CIDRs", orNoneList(v.SecondaryCIDRs)},
 		{"IPv6 CIDRs", orNoneList(v.IPv6CIDRs)},
 		{"Default", yesNo(v.IsDefault)},
@@ -103,24 +140,13 @@ func vpcSubnetsBlock(o *aws.VPCOverview) string {
 		return title + "\nnone"
 	}
 
-	public, available := 0, int32(0)
+	// Only the AZ spread: the counts and the free-address total are the header's Subnets and Free IPs cards, and this section adds the one fact they cannot carry.
 	byAZ := map[string]int{}
 	for _, subnet := range o.Subnets {
-		if subnet.Public {
-			public++
-		}
-		available += subnet.AvailableIPs
 		byAZ[subnet.AZ]++
 	}
 
-	lines := []string{
-		title,
-		fmt.Sprintf("%s · %d public / %d private", pluralize(len(o.Subnets), "subnet"), public, len(o.Subnets)-public),
-		fmt.Sprintf("%d addresses free", available),
-		"AZs: " + countsByKey(byAZ),
-	}
-
-	return strings.Join(lines, "\n")
+	return title + "\nAZs: " + countsByKey(byAZ)
 }
 
 // countsByKey renders a count per key in key order, since Go randomizes map iteration and an unsorted line would reshuffle itself on every re-render.
@@ -208,18 +234,18 @@ func vpcEndpointsBlock(o *aws.VPCOverview) string {
 	return strings.Join(lines, "\n")
 }
 
-func vpcTagsBlock(v *aws.VPC) string {
+func vpcTagsBlock(v *aws.VPC, width int) string {
 	title := SectionTitle("Tags")
 	if len(v.Tags) == 0 {
 		return title + "\nnone"
 	}
 
-	lines := []string{title}
-	for _, tag := range v.Tags {
-		lines = append(lines, tag.Key+": "+orNone(tag.Value))
+	tags := make([]kv, len(v.Tags))
+	for i, tag := range v.Tags {
+		tags[i] = kv{tag.Key, tag.Value}
 	}
 
-	return strings.Join(lines, "\n")
+	return title + "\n" + tagsBody(width, tags)
 }
 
 func orNoneList(values []string) string {

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release clean ui-test
+.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release release-all release-archive clean ui-test ui-demo
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -34,6 +34,10 @@ test: ## Run the test suite
 
 ui-test: ## Drive the built TUI in ttyd against a seeded fake AWS with Playwright (needs docker, ttyd, aws, bun; one-off: cd test/ui && bun install && bunx playwright install chromium)
 	bash test/ui/run.sh $(JOURNEYS)
+
+ui-demo: ## Re-record docs/demo.gif against the seeded fake AWS, so the published media carries fabricated data only (needs ui-test's tools plus ffmpeg)
+	DRIVER=demo.mjs bash test/ui/run.sh
+	ffmpeg -y -f concat -i test/ui/.demo-frames/frames.txt -vf "scale=1010:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5" -loop 0 docs/demo.gif
 
 lint: ## Vet the code and fail on unformatted files
 	go vet ./...
@@ -90,8 +94,22 @@ prepare-release: ## Pre-push gate: lint, vulnerabilities, licenses, tidy check, 
 	@echo "All checks passed. Ready to push."
 
 release: ## Build a license-complete archive for the current platform
-	@if [ -e "$(DIST_DIR)/$(RELEASE_NAME).tar.gz" ]; then echo "refusing to overwrite $(DIST_DIR)/$(RELEASE_NAME).tar.gz"; exit 1; fi
 	$(MAKE) prepare-release
+	$(MAKE) release-archive
+
+# The platforms a release ships for. tcell and gocui are pure Go, so every one of these cross-compiles from any host.
+RELEASE_PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64
+
+release-all: ## Build license-complete archives for every supported platform
+	$(MAKE) prepare-release
+	@set -eu; for p in $(RELEASE_PLATFORMS); do \
+		GOOS="$${p%/*}" GOARCH="$${p#*/}" $(MAKE) release-archive; \
+	done
+
+# release-archive builds ONE platform's archive with no gate of its own: prepare-release runs `go test -race`, which cannot execute a cross-compiled binary, so the gate runs once on the host and the archives trust it.
+# GOOS/GOARCH arrive via the environment; TARGET_GOOS/TARGET_GOARCH read `go env`, which honours them, so the archive name and the binary inside can never disagree.
+release-archive:
+	@if [ -e "$(DIST_DIR)/$(RELEASE_NAME).tar.gz" ]; then echo "refusing to overwrite $(DIST_DIR)/$(RELEASE_NAME).tar.gz"; exit 1; fi
 	@set -eu; \
 		mkdir -p "$(DIST_DIR)"; \
 		archive="$(DIST_DIR)/$(RELEASE_NAME).tar.gz"; \

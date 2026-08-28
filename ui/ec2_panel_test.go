@@ -1,58 +1,10 @@
 package ui
 
 import (
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/noelruault/lazyaws/apps/aws"
-	"github.com/noelruault/lazyaws/ui/utils"
 )
-
-func TestFormatEC2MetricsStampsReadingsAndKeepsAbsenceAbsent(t *testing.T) {
-	at := time.Date(2026, 8, 27, 17, 43, 0, 0, time.UTC)
-	metrics := &aws.InstanceMetrics{
-		InstanceID:     "i-0abcdef1234567890",
-		CPUUtilization: aws.MetricPoint{Value: 0.523, At: at, OK: true},
-		NetworkIn:      aws.MetricPoint{Value: 235000, At: at, OK: true},
-		// An EBS-only instance publishes no disk metrics at all.
-		DiskReadBytes:     aws.MetricPoint{},
-		DiskWriteBytes:    aws.MetricPoint{},
-		StatusCheckFailed: aws.MetricPoint{Value: 0, At: at, OK: true},
-	}
-
-	got := utils.Decolorise(formatEC2Metrics(metrics))
-
-	for _, want := range []string{
-		"CPU utilization: 0.5% (5-min avg @ 17:43Z)",
-		"Network in: 229.5 KiB (5-min total @ 17:43Z)",
-		"Disk read: no data",
-		"Disk write: no data",
-		"Status check failed: 0 (5-min max @ 17:43Z)",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("formatEC2Metrics() missing %q, got:\n%s", want, got)
-		}
-	}
-
-	// The old caption claimed a freshness basic monitoring cannot deliver: its datapoints are already minutes old on arrival.
-	if strings.Contains(strings.ToLower(got), "last 5 minutes") {
-		t.Errorf("formatEC2Metrics() still captions a fixed period, got:\n%s", got)
-	}
-	// A metric that published nothing must never be rendered as a zero reading.
-	if strings.Contains(got, "Disk read: 0") {
-		t.Errorf("formatEC2Metrics() rendered an absent series as 0, got:\n%s", got)
-	}
-}
-
-func TestFormatMetricPointAbsentReadsNoData(t *testing.T) {
-	got := formatMetricPoint(aws.MetricPoint{Value: 99, At: time.Now(), OK: false}, "5-min avg", func(v float64) string {
-		return "formatted"
-	})
-	if got != "no data" {
-		t.Errorf("formatMetricPoint() = %q, want %q; an absent point must not render its zero value", got, "no data")
-	}
-}
 
 func TestFormatByteCount(t *testing.T) {
 	cases := []struct {
@@ -69,41 +21,6 @@ func TestFormatByteCount(t *testing.T) {
 		if got := formatByteCount(tc.bytes); got != tc.want {
 			t.Errorf("formatByteCount(%v) = %q, want %q", tc.bytes, got, tc.want)
 		}
-	}
-}
-
-func TestFormatEC2StorageEmpty(t *testing.T) {
-	if got := formatEC2Storage(nil, nil); got != "no EBS volumes\n" {
-		t.Errorf("formatEC2Storage(nil, nil) = %q, want no-volumes message", got)
-	}
-}
-
-func TestFormatEC2StorageSnapshots(t *testing.T) {
-	devices := []aws.BlockDevice{{DeviceName: "/dev/xvda", VolumeID: "vol-1", VolumeSize: 8, VolumeType: "gp3"}}
-
-	out := formatEC2Storage(devices, nil)
-	if !strings.Contains(out, "Snapshots:\nnone") {
-		t.Errorf("formatEC2Storage with no snapshots should report none, got: %q", out)
-	}
-
-	snapshots := []aws.VolumeSnapshot{{SnapshotID: "snap-1", VolumeID: "vol-1", State: "completed", Progress: "100%", SizeGiB: 8, StartTime: "2026-07-10 00:00:00"}}
-	out = formatEC2Storage(devices, snapshots)
-	if !strings.Contains(out, "snap-1 vol:vol-1 completed 100% (8 GiB)") {
-		t.Errorf("formatEC2Storage should list the snapshot, got: %q", out)
-	}
-}
-
-func TestFormatEC2SecurityEmpty(t *testing.T) {
-	if got := formatEC2Security(nil); got != "no security groups\n" {
-		t.Errorf("formatEC2Security(nil) = %q, want no-groups message", got)
-	}
-}
-
-func TestFormatEC2ConfigNilASG(t *testing.T) {
-	d := &aws.InstanceDetails{Instance: aws.Instance{ID: "i-123", State: "running"}}
-	out := formatEC2Config(d, nil)
-	if !strings.Contains(out, "Auto Scaling Group:\nnone") {
-		t.Errorf("formatEC2Config with nil ASG should report none, got: %q", out)
 	}
 }
 

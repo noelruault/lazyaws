@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -55,8 +56,10 @@ func emptyBucketOverview() *aws.BucketOverview {
 func TestBucketOverviewRendersEverySection(t *testing.T) {
 	got := plainBucket(overviewBucket(), fullBucketOverview(), stackedWidth)
 
+	// No exposure badge in the header: the Access card is the glance and the Security rows are the detail.
 	for _, want := range []string{
-		"Bucket", "app-artifacts", "Public access blocked", "eu-west-1",
+		"Bucket", "app-artifacts", "eu-west-1",
+		"Access", "private", "Versioning", "Enabled", "Encryption", "KMS",
 		"Security", "Block ACLs:", "Restrict public:", "aws:kms", "attached, shown on the Policy tab",
 		"Data management", "Enabled", "GOVERNANCE", "30d default",
 		"Lifecycle: 2 rules", "[archive] Enabled · builds/ · → GLACIER 30d · expire 365d", "[drop-temp] Disabled · all objects · expire 7d",
@@ -66,6 +69,86 @@ func TestBucketOverviewRendersEverySection(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing %q\n%s", want, got)
+		}
+	}
+
+	plain := utils.Decolorise(FormatBucketOverview(overviewBucket(), fullBucketOverview(), stackedWidth, overviewNow))
+	header := strings.SplitN(plain, "\n\n", 2)[0]
+	if strings.Count(header, "┌") != 3 {
+		t.Errorf("header does not contain three stat cards\n%s", header)
+	}
+	if strings.Count(plain, "├") != 0 || strings.Count(plain, "┌") != 3 {
+		t.Errorf("overview contains health cards or a boxed table\n%s", plain)
+	}
+}
+
+func TestBucketOverviewCardsUsePostureColours(t *testing.T) {
+	private := bucketStatCards(fullBucketOverview())
+	want := []Stat{
+		{Label: "Access", Value: utils.Cell{Text: "private", Color: color.FgGreen}},
+		{Label: "Versioning", Value: utils.Cell{Text: "Enabled", Color: color.FgGreen}},
+		{Label: "Encryption", Value: utils.Cell{Text: "KMS"}},
+	}
+	if len(private) != len(want) {
+		t.Fatalf("bucketStatCards() returned %d cards, want %d", len(private), len(want))
+	}
+	for i := range want {
+		if private[i] != want[i] {
+			t.Errorf("card %d = %+v, want %+v", i, private[i], want[i])
+		}
+	}
+
+	public := bucketStatCards(emptyBucketOverview())
+	if got := public[0].Value; got.Text != "public" || got.Color != color.FgRed {
+		t.Errorf("public access card = %+v, want red public", got)
+	}
+	if got := public[1].Value; got.Text != "Disabled" || got.Color != 0 {
+		t.Errorf("disabled versioning card = %+v, want plain Disabled", got)
+	}
+	if got := public[2].Value; got.Text != "S3 default" || got.Color != color.FgYellow {
+		t.Errorf("unconfigured encryption card = %+v, want amber S3 default: a bucket without its own configuration is still SSE-S3 encrypted, and \"none\" would claim plaintext", got)
+	}
+	partial := emptyBucketOverview()
+	partial.PublicAccess = &aws.PublicAccessBlock{BlockPublicAcls: true, BlockPublicPolicy: true}
+	if got := bucketStatCards(partial)[0].Value; got.Text != "partly blocked 2/4" || got.Color != color.FgYellow {
+		t.Errorf("partly blocked access card = %+v, want the amber count the old badge carried", got)
+	}
+
+	aes := fullBucketOverview()
+	aes.Encryption = &aws.BucketEncryption{Algorithm: "AES256"}
+	if got := bucketStatCards(aes)[2].Value; got.Text != "AES256" || got.Color != 0 {
+		t.Errorf("AES256 encryption card = %+v, want plain AES256", got)
+	}
+
+	failed := fullBucketOverview()
+	failed.Errs[aws.SectionPublicAccess] = errors.New("access denied")
+	failed.Errs[aws.SectionVersioning] = errors.New("access denied")
+	failed.Errs[aws.SectionEncryption] = errors.New("access denied")
+	for i, card := range bucketStatCards(failed) {
+		if card.Value.Text != "unavailable" || card.Value.Color != color.FgRed {
+			t.Errorf("failed-fetch card %d = %+v, want red unavailable", i, card.Value)
+		}
+	}
+}
+
+func TestBucketOverviewHeaderCardsFitWidthBudgets(t *testing.T) {
+	forceColor(t)
+
+	for _, width := range []int{80, 110, 120, 160} {
+		got := FormatBucketOverview(overviewBucket(), fullBucketOverview(), width, overviewNow)
+		header := strings.SplitN(utils.Decolorise(got), "\n\n", 2)[0]
+		for _, want := range []string{"Access", "private", "Versioning", "Enabled", "Encryption", "KMS"} {
+			if !strings.Contains(header, want) {
+				t.Errorf("at width %d header card is missing %q\n%s", width, want, header)
+			}
+		}
+		if strings.Count(header, "┌") != 3 {
+			t.Errorf("at width %d header does not contain three stat cards\n%s", width, header)
+		}
+		for _, line := range strings.Split(got, "\n") {
+			if cells := runewidth.StringWidth(utils.Decolorise(line)); cells > width {
+				t.Errorf("at width %d line is %d cells wide: %q", width, cells, utils.Decolorise(line))
+			}
 		}
 	}
 }
@@ -167,8 +250,8 @@ func TestBucketOverviewFieldsFailIndependently(t *testing.T) {
 			if !strings.Contains(got, "app-artifacts") || !strings.Contains(got, "Security") {
 				t.Errorf("a failed %s took the pane down with it\n%s", test.section, got)
 			}
-			if count := strings.Count(got, "unavailable"); count != 1 {
-				t.Errorf("a failed %s made %d fields unavailable, want 1\n%s", test.section, count, got)
+			if count := strings.Count(got, "unavailable: boom"); count != 1 {
+				t.Errorf("a failed %s rendered its full error %d times, want 1\n%s", test.section, count, got)
 			}
 		})
 	}
@@ -184,8 +267,8 @@ func TestBucketOverviewReportsAFailedRegionInTheHeader(t *testing.T) {
 	}
 }
 
-// The badge is the one thing read at a glance, and every state it can take has to be a different word.
-func TestBucketExposureBadge(t *testing.T) {
+// The Access card is the one thing read at a glance, and every state it can take has to be a different word; the partial case keeps its count because "2/4 blocked" and "nothing blocked" call for different fixes.
+func TestBucketAccessCardStates(t *testing.T) {
 	forceColor(t)
 
 	all := &aws.PublicAccessBlock{BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: true, RestrictPublicBuckets: true}
@@ -195,11 +278,11 @@ func TestBucketExposureBadge(t *testing.T) {
 		err   error
 		want  string
 	}{
-		{"all four", all, nil, "Public access blocked"},
-		{"two of four", &aws.PublicAccessBlock{BlockPublicAcls: true, BlockPublicPolicy: true}, nil, "Public access partly blocked (2/4)"},
-		{"none of four", &aws.PublicAccessBlock{}, nil, "Public access not blocked"},
-		{"no configuration", nil, nil, "Public access not blocked"},
-		{"failed read", all, errors.New("AccessDenied"), "Public access unknown"},
+		{"all four", all, nil, "private"},
+		{"two of four", &aws.PublicAccessBlock{BlockPublicAcls: true, BlockPublicPolicy: true}, nil, "partly blocked 2/4"},
+		{"none of four", &aws.PublicAccessBlock{}, nil, "public"},
+		{"no configuration", nil, nil, "public"},
+		{"failed read", all, errors.New("AccessDenied"), "unavailable"},
 	}
 
 	for _, test := range tests {
@@ -209,8 +292,8 @@ func TestBucketExposureBadge(t *testing.T) {
 				o.Errs[aws.SectionPublicAccess] = test.err
 			}
 
-			if got := utils.Decolorise(bucketExposureBadge(o)); got != test.want {
-				t.Errorf("badge = %q, want %q", got, test.want)
+			if got := bucketStatCards(o)[0].Value.Text; got != test.want {
+				t.Errorf("access card = %q, want %q", got, test.want)
 			}
 		})
 	}

@@ -86,7 +86,7 @@ func TestOverviewTaskWithoutAnIntervalRendersOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	task := gui.newOverviewTask(0, calls.render)
+	task := gui.newOverviewTask(0, "t-once", calls.render)
 	go task(ctx)
 
 	if got := calls.atLeast(1, time.Second); got != 1 {
@@ -107,7 +107,7 @@ func TestOverviewTaskRepeatsOnItsInterval(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	task := gui.newOverviewTask(15*time.Millisecond, calls.render)
+	task := gui.newOverviewTask(15*time.Millisecond, "t-tick", calls.render)
 	go task(ctx)
 
 	if got := calls.atLeast(3, time.Second); got < 3 {
@@ -134,7 +134,7 @@ func TestOverviewTurnsWrappingOff(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			go gui.newOverviewTask(tt.interval, calls.render)(ctx)
+			go gui.newOverviewTask(tt.interval, "t-wrap", calls.render)(ctx)
 			calls.atLeast(1, time.Second)
 
 			wrapped := true
@@ -159,12 +159,12 @@ func TestOverviewDropsAResultFromASupersededProfile(t *testing.T) {
 	ctx := context.Background()
 
 	gui.Gen = 1
-	gui.renderOverview(ctx, func(context.Context) string { return "current profile" })
+	gui.renderOverview(ctx, "t-gen", func(context.Context) string { return "current profile" })
 	if got := mainBufferWithin(g, gui, "current profile", time.Second); !strings.Contains(got, "current profile") {
 		t.Fatalf("main = %q, want the render made under the live profile", got)
 	}
 
-	gui.renderOverview(ctx, func(context.Context) string {
+	gui.renderOverview(ctx, "t-gen", func(context.Context) string {
 		gui.Gen++
 
 		return "stale profile"
@@ -184,7 +184,7 @@ func TestOverviewTabCapturesMainsInnerWidth(t *testing.T) {
 	resizeView(t, g, "main", 64, 12)
 
 	widths := make(chan int, 4)
-	tab := overviewTab(gui, func(_ context.Context, item string, width int) string {
+	tab := overviewTab(gui, func(item string) string { return "t-" + item }, func(_ context.Context, item string, width int) string {
 		widths <- width
 
 		return item
@@ -276,6 +276,49 @@ func TestRerenderCurrentMainTabLeavesTheChatScreenAlone(t *testing.T) {
 		if got := ask(g, func() string { return gui.State.Panels.Main.ObjectKey }); got != "chat" {
 			t.Fatalf("ObjectKey = %q, want the chat screen left holding main", got)
 		}
+	}
+}
+
+// Re-selecting a resource must paint its last pane instantly, and a profile switch must drop every pane the previous account rendered.
+func TestOverviewPaneCache(t *testing.T) {
+	var cache overviewPaneCache
+
+	if _, ok := cache.get(1, "ec2-i-1-w80"); ok {
+		t.Fatal("an empty cache answered")
+	}
+
+	cache.put(1, "ec2-i-1-w80", "pane")
+	if got, ok := cache.get(1, "ec2-i-1-w80"); !ok || got != "pane" {
+		t.Fatalf("get = %q, %v after put", got, ok)
+	}
+	// A pane laid out for another width is a miss, not a misfit.
+	if _, ok := cache.get(1, "ec2-i-1-w120"); ok {
+		t.Error("a different width hit the cache")
+	}
+	if _, ok := cache.get(2, "ec2-i-1-w80"); ok {
+		t.Error("a later generation read the previous account's pane")
+	}
+
+	cache.put(2, "ec2-i-1-w80", "new account")
+	if _, ok := cache.get(1, "ec2-i-1-w80"); ok {
+		t.Error("the previous generation's pane survived the switch")
+	}
+}
+
+// The opening paint is what replaces the blank pane: the cached render when the resource was seen before, a loading line when it was not.
+func TestPaintOverviewOpening(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	resizeView(t, g, "main", 60, 10)
+
+	gui.paintOverviewOpening("first-visit")
+	if got := mainBufferWithin(g, gui, "loading overview…", time.Second); !strings.Contains(got, "loading overview…") {
+		t.Fatalf("main = %q, want the loading line on a first visit", got)
+	}
+
+	gui.overviewCache.put(gui.Gen, "revisit", "the pane from last time")
+	gui.paintOverviewOpening("revisit")
+	if got := mainBufferWithin(g, gui, "the pane from last time", time.Second); !strings.Contains(got, "the pane from last time") {
+		t.Fatalf("main = %q, want the cached pane on a revisit", got)
 	}
 }
 

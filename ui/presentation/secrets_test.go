@@ -3,6 +3,7 @@ package presentation
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -184,7 +185,9 @@ func TestFormatSecretOverviewStatesEveryAbsence(t *testing.T) {
 	got := plainOverview(t, neverRotatedSecret(), stackedWidth)
 
 	for _, want := range []string{
-		"Rotation off",
+		// The rotation state lives in its header card, off and plain for a never-rotated secret.
+		"Rotation",
+		"off",
 		"Not replicated",
 		"Not configured",
 		"Description:    none",
@@ -232,17 +235,67 @@ func TestFormatSecretOverviewRendersTheRotatingSecret(t *testing.T) {
 	for _, want := range []string{
 		"Secret",
 		"rds!cluster-1a2b3c4d",
-		"Rotation every 7d",
+		"Rotation",
+		"every 7d",
+		"Replicas",
+		"Versions",
+		"Version",
+		"Stages",
+		"Created",
 		"eu-west-1",
 		"Owning service: rds",
 		"Description:    Secret associated with the primary cluster",
-		"us-east-1  ▶ InSync",
+		"us-east-1  ● InSync",
 		"env: staging",
-		"Configured, shown on the Config tab",
+		"Configured, shown on the Policy tab",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview is missing %q:\n%s", want, got)
 		}
+	}
+
+	plain := utils.Decolorise(FormatSecretOverview(rotatingSecret(), overviewWidth, overviewNow))
+	header := strings.SplitN(plain, "\n\n", 2)[0]
+	if strings.Count(header, "┌") != 3 {
+		t.Errorf("header does not contain three stat cards:\n%s", header)
+	}
+	if strings.Count(plain, "├") != 1 {
+		t.Errorf("overview does not contain one boxed version table:\n%s", plain)
+	}
+}
+
+func TestSecretOverviewCardsUsePostureColours(t *testing.T) {
+	cards := secretStatCards(rotatingSecret())
+	want := []Stat{
+		{Label: "Rotation", Value: utils.Cell{Text: "every 7d", Color: color.FgGreen}},
+		{Label: "Replicas", Value: utils.Cell{Text: "1"}},
+		{Label: "Versions", Value: utils.Cell{Text: "3"}},
+	}
+	if len(cards) != len(want) {
+		t.Fatalf("secretStatCards() returned %d cards, want %d", len(cards), len(want))
+	}
+	for i := range want {
+		if cards[i] != want[i] {
+			t.Errorf("card %d = %+v, want %+v", i, cards[i], want[i])
+		}
+	}
+
+	inactive := secretStatCards(neverRotatedSecret())
+	if got := inactive[0].Value; got.Text != "off" || got.Color != 0 {
+		t.Errorf("rotation-off card = %+v, want plain off", got)
+	}
+
+	scheduled := neverRotatedSecret()
+	scheduled.RotationEnabled = true
+	if got := secretStatCards(scheduled)[0].Value; got.Text != "on" || got.Color != color.FgGreen {
+		t.Errorf("rotation-without-cadence card = %+v, want green on", got)
+	}
+
+	degraded := rotatingSecret()
+	degraded.Replication[0].Status = secretsmanagertypes.StatusTypeFailed
+	degraded.Replication = append(degraded.Replication, secretsmanagertypes.ReplicationStatusType{Status: secretsmanagertypes.StatusTypeInSync})
+	if got := secretStatCards(degraded)[1].Value; got.Text != "2" || got.Color != color.FgRed {
+		t.Errorf("degraded replica card = %+v, want red count", got)
 	}
 }
 
@@ -269,7 +322,8 @@ func TestFormatSecretOverviewRendersEveryStageOfAVersion(t *testing.T) {
 	if strings.Contains(got, "[]") {
 		t.Errorf("a version with no stages rendered as an empty list:\n%s", got)
 	}
-	if !strings.Contains(got, "5c1de9a0 -") {
+	deprecated := lineContaining(got, "5c1de9a0")
+	if !regexp.MustCompile(`5c1de9a0\s+-`).MatchString(deprecated) {
 		t.Errorf("the deprecated version does not render its absent stages as \"-\":\n%s", got)
 	}
 }
@@ -315,8 +369,29 @@ func TestFormatSecretOverviewCapsTheVersionTable(t *testing.T) {
 	if strings.Contains(got, "version-15") {
 		t.Errorf("a version past the cap was rendered:\n%s", got)
 	}
-	if want := "(4 more on the Config tab)"; !strings.Contains(got, want) {
+	if want := "(4 more on the Versions tab)"; !strings.Contains(got, want) {
 		t.Errorf("overview is missing %q, so the hidden versions are silently dropped:\n%s", want, got)
+	}
+}
+
+func TestSecretOverviewVersionTableKeepsEveryColumn(t *testing.T) {
+	forceColor(t)
+
+	d := rotatingSecret()
+	d.Versions[0].VersionId = ptr("version-id-long-enough-to-absorb-the-squeeze")
+	headerColumns := regexp.MustCompile(`Version\s+Stages\s+Created`)
+	versionColumns := regexp.MustCompile(`version-id\S*\s+AWSCURRENT AWSPENDING\s+6h ago`)
+	for _, width := range []int{80, 110, 120, 160} {
+		got := utils.Decolorise(FormatSecretOverview(d, width, overviewNow))
+
+		header := lineContaining(got, "Stages")
+		if header == "" || !headerColumns.MatchString(header) {
+			t.Errorf("at width %d version header lost a column: %q\n%s", width, header, got)
+		}
+		version := lineContaining(got, "version-id")
+		if version == "" || !versionColumns.MatchString(version) {
+			t.Errorf("at width %d version row lost a column: %q\n%s", width, version, got)
+		}
 	}
 }
 
@@ -362,22 +437,22 @@ func TestFormatSecretOverviewNeverRendersTheValue(t *testing.T) {
 	}
 }
 
-func TestSecretRotationBadge(t *testing.T) {
+// The Rotation card speaks the left panel's vocabulary, including its rule that a cadence of zero days is an unreported cadence rather than a configured one: a secret scheduled by a cron() or rate() expression carries no day cadence until it has rotated once, and "every 0d" would be a cadence nobody configured.
+func TestSecretRotationCard(t *testing.T) {
 	forceColor(t)
 
 	for _, tt := range []struct {
 		name   string
-		secret *aws.SecretSummary
-		want   string
+		secret aws.SecretSummary
+		want   utils.Cell
 	}{
-		{"never rotated", &aws.SecretSummary{}, utils.ColoredString("Rotation off", color.Faint)},
-		{"a seven day cadence", &aws.SecretSummary{RotationEnabled: true, RotationDays: 7}, utils.ColoredString("Rotation every 7d", color.FgGreen)},
-		// A secret scheduled by a cron() or rate() expression carries no day cadence until it has rotated once, and "every 0d" would be a cadence nobody configured.
-		{"on with no cadence reported yet", &aws.SecretSummary{RotationEnabled: true}, utils.ColoredString("Rotation on", color.FgGreen)},
+		{"never rotated", aws.SecretSummary{}, utils.Cell{Text: "off"}},
+		{"a seven day cadence", aws.SecretSummary{RotationEnabled: true, RotationDays: 7}, utils.Cell{Text: "every 7d", Color: color.FgGreen}},
+		{"on with no cadence reported yet", aws.SecretSummary{RotationEnabled: true}, utils.Cell{Text: "on", Color: color.FgGreen}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := secretRotationBadge(tt.secret); got != tt.want {
-				t.Errorf("secretRotationBadge = %q, want %q", got, tt.want)
+			if got := secretStatCards(&aws.SecretDetails{SecretSummary: tt.secret})[0].Value; got != tt.want {
+				t.Errorf("rotation card = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

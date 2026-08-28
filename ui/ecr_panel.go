@@ -18,10 +18,11 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 		ContextState: &panels.ContextState[*aws.ECRRepository]{
 			GetMainTabs: func() []panels.MainTab[*aws.ECRRepository] {
 				return []panels.MainTab[*aws.ECRRepository]{
-					staticOverviewTab(gui, gui.ecrRepositoryOverview),
-					{Key: "config", Title: "Config", Render: gui.renderECRConfig},
+					staticOverviewTab(gui, func(r *aws.ECRRepository) string { return "ecr-" + r.Name }, gui.ecrRepositoryOverview),
 					{Key: "images", Title: "Images", Render: gui.renderECRImages},
 					{Key: "scan", Title: "Scan", Render: gui.renderECRScan},
+					// Policies carries the two full JSON documents; the Overview reports only their presence, and every other Config field lives there already.
+					{Key: "policies", Title: "Policies", Render: gui.renderECRPolicies},
 				}
 			},
 			GetItemContextCacheKey: func(r *aws.ECRRepository) string {
@@ -100,29 +101,14 @@ func ecrOverviewErrs(repo *aws.ECRRepository, err error) []error {
 }
 
 // renderECRConfig reuses policy data already fetched with the repository row.
-func (gui *Gui) renderECRConfig(repo *aws.ECRRepository) tasks.TaskFunc {
+func (gui *Gui) renderECRPolicies(repo *aws.ECRRepository) tasks.TaskFunc {
 	return gui.NewSimpleRenderStringTask(func() string {
-		return formatECRConfig(repo)
+		return formatECRPolicies(repo)
 	})
 }
 
-func formatECRConfig(repo *aws.ECRRepository) string {
-	created := "-"
-	if repo.CreatedAt != nil {
-		created = repo.CreatedAt.Format(time.RFC3339)
-	}
-	out := utils.FormatMap(0, map[string]string{
-		"Name":           repo.Name,
-		"URI":            repo.URI,
-		"ARN":            repo.Arn,
-		"Registry ID":    repo.RegistryID,
-		"Created":        created,
-		"Tag Mutability": repo.TagMutability,
-		"Scan on push":   fmt.Sprintf("%v", repo.ScanOnPush),
-		"Encryption":     formatECREncryption(repo),
-	})
-
-	out += "\nRepository Policy:\n"
+func formatECRPolicies(repo *aws.ECRRepository) string {
+	out := "Repository Policy:\n"
 	switch {
 	case repo.PolicyErr != nil:
 		out += "unavailable: " + repo.PolicyErr.Error() + "\n"
@@ -146,16 +132,6 @@ func formatECRConfig(repo *aws.ECRRepository) string {
 	}
 
 	return out
-}
-
-func formatECREncryption(repo *aws.ECRRepository) string {
-	if repo.EncryptionType == "" {
-		return "-"
-	}
-	if repo.KMSKey != "" {
-		return fmt.Sprintf("%s (%s)", repo.EncryptionType, repo.KMSKey)
-	}
-	return repo.EncryptionType
 }
 
 func (gui *Gui) renderECRImages(repo *aws.ECRRepository) tasks.TaskFunc {

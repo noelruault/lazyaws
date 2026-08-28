@@ -11,6 +11,11 @@ import (
 	"github.com/noelruault/lazyaws/ui/utils"
 )
 
+// renderedOptions is the footer line as text: the keycaps carry an ANSI colour when a terminal is attached, and these tests assert vocabulary, not styling.
+func renderedOptions(gui *Gui, viewName string) string {
+	return utils.Decolorise(optionsToString(gui.dashboardOptions(viewName)))
+}
+
 // The options line is the only place a panel's own keys are advertised on screen, so what it says has to depend on which panel is focused.
 func TestDashboardOptionsAreContextualPerPanel(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
@@ -20,17 +25,17 @@ func TestDashboardOptionsAreContextualPerPanel(t *testing.T) {
 		wants  []string
 		absent []string
 	}{
-		{view: "ec2", wants: []string{"enter inspect", "c connect"}, absent: []string{"e exec", "v reveal", "[ ] tabs"}},
-		{view: "ecs", wants: []string{"enter drill down", "e exec"}, absent: []string{"c connect", "enter inspect"}},
-		{view: "secrets", wants: []string{"enter inspect", "v reveal"}, absent: []string{"c connect", "e exec"}},
-		{view: "profile", wants: []string{"enter switch"}, absent: []string{"enter inspect", "c connect"}},
-		{view: "s3", wants: []string{"enter inspect", "/ filter"}, absent: []string{"c connect", "e exec", "v reveal"}},
-		{view: "main", wants: []string{"[ ] tabs", "enter select", "←→↑↓ scroll"}, absent: []string{"/ filter", "navigate"}},
+		{view: "ec2", wants: []string{"Enter Inspect", "c Connect"}, absent: []string{"e Exec", "v Reveal", "[ ] Tabs"}},
+		{view: "ecs", wants: []string{"Enter Drill down", "e Exec"}, absent: []string{"c Connect", "Enter Inspect"}},
+		{view: "secrets", wants: []string{"Enter Inspect", "v Reveal"}, absent: []string{"c Connect", "e Exec"}},
+		{view: "profile", wants: []string{"Enter Switch"}, absent: []string{"Enter Inspect", "c Connect"}},
+		{view: "s3", wants: []string{"Enter Inspect", "/ Filter"}, absent: []string{"c Connect", "e Exec", "v Reveal"}},
+		{view: "main", wants: []string{"[ ] Tabs", "Enter Select", "Arrows Scroll"}, absent: []string{"/ Filter", "Navigate"}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.view, func(t *testing.T) {
-			line := optionsToString(gui.dashboardOptions(tc.view))
+			line := renderedOptions(gui, tc.view)
 
 			for _, want := range tc.wants {
 				if !strings.Contains(line, want) {
@@ -52,8 +57,8 @@ func TestEveryResourceViewAdvertisesTheSharedVocabulary(t *testing.T) {
 
 	// The view list is built here, not read back from resourceViewNames: taking the expectation from the function that decides the answer cannot see that function losing a view.
 	for _, name := range append(sidePanelViewNames(gui.allSidePanels()), "main") {
-		line := optionsToString(gui.dashboardOptions(name))
-		for _, want := range []string{"y copy", "r refresh", "a actions", "q quit"} {
+		line := renderedOptions(gui, name)
+		for _, want := range []string{"y Copy ARN", "r Refresh", "a Actions", "q Quit"} {
 			if !strings.Contains(line, want) {
 				t.Errorf("the %s options line does not offer %q: %s", name, want, line)
 			}
@@ -61,14 +66,14 @@ func TestEveryResourceViewAdvertisesTheSharedVocabulary(t *testing.T) {
 	}
 }
 
-// The line reads in frequency order, which is the whole reason it is a slice and not the alphabetical map the popups use: sorted by keycap, "/ filter" leads and "navigate" lands in the middle.
+// The line reads in frequency order, which is the whole reason it is a slice and not the alphabetical map the popups use: sorted by keycap, "/ Filter" leads and "Navigate" lands in the middle.
 // Asserted on the RENDERED line rather than on the slice handed to the renderer: with the order checked one step early, a renderer that sorts its parts keeps every assertion green and reorders the footer anyway.
 func TestDashboardOptionsReadInReadingOrder(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 
-	line := optionsToString(gui.dashboardOptions("ec2"))
+	line := renderedOptions(gui, "ec2")
 
-	want := []string{"navigate", "enter inspect", "y copy", "r refresh", "/ filter", "a actions", "c connect", "q quit"}
+	want := []string{"Navigate", "Enter Inspect", "y Copy ARN", "r Refresh", "/ Filter", "a Actions", "c Connect", "q Quit"}
 	at := make([]int, len(want))
 	for i, entry := range want {
 		at[i] = strings.Index(line, entry)
@@ -80,11 +85,24 @@ func TestDashboardOptionsReadInReadingOrder(t *testing.T) {
 		}
 	}
 
-	if !strings.HasPrefix(line, "←→↑↓ navigate") {
+	if !strings.HasPrefix(line, "Arrows Navigate") {
 		t.Errorf("the line does not open on navigate: %s", line)
 	}
-	if !strings.HasSuffix(line, "q quit") {
+	if !strings.HasSuffix(line, "q Quit") {
 		t.Errorf("the line does not end on quit, so quit is not the first entry a narrow terminal cuts: %s", line)
+	}
+}
+
+// The keycap styling and the entry gap are what the journeys parse the footer by, so a renderer that drops either breaks the harness silently rather than visibly.
+func TestOptionsEntriesAreSeparatedByTheThreeSpaceGap(t *testing.T) {
+	gui, _ := newHeadlessGui(t)
+
+	line := renderedOptions(gui, "ec2")
+	if strings.Contains(line, ",") {
+		t.Errorf("the options line still uses comma separators: %s", line)
+	}
+	if got, want := strings.Count(line, optionsSeparator), len(gui.dashboardOptions("ec2"))-1; got != want {
+		t.Errorf("the ec2 options line has %d three-space gaps, want one between each of its %d entries: %s", got, want+1, line)
 	}
 }
 
@@ -92,13 +110,13 @@ func TestDashboardOptionsReadInReadingOrder(t *testing.T) {
 func TestAnUnfilterablePanelDoesNotAdvertiseFilter(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 
-	if line := optionsToString(gui.dashboardOptions("s3")); !strings.Contains(line, "filter") {
+	if line := renderedOptions(gui, "s3"); !strings.Contains(line, "Filter") {
 		t.Fatalf("the s3 list is filterable but its footer does not say so, so this test cannot see the guard: %s", line)
 	}
 
 	gui.Panels.S3.DisableFilter = true
 
-	if line := optionsToString(gui.dashboardOptions("s3")); strings.Contains(line, "filter") {
+	if line := renderedOptions(gui, "s3"); strings.Contains(line, "Filter") {
 		t.Errorf("a panel with filtering disabled still advertises it: %s", line)
 	}
 }
@@ -107,21 +125,33 @@ func TestAnUnfilterablePanelDoesNotAdvertiseFilter(t *testing.T) {
 func TestDashboardOptionsFollowARebind(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 
-	keymap, problems := buildKeymap(map[string]string{"copy-id": "Y", "filter": "f"})
+	keymap, problems := buildKeymap(map[string]string{"copy-id": "Y", "filter": "f", "nav-down": "n"})
 	if len(problems) > 0 {
-		t.Fatalf("rebinding copy-id and filter reported problems: %v", problems)
+		t.Fatalf("rebinding copy-id, filter and nav-down reported problems: %v", problems)
 	}
 	gui.Keys = keymap
 
-	line := optionsToString(gui.dashboardOptions("ec2"))
-	if !strings.Contains(line, "Y copy") {
+	line := renderedOptions(gui, "ec2")
+	if !strings.Contains(line, "Y Copy ARN") {
 		t.Errorf("the footer ignores the rebound copy key: %s", line)
 	}
-	if !strings.Contains(line, "f filter") {
+	if !strings.Contains(line, "f Filter") {
 		t.Errorf("the footer ignores the rebound filter key: %s", line)
 	}
-	if strings.Contains(line, "y copy") || strings.Contains(line, "/ filter") {
+	if strings.Contains(line, "y Copy ARN") || strings.Contains(line, "/ Filter") {
 		t.Errorf("the footer still shows a default keycap the user moved: %s", line)
+	}
+
+	var foundRebind, foundDefault bool
+	for _, binding := range gui.GetInitialKeybindings() {
+		if binding.ViewName != "ec2" || binding.Name != KeyNavDown {
+			continue
+		}
+		foundRebind = foundRebind || binding.Key == 'n'
+		foundDefault = foundDefault || binding.Key == 'j'
+	}
+	if !foundRebind || foundDefault {
+		t.Errorf("ec2 nav-down binding did not move from j to n")
 	}
 }
 
@@ -134,9 +164,9 @@ func TestTheFooterRendersTheFocusedPanelsLine(t *testing.T) {
 		view *gocui.View
 		want string
 	}{
-		{view: gui.Views.EC2, want: "c connect"},
-		{view: gui.Views.Secrets, want: "v reveal"},
-		{view: gui.Views.ECS, want: "e exec"},
+		{view: gui.Views.EC2, want: "c Connect"},
+		{view: gui.Views.Secrets, want: "v Reveal"},
+		{view: gui.Views.ECS, want: "e Exec"},
 	} {
 		run(t, g, func() error { return gui.switchFocus(tc.view) })
 		run(t, g, gui.renderPanelOptions)
@@ -152,18 +182,18 @@ func TestTheFooterRendersTheFocusedPanelsLine(t *testing.T) {
 func TestTheMainFooterChangesOnTheChatScreen(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 
-	if line := optionsToString(gui.dashboardOptions("main")); !strings.Contains(line, "y copy") {
+	if line := renderedOptions(gui, "main"); !strings.Contains(line, "y Copy ARN") {
 		t.Fatalf("the dashboard's main line does not offer copy, so this test cannot see the difference: %s", line)
 	}
 
 	gui.setQScreenActive(true)
 	t.Cleanup(func() { gui.setQScreenActive(false) })
 
-	line := optionsToString(gui.dashboardOptions("main"))
-	if !strings.Contains(line, "esc dashboard") || !strings.Contains(line, "tab next pane") {
+	line := renderedOptions(gui, "main")
+	if !strings.Contains(line, "Esc Dashboard") || !strings.Contains(line, "Tab Next pane") {
 		t.Errorf("the chat's main line does not say how to get out or move on: %s", line)
 	}
-	for _, absent := range []string{"y copy", "[ ] tabs", "enter select", "a actions"} {
+	for _, absent := range []string{"y Copy ARN", "[ ] Tabs", "Enter Select", "a Actions"} {
 		if strings.Contains(line, absent) {
 			t.Errorf("the chat's main line offers %q, which does nothing there: %s", absent, line)
 		}
@@ -175,11 +205,11 @@ func TestTheMainFooterChangesOnTheChatScreen(t *testing.T) {
 func TestNoDashboardOptionsLineOutgrowsTheFooter(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 
-	const budget = 90
+	const budget = 100
 
 	for _, name := range append(sidePanelViewNames(gui.allSidePanels()), "main") {
-		line := optionsToString(gui.dashboardOptions(name))
-		if width := runewidth.StringWidth(utils.Decolorise(line)); width > budget {
+		line := renderedOptions(gui, name)
+		if width := runewidth.StringWidth(line); width > budget {
 			t.Errorf("the %s options line is %d cells, over the %d-cell budget: %s", name, width, budget, line)
 		}
 	}

@@ -8,51 +8,6 @@ import (
 	"github.com/noelruault/lazyaws/apps/aws"
 )
 
-func TestFormatVPCConfig(t *testing.T) {
-	out := formatVPCConfig(&aws.VPC{
-		ID:             "vpc-0123456789abcdef0",
-		Name:           "stage-vpc",
-		State:          "available",
-		CIDR:           "10.0.0.0/16",
-		Tenancy:        "default",
-		OwnerID:        "123456789012",
-		DHCPOptionsID:  "dopt-1",
-		DNSSupport:     true,
-		DNSHostnames:   false,
-		SecondaryCIDRs: []string{"10.2.0.0/16"},
-		IPv6CIDRs:      []string{"2600:1f18::/56"},
-		Tags:           []aws.Tag{{Key: "env", Value: "stage"}},
-	})
-
-	for _, want := range []string{
-		"stage-vpc",
-		"10.0.0.0/16",
-		"Secondary IPv4 CIDRs:",
-		"10.2.0.0/16",
-		"IPv6 CIDRs:",
-		"env=stage",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("config is missing %q:\n%s", want, out)
-		}
-	}
-
-	// The two DNS attributes are independent, and a VPC with resolution but no hostnames is a real and confusing configuration.
-	if !strings.Contains(out, "DNS resolution") || !strings.Contains(out, "DNS hostnames") {
-		t.Errorf("both DNS attributes must show:\n%s", out)
-	}
-}
-
-func TestFormatVPCConfigOmitsEmptyLists(t *testing.T) {
-	out := formatVPCConfig(&aws.VPC{ID: "vpc-1", CIDR: "10.0.0.0/16", State: "available"})
-
-	for _, unwanted := range []string{"Secondary IPv4 CIDRs:", "IPv6 CIDRs:", "Tags:"} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("empty section %q rendered anyway:\n%s", unwanted, out)
-		}
-	}
-}
-
 func TestFormatVPCSubnetsSeparatesReachFromAutoAssign(t *testing.T) {
 	out := formatVPCSubnets([]aws.Subnet{
 		{ID: "subnet-pub", CIDR: "10.0.1.0/24", AZ: "eu-west-1a", State: "available", Public: true, MapPublicIPOnLaunch: true, AvailableIPs: 250},

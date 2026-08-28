@@ -3,6 +3,7 @@ package presentation
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -233,17 +234,20 @@ func clusterFixture() (*aws.ECSCluster, *aws.ECSClusterOverview) {
 	point := func(v float64) aws.MetricPoint { return aws.MetricPoint{Value: v, At: at, OK: true} }
 
 	cluster := &aws.ECSCluster{
-		Name:                  "batch-cluster",
-		Arn:                   "arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
-		Status:                "ACTIVE",
-		RunningTasksCount:     12,
-		ActiveServicesCount:   3,
-		ContainerInsights:     "enabled",
-		ExecuteCommandLogging: "DEFAULT",
-		Region:                "eu-west-1",
+		Name:                     "batch-cluster",
+		Arn:                      "arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
+		Status:                   "ACTIVE",
+		RunningTasksCount:        12,
+		ActiveServicesCount:      3,
+		RegisteredContainerCount: 2,
+		ContainerInsights:        "enabled",
+		ExecuteCommandLogging:    "DEFAULT",
+		Region:                   "eu-west-1",
+		ConsoleURL:               "https://eu-west-1.console.aws.amazon.com/ecs/v2/clusters/batch-cluster",
 	}
 	overview := &aws.ECSClusterOverview{
 		Errs: map[string]error{},
+		Tags: map[string]string{"Environment": "staging"},
 		Services: []aws.ECSService{
 			{Name: "kicker-web", RunningCount: 3, DesiredCount: 3, LaunchType: "FARGATE",
 				Deployments: []aws.ECSDeployment{{Status: "PRIMARY", RolloutState: "COMPLETED"}}},
@@ -287,17 +291,24 @@ func TestClusterOverviewRendersEverySection(t *testing.T) {
 	for _, want := range []string{
 		"batch-cluster",
 		"eu-west-1",
-		"1/1 services steady",
-		"12 running / 0 pending",
+		// Every count lives in exactly one place after the dedup pass: the cards carry services, running and pending, and the Health block carries what no card does.
+		"1 / 1",
+		"12 running",
+		"Deployments:",
 		"arn:aws:ecs:eu-west-1:123456789012:cluster/batch-cluster",
 		"Container Insights: enabled",
 		"DEFAULT (task awslogs driver)",
 		"kicker-web",
-		"3/3 running",
+		// The service table spells its columns out; the row under them is asserted by the narrow-width test.
+		"Desired", "Running", "Pending",
 		"● steady",
 		"a1b2c3d4e5f6",
 		// The image is the hard requirement this pane exists for, with the registry host dropped and the sidecar counted rather than listed.
 		"kicker-web:v1.42.0 (+1 sidecar)",
+		// What the old Config and Tags tabs held and the Overview absorbed: the console URL, the tag list and the container-instance count.
+		"https://eu-west-1.console.aws.amazon.com/ecs/v2/clusters/batch-cluster",
+		"Environment: staging",
+		"Container instances: 2",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("overview does not contain %q\n%s", want, got)
@@ -456,7 +467,8 @@ func TestClusterOverviewShowsTheRolloutReasonOnItsOwnLine(t *testing.T) {
 	if !strings.Contains(got, "kicker-worker: "+reason) {
 		t.Errorf("a failed rollout must name the service and its reason\n%s", got)
 	}
-	if !strings.Contains(got, "0/1 services steady") {
+	// The steady count lives in the Services card now; a service that lost every task is not steady.
+	if !strings.Contains(got, "0 / 1") {
 		t.Errorf("a service that lost every task is not steady\n%s", got)
 	}
 
@@ -505,9 +517,9 @@ func TestClusterOverviewSectionsFailIndependently(t *testing.T) {
 	if !strings.Contains(got, "unavailable: AccessDenied: ecs:ListServices") {
 		t.Errorf("a failed services fetch must state its reason\n%s", got)
 	}
-	// The header cannot count steady services without the list, and falls back to the count the cluster itself reported.
-	if !strings.Contains(got, "3 services") || strings.Contains(got, "services steady") {
-		t.Errorf("with the service list unavailable the header must fall back to the cluster's own count\n%s", got)
+	// The Services card cannot count steady services without the list, and falls back to the count the cluster itself reported.
+	if card := clusterStatCards(cluster, overview)[0].Value.Text; card != "3" {
+		t.Errorf("with the service list unavailable the Services card reads %q, want the cluster's own count %q", card, "3")
 	}
 	if !strings.Contains(got, "none, services unavailable") {
 		t.Errorf("capacity cannot name launch types it could not read, and must say so rather than assuming Fargate\n%s", got)
@@ -576,7 +588,8 @@ func TestClusterOverviewTaskWithoutContainersSaysUnavailable(t *testing.T) {
 
 	got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, overviewTestWidth))
 
-	if !strings.Contains(got, "a1b2c3d4e5f6 unavailable") {
+	row := lineContaining(got, "a1b2c3d4e5f6")
+	if !strings.Contains(row, "unavailable") {
 		t.Errorf("a task with no readable containers must say so in the image column\n%s", got)
 	}
 }
@@ -592,17 +605,19 @@ func TestClusterOverviewNarrowServiceRowKeepsItsStabilityBadge(t *testing.T) {
 	}}
 
 	// Either side of minTwoColWidth, so both the stacked and the two-column layouts are covered.
+	// The counts read left to right as Desired, Running, Pending, so their order in the row is part of what is pinned.
+	countsThenBadge := regexp.MustCompile(`3\s+1\s+2\s+● deploying`)
 	for _, width := range []int{80, 110, 120, 160} {
 		got := utils.Decolorise(FormatECSClusterOverview(cluster, overview, width))
 
-		for _, want := range []string{"1/3 running", "2 pending", "● deploying"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("at width %d the service row lost %q to a long name\n%s", width, want, got)
-			}
-		}
+		row := lineContaining(got, "a-very-long")
 		// A prefix short enough to survive the narrowest column here: the point is that the name is still identifiable, not how many of its cells were paid for.
-		if !strings.Contains(got, "a-very-long") {
+		if row == "" {
 			t.Errorf("at width %d the service name was cut away entirely\n%s", width, got)
+			continue
+		}
+		if !countsThenBadge.MatchString(row) {
+			t.Errorf("at width %d the service row lost its counts or its badge to a long name: %q", width, row)
 		}
 	}
 }

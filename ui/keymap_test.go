@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/jesseduffield/gocui"
+
+	"github.com/noelruault/lazyaws/config"
 )
 
 var updateDocs = flag.Bool("update", false, "rewrite the generated keybindings table in README.md")
@@ -53,6 +55,7 @@ func TestBuildKeymapAppliesOverrides(t *testing.T) {
 		"actions":         "m",
 		"amazon-q":        "a",
 		"chat-pick-model": "ctrl+k",
+		"nav-down":        "n",
 	})
 	if len(problems) != 0 {
 		t.Fatalf("valid overrides reported problems: %v", problems)
@@ -66,6 +69,9 @@ func TestBuildKeymapAppliesOverrides(t *testing.T) {
 	}
 	if got := keymap.Get(KeyChatPickModel).Key; got != gocui.KeyCtrlK {
 		t.Errorf("chat-pick-model = %v, want ctrl+k", got)
+	}
+	if got := keymap.Get(KeyNavDown).Key; got != 'n' {
+		t.Errorf("nav-down = %v, want 'n'", got)
 	}
 
 	// Descriptions follow names so rebinding cannot stale help text.
@@ -139,6 +145,20 @@ func TestCheckKeyConflictsCatchesARebindLandingOnAnotherKey(t *testing.T) {
 	if problems := checkKeyConflicts(shadow); len(problems) > 0 {
 		t.Errorf("a menu key shadowing a global was reported as a conflict: %v", problems)
 	}
+}
+
+func TestNavigationRebindConflictingWithAnArrowReportsAtStartup(t *testing.T) {
+	user := config.DefaultUserConfig()
+	user.Keybindings = map[string]string{"nav-down": "arrow+down"}
+
+	gui, _ := newHeadlessGuiWithConfig(t, user)
+	for _, problem := range gui.startupProblems {
+		if strings.Contains(problem.Error(), "nav-down wants ▼") && strings.Contains(problem.Error(), "already how you navigate there") {
+			return
+		}
+	}
+
+	t.Fatalf("startup problems do not reject nav-down on the fixed down arrow: %v", gui.startupProblems)
 }
 
 // Every documented named key must reach a handler.

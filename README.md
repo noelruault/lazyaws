@@ -6,8 +6,8 @@ Drill from an ECS cluster to a service to live logs in a few keypresses. Switch 
 
 > Early development. Expect rough edges, missing services, and breaking changes.
 
-<!-- The checked-in GIF uses fabricated data so published media cannot disclose an AWS account; docs/demo.tape can replace it when run with a profile that is safe to show. -->
-<p align="center"><img src="docs/demo.gif" alt="lazyaws demo: ECS drill-down to live logs, the command bar, and the chat screen" width="900"></p>
+<!-- The checked-in GIF is recorded by test/ui/demo.mjs against the seeded moto harness, so published media cannot disclose an AWS account; regenerate it with `make ui-demo`. -->
+<p align="center"><img src="docs/demo.gif" alt="lazyaws demo: the eight resource panels, the EC2 and secret overviews, filtering with the pane following the selection, and the full-id copy popup" width="900"></p>
 
 ## Quickstart
 
@@ -55,55 +55,63 @@ Everyday AWS questions, which tasks are failing, what changed in this deployment
 | Key | Action |
 | --- | --- |
 | `1`-`8` | Jump to a panel (`1` Profiles, `2` ECS, `3` EC2, `4` S3, `5` EKS, `6` ECR, `7` Secrets, `8` VPC) |
-| `Tab`/`Shift+Tab`, `←`/`→`, `h`/`l` | Move focus between the side panels |
-| `[` / `]` | Previous / next detail tab in the main panel |
-| `↑`/`↓`, `j`/`k` | Move the cursor in the focused list |
+| `Tab`/`Shift+Tab`, `←`/`→` | Move focus between the side panels; arrows scroll the main panel horizontally |
+| `↑`/`↓` | Move the cursor in the focused view |
 | `Enter` | Focus the main panel; ECS drills into the selected cluster/service; Profiles switches to the selected profile |
 | `Esc` | Return from the main panel, or go up one ECS drill level. Never quits |
-| `PgUp`/`PgDn`, `Ctrl+U`/`Ctrl+D` | Scroll the main panel vertically |
 | `Home`/`End` | Jump to the top / follow the bottom of the main panel |
 | Mouse | Click to focus, click a detail-tab header to switch tabs, wheel to scroll |
 | `Ctrl+C` | Quit |
 
-### Commands
+### Rebindable keys
 
-Generated from `DefaultKeys` in `ui/keymap.go`, which is where these live: change one there and the binding, the options bar, the help menu and this table all follow. `make keys` regenerates the table, and `make test` fails when it is stale.
+Generated from `DefaultKeys` in `ui/keymap.go`: each config name, default chord, binding, options label, help-menu entry and documentation row comes from that table. `make keys` regenerates this table, and `make test` fails when it is stale.
 
 <!-- BEGIN GENERATED KEYS -->
-| Key | Action |
-| --- | --- |
-| `:` | Go to a resource by name, or run a command |
-| `a` | Open the actions menu for the focused item (every panel, and the main panel) |
-| `/` | Filter the focused list |
-| `y` | Show the selected item's full id / ARN, untruncated, to copy by hand (every panel, and the main panel) |
-| `r` | Refresh the focused panel |
-| `R` | Refresh everything |
-| `[` | Previous detail tab |
-| `]` | Next detail tab |
-| `+` | Next screen-size mode (normal / half / full main) |
-| `_` | Previous screen-size mode |
-| `x` | Show the keybindings for the current view |
-| `?` | Show the keybindings for the current view |
-| `o` | Open the Settings screen |
-| `A` | Switch to the chat screen, when enabled |
-| `q` | Quit |
-| `ctrl+l` | Repaint every cell, if the terminal was scrolled and the display is torn |
-| `e` | Exec into the selected task's container (ECS) |
-| `c` | Connect to the instance over SSM (EC2) |
-| `v` | Reveal / mask the secret value (Secrets) |
-| `d` | Toggle showing deleted secrets (Secrets) |
-| `e` | Open the config file in $EDITOR (Settings) |
-| `ctrl+p` | Choose the model (chat) |
-| `ctrl+n` | Start a fresh conversation (chat) |
-| `ctrl+f` | Fold / unfold every code block (chat) |
+| Name | Default | Action |
+| --- | --- | --- |
+| `nav-up` | `k` | Move up in the focused view |
+| `nav-down` | `j` | Move down in the focused view |
+| `nav-left` | `h` | Move left in the focused view |
+| `nav-right` | `l` | Move right in the focused view |
+| `scroll-main-up` | `ctrl+u` | Scroll the main panel up |
+| `scroll-main-down` | `ctrl+d` | Scroll the main panel down |
+| `scroll-main-page-up` | `PgUp` | Scroll the main panel up |
+| `scroll-main-page-down` | `PgDn` | Scroll the main panel down |
+| `command-bar` | `:` | Go to a resource by name, or run a command |
+| `actions` | `a` | Open the actions menu for the focused item (every panel, and the main panel) |
+| `filter` | `/` | Filter the focused list |
+| `copy-id` | `y` | Show the selected item's full id / ARN, untruncated, to copy by hand (every panel, and the main panel) |
+| `refresh-panel` | `r` | Refresh the focused panel |
+| `refresh-all` | `R` | Refresh everything |
+| `prev-tab` | `[` | Previous detail tab |
+| `next-tab` | `]` | Next detail tab |
+| `screen-mode-next` | `+` | Next screen-size mode (normal / half / full main) |
+| `screen-mode-prev` | `_` | Previous screen-size mode |
+| `options-menu` | `x` | Show the keybindings for the current view |
+| `help` | `?` | Show the keybindings for the current view |
+| `settings` | `o` | Open the Settings screen |
+| `amazon-q` | `A` | Switch to the chat screen, when enabled |
+| `quit` | `q` | Quit |
+| `redraw` | `ctrl+l` | Repaint every cell, if the terminal was scrolled and the display is torn |
+| `ecs-exec` | `e` | Exec into the selected task's container (ECS) |
+| `ec2-connect` | `c` | Connect to the instance over SSM (EC2) |
+| `secrets-reveal` | `v` | Reveal / mask the secret value (Secrets) |
+| `secrets-toggle-deleted` | `d` | Toggle showing deleted secrets (Secrets) |
+| `settings-edit-file` | `e` | Open the config file in $EDITOR (Settings) |
+| `chat-pick-model` | `ctrl+p` | Choose the model (chat) |
+| `chat-new-conversation` | `ctrl+n` | Start a fresh conversation (chat) |
+| `chat-toggle-folds` | `ctrl+f` | Fold / unfold every code block (chat) |
 <!-- END GENERATED KEYS -->
 
-Any of them can be rebound from `config.yml` without a rebuild, by the name in the left column of `ui/keymap.go`:
+Any named chord can be rebound from `config.yml` without a rebuild:
 
 ```yaml
 keybindings:
   actions: m
   amazon-q: a
+  nav-down: n
+  nav-up: p
 ```
 
 ### The command bar

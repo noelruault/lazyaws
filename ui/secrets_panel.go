@@ -45,9 +45,10 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 		ContextState: &panels.ContextState[*aws.SecretSummary]{
 			GetMainTabs: func() []panels.MainTab[*aws.SecretSummary] {
 				return []panels.MainTab[*aws.SecretSummary]{
-					overviewTab(gui, gui.secretOverview),
-					{Key: "config", Title: "Config", Render: gui.renderSecretsConfig},
+					overviewTab(gui, func(s *aws.SecretSummary) string { return "secret-" + s.Name }, gui.secretOverview),
 					{Key: "value", Title: "Value", Render: gui.renderSecretValue},
+					{Key: "versions", Title: "Versions", Render: gui.renderSecretVersions},
+					{Key: "policy", Title: "Policy", Render: gui.renderSecretPolicy},
 				}
 			},
 			GetItemContextCacheKey: func(s *aws.SecretSummary) string {
@@ -143,7 +144,8 @@ func secretOverviewErrs(details *aws.SecretDetails, err error) []error {
 }
 
 // renderSecretsConfig avoids GetSecretValue so browsing emits no value-read CloudTrail event.
-func (gui *Gui) renderSecretsConfig(secret *aws.SecretSummary) tasks.TaskFunc {
+// renderSecretVersions shows the rotation history whole; the Overview caps it at a glance's worth.
+func (gui *Gui) renderSecretVersions(secret *aws.SecretSummary) tasks.TaskFunc {
 	name := secret.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
 		gen := gui.Gen
@@ -158,96 +160,28 @@ func (gui *Gui) renderSecretsConfig(secret *aws.SecretSummary) tasks.TaskFunc {
 			gui.RenderStringMain("error loading secret: " + err.Error())
 			return
 		}
-		gui.RenderStringMain(formatSecretsConfig(details))
+		gui.RenderStringMain(presentation.FormatSecretVersions(details, gui.Views.Main.InnerWidth(), time.Now()))
 	}})
 }
 
-func formatSecretsConfig(d *aws.SecretDetails) string {
-	consoleURL := ""
-	if d.PrimaryRegion != "" {
-		consoleURL = fmt.Sprintf("https://%s.console.aws.amazon.com/secretsmanager/secret?name=%s&region=%s", d.PrimaryRegion, d.Name, d.PrimaryRegion)
-	}
+// renderSecretPolicy shows the resource policy whole, which is the one thing the Overview only reports the presence of.
+func (gui *Gui) renderSecretPolicy(secret *aws.SecretSummary) tasks.TaskFunc {
+	name := secret.Name
+	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
+		gen := gui.Gen
+		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
 
-	fields := map[string]string{
-		"Name":         d.Name,
-		"ARN":          d.Arn,
-		"Description":  orDash(d.Description),
-		"Created":      formatSecretsTime(d.CreatedAt),
-		"Last changed": formatSecretsTime(d.LastChanged),
-		"KMS key":      orDash(d.KMSKeyID),
-		"Rotation":     formatSecretRotation(d),
-		"Last rotated": formatSecretsTime(d.LastRotated),
-		"Console":      consoleURL,
-	}
-	if d.DeletedDate != nil {
-		fields["Status"] = "pending deletion (deletes " + d.DeletedDate.Format(time.RFC3339) + ")"
-	}
-
-	out := utils.FormatMap(0, fields)
-
-	out += "\nVersions:\n"
-	if len(d.Versions) == 0 {
-		out += "none\n"
-	} else {
-		for _, v := range d.Versions {
-			id := "-"
-			if v.VersionId != nil {
-				id = *v.VersionId
-			}
-			out += fmt.Sprintf("  %s  [%s]  %s\n", id, strings.Join(v.VersionStages, ","), formatSecretsTime(v.CreatedDate))
+		details, err := gui.Client.GetSecretDetails(fetchCtx, name)
+		if gen != gui.Gen {
+			return
 		}
-	}
-
-	out += "\nReplication:\n"
-	if len(d.Replication) == 0 {
-		out += "not replicated\n"
-	} else {
-		for _, r := range d.Replication {
-			region := "-"
-			if r.Region != nil {
-				region = *r.Region
-			}
-			out += fmt.Sprintf("  %s: %s\n", region, r.Status)
+		if err != nil {
+			gui.RenderStringMain("error loading secret: " + err.Error())
+			return
 		}
-	}
-
-	out += "\nTags:\n"
-	if len(d.Tags) == 0 {
-		out += "none\n"
-	} else {
-		for _, t := range d.Tags {
-			k, v := "-", "-"
-			if t.Key != nil {
-				k = *t.Key
-			}
-			if t.Value != nil {
-				v = *t.Value
-			}
-			out += fmt.Sprintf("  %s=%s\n", k, v)
-		}
-	}
-
-	out += "\nResource Policy:\n"
-	switch {
-	case d.ResourcePolicyErr != nil:
-		out += "unavailable: " + d.ResourcePolicyErr.Error() + "\n"
-	case d.ResourcePolicy == "":
-		out += "not configured\n"
-	default:
-		out += d.ResourcePolicy + "\n"
-	}
-
-	return out
-}
-
-func formatSecretRotation(d *aws.SecretDetails) string {
-	if !d.RotationEnabled {
-		return "disabled"
-	}
-	if d.Rotation != nil && d.Rotation.AutomaticallyAfterDays != nil {
-		return fmt.Sprintf("enabled, every %d day(s)", *d.Rotation.AutomaticallyAfterDays)
-	}
-	return "enabled"
+		gui.RenderStringMain(formatSecretPolicy(details))
+	}})
 }
 
 func formatSecretsTime(t *time.Time) string {
@@ -255,6 +189,17 @@ func formatSecretsTime(t *time.Time) string {
 		return "-"
 	}
 	return t.Format(time.RFC3339)
+}
+
+func formatSecretPolicy(d *aws.SecretDetails) string {
+	switch {
+	case d.ResourcePolicyErr != nil:
+		return "unavailable: " + d.ResourcePolicyErr.Error() + "\n"
+	case d.ResourcePolicy == "":
+		return "not configured\n"
+	default:
+		return d.ResourcePolicy + "\n"
+	}
 }
 
 func orDash(s string) string {
