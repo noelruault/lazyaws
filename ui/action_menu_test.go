@@ -254,11 +254,11 @@ func TestActionsKeyAsksTheRegistry(t *testing.T) {
 	}
 }
 
+// An empty list has no selection, so there is nothing an action could act on and the key must stay silent rather than open a box with no rows.
 func TestActionsKeyDoesNothingWhereThereIsNothingToDo(t *testing.T) {
 	gui, g := newHeadlessGui(t)
 
-	gui.CurrentProfile = "default"
-	gui.Panels.Profile.SetItems([]string{"default"})
+	gui.Panels.Profile.SetItems(nil)
 	run(t, g, func() error {
 		_, err := g.SetCurrentView("profile")
 		return err
@@ -268,6 +268,33 @@ func TestActionsKeyDoesNothingWhereThereIsNothingToDo(t *testing.T) {
 
 	if ask(g, func() bool { return gui.Views.Menu.Visible }) {
 		t.Error("the actions key opened an empty menu")
+	}
+}
+
+// A connected profile that cannot reach AWS is the one case where the connected profile has an action: the login that gets it working again.
+// Without it the Credentials tab tells the user to press a and the menu opens on nothing.
+func TestTheConnectedProfileOffersLoginWhileItsCredentialsAreBroken(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+
+	gui.CurrentProfile = "prod"
+	gui.Panels.Profile.SetItems([]string{"prod"})
+
+	var labels []string
+	for _, action := range gui.ProfileActions() {
+		labels = append(labels, action.Name)
+	}
+	if !hasLabelContaining(labels, "aws sso login --profile prod") {
+		t.Errorf("profile actions = %v, want the login command among them", labels)
+	}
+
+	run(t, g, func() error {
+		_, err := g.SetCurrentView("profile")
+		return err
+	})
+	run(t, g, gui.handleActionsMenu)
+
+	if !ask(g, func() bool { return gui.Views.Menu.Visible }) {
+		t.Error("the actions key opened nothing on a profile that cannot reach AWS")
 	}
 }
 

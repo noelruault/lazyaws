@@ -1,15 +1,17 @@
-// Portions adapted from lazydocker's project panel (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/apps/aws"
@@ -69,6 +71,21 @@ func (gui *Gui) refreshProfile() error {
 
 // profileSelectionKey identifies a profile row across reloads; the row IS its name.
 func profileSelectionKey(profile string) string { return profile }
+
+// snapProfileToConnected puts the cursor back on the connected profile when focus leaves the panel for another dashboard view.
+// Unfocused, the panel collapses to a single row that every other view reads as "the profile these resources come from", so a cursor left on a profile the user only scrolled past would name the wrong account.
+// A popup, the filter prompt and the chat screen are not dashboard views: they still act on the row the user is pointing at, so they leave the cursor alone.
+func (gui *Gui) snapProfileToConnected(newViewName string) {
+	if gui.CurrentProfile == "" || gui.Panels.Profile == nil {
+		return
+	}
+
+	if !slices.Contains(resourceViewNames(gui.allSidePanels()), newViewName) {
+		return
+	}
+
+	gui.Panels.Profile.SelectByItem(gui.CurrentProfile)
+}
 
 func (gui *Gui) handleProfileSwitch(g *gocui.Gui, v *gocui.View) error {
 	profile, err := gui.Panels.Profile.GetSelectedItem()
@@ -144,10 +161,44 @@ func (gui *Gui) resetDependentPanelState() {
 	gui.mainCursorState = mainCursorState{}
 }
 
+// profileAuthProblem is why the connected profile cannot reach AWS, or nil when it can.
+// A missing client counts: preflight starts the app anyway when there are other profiles to switch to, and that path leaves nothing to ask for an account id.
+func (gui *Gui) profileAuthProblem() error {
+	if gui.Client == nil {
+		return errors.New("no AWS credentials found")
+	}
+
+	return gui.authProblem
+}
+
+// signInMessage is what the Credentials tab shows instead of an account id that is only ever "none" until someone logs in.
+// The startup banner says the same thing, but the first render of this tab paints over it, so without this the app's answer to an expired session is a blank field and no way out.
+func signInMessage(profile string, cause error) string {
+	var out strings.Builder
+
+	out.WriteString(utils.ColoredString("Not signed in.", color.FgYellow) + "\n\n")
+	if reason, _ := loginProblem(strings.TrimSpace(cause.Error())); reason != "" {
+		out.WriteString("  reason:  " + reason + "\n\n")
+	}
+	out.WriteString("  " + loginCommand(profile) + "\n")
+	// The session form is a placeholder rather than a lookup: a profile reaches its credentials through sso_session, a legacy sso_start_url or static keys, and a session name read out of one of those shapes would be wrong for the others.
+	// It is worth printing anyway, because one session login covers every profile that shares it, and a config full of profiles usually has exactly one.
+	out.WriteString("  aws sso login --sso-session <session-name>   (covers every profile sharing it)\n\n")
+	out.WriteString("Press a to run the first one from here, or run either in another terminal and press r.\n")
+
+	return out.String()
+}
+
 func (gui *Gui) renderProfileCredentials(profile string) tasks.TaskFunc {
 	return gui.NewSimpleRenderStringTask(func() string {
+		if profile == gui.CurrentProfile {
+			if problem := gui.profileAuthProblem(); problem != nil {
+				return signInMessage(profile, problem)
+			}
+		}
+
 		if profile != gui.CurrentProfile || gui.Client == nil {
-			return "not connected — press enter to switch to this profile"
+			return "not connected. Press enter to switch to this profile"
 		}
 
 		lines := []string{
