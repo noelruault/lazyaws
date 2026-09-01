@@ -82,3 +82,7 @@ vendor/
 .VolumeIcon.icns
 lazyawschic
 .playwright-mcp/
+
+# Machine-local git hooks and their configuration. Kept out of the repo deliberately, not by accident.
+.githooks/pre-commit
+.githooks/local-*
