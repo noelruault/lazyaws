@@ -1,4 +1,3 @@
-// confirmation_panel.go — the lazyaws port of lazydocker's pkg/gui/confirmation_panel.go (MIT, © 2018 Jesse Duffield; parts derive from the gocui examples, © 2014 The gocui Authors, BSD-style license).
 package ui
 
 import (

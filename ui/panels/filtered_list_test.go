@@ -1,4 +1,3 @@
-// Adapted from lazydocker's filtered-list tests (MIT, © 2018 Jesse Duffield).
 package panels
 
 import (

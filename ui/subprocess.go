@@ -1,4 +1,3 @@
-// Portions adapted from lazydocker's subprocess helper (MIT, © 2018 Jesse Duffield).
 // Suspending gocui and pausing refreshes are one invariant so child processes own the tty exclusively.
 package ui
 

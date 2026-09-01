@@ -1,4 +1,4 @@
-// Package types holds shared UI types. Ported from lazydocker's pkg/gui/types (MIT, © 2018 Jesse Duffield).
+// Package types holds shared UI types.
 package types
 
 type MenuItem struct {

@@ -1,4 +1,3 @@
-// Portions adapted from lazydocker's pkg/gui/view_helpers.go (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (

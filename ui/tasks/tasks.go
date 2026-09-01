@@ -1,5 +1,4 @@
 // Package tasks serializes cancellable main-panel work so navigation can stop stale AWS fetches.
-// Portions adapted from lazydocker's task manager (MIT, © 2018 Jesse Duffield).
 package tasks
 
 import (

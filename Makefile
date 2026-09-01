@@ -49,10 +49,13 @@ vuln: ## Fail on known vulnerabilities reachable from this code
 license-check: ## Verify required project and third-party license notices
 	@test -s LICENSE
 	@test -s ACKNOWLEDGMENTS.md
+	@test -s LICENSES/lazydocker-MIT.txt
 	@test -s LICENSES/fzf-MIT.txt
 	@test -s LICENSES/gocui-BSD-3-Clause.txt
+	@grep -q '2018 Jesse Duffield' LICENSES/lazydocker-MIT.txt
 	@grep -q '2013-2026 Junegunn Choi' LICENSES/fzf-MIT.txt
 	@grep -q '2014 The gocui Authors' LICENSES/gocui-BSD-3-Clause.txt
+	@grep -q 'LICENSES/lazydocker-MIT.txt' ACKNOWLEDGMENTS.md
 	@grep -q 'LICENSES/fzf-MIT.txt' ACKNOWLEDGMENTS.md
 	@grep -q 'LICENSES/gocui-BSD-3-Clause.txt' ACKNOWLEDGMENTS.md
 	@grep -q 'ACKNOWLEDGMENTS.md' README.md

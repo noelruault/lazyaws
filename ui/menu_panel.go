@@ -1,4 +1,3 @@
-// menu_panel.go — the lazyaws port of lazydocker's pkg/gui/menu_panel.go (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (

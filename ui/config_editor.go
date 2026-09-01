@@ -1,4 +1,3 @@
-// Adapted from lazydocker's edit-config flow (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (

@@ -1,4 +1,4 @@
-// Package presentation contains pure display helpers adapted from lazydocker (MIT, © 2018 Jesse Duffield).
+// Package presentation contains the pure display helpers the panels render rows and overviews with.
 package presentation
 
 import (

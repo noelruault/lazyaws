@@ -1,4 +1,4 @@
-// Package utils contains display helpers adapted from lazydocker (MIT, © 2018 Jesse Duffield).
+// Package utils contains the string, colour and table helpers the views render with.
 package utils
 
 import (

@@ -1,4 +1,3 @@
-// Portions adapted from lazydocker's theme and gocui helpers (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (

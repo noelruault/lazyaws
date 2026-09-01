@@ -1,7 +1,5 @@
 package panels
 
-// Ported from lazydocker's pkg/gui/panels/side_list_panel.go (MIT, © 2018 Jesse Duffield), adapted for lazyaws: go-errors -> stdlib errors, lazydocker/pkg/tasks -> ui/tasks, lazydocker/pkg/utils -> ui/utils.
-
 import (
 	"context"
 	"errors"

@@ -1,4 +1,3 @@
-// Adapted from lazydocker's filtering flow (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (

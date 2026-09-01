@@ -1,4 +1,3 @@
-// Portions adapt fzf's FuzzyMatchV1 scoring (MIT, © 2013-2026 Junegunn Choi); see ACKNOWLEDGMENTS.md.
 // Package fuzzy ranks short resource names by boundaries and consecutive runs rather than incidental matches.
 package fuzzy
 

@@ -1,4 +1,3 @@
-// focus.go — the lazyaws port of lazydocker's pkg/gui/focus.go (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (

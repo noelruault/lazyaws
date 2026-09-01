@@ -1,7 +1,5 @@
 package panels
 
-// Ported from lazydocker's pkg/gui/panels/context_state.go (MIT, © 2018 Jesse Duffield), adapted for lazyaws: lazydocker/pkg/tasks -> ui/tasks.
-
 import (
 	"github.com/noelruault/lazyaws/ui/tasks"
 )

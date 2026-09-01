@@ -1,4 +1,3 @@
-// Portions adapted from lazydocker's task adapter (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (
