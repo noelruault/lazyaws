@@ -17,6 +17,10 @@ type UserConfig struct {
 	// ReadOnly hides mutating actions and blocks shells and tool-enabled chat backends.
 	ReadOnly bool `yaml:"readOnly"`
 
+	// KeybindingPreset picks a whole navigation layout by name; the ui package owns the list and what each one moves.
+	// It is applied before Keybindings, so a single key set by hand still wins over the preset that moved it.
+	KeybindingPreset string `yaml:"keybindingPreset"`
+
 	Keybindings map[string]string `yaml:"keybindings"`
 }
 
@@ -122,6 +126,9 @@ func DefaultUserConfig() UserConfig {
 			Model:    DefaultChatModel,
 		},
 		ReadOnly: false,
+		// The name rather than an empty string, so a written config says which layout it is on instead of leaving the reader to guess.
+		// Spelled out here rather than taken from ui.ShippedPreset because ui imports config, not the other way round; a test asserts the two agree, and ui resolves an empty value to the same one.
+		KeybindingPreset: "international",
 	}
 }
 

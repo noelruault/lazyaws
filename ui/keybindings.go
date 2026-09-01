@@ -1,4 +1,3 @@
-// Portions adapted from lazydocker's pkg/gui/keybindings.go (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (
@@ -45,6 +44,13 @@ func (b *Binding) GetKey() string {
 			return "PgUp"
 		case gocui.KeyPgdn:
 			return "PgDn"
+		// A key with no label here is dropped from the menu by getBindings, so anything bound has to be nameable.
+		case gocui.KeyBacktab:
+			return "shift+tab"
+		case gocui.KeyHome:
+			return "Home"
+		case gocui.KeyEnd:
+			return "End"
 		}
 
 		if key >= gocui.KeyCtrlA && key <= gocui.KeyCtrlZ {
@@ -109,17 +115,26 @@ func (gui *Gui) key(viewName string, name KeyName, handler func(*gocui.Gui, *goc
 	}
 }
 
+// describedKey is key() for a chord whose job depends on the view it is bound in.
+// The keymap's own description has to stay general enough to cover every one of them, so the menu takes this instead: it is read by someone looking at one view, and "go to the main panel" is what the key does there.
+func (gui *Gui) describedKey(viewName string, name KeyName, handler func(*gocui.Gui, *gocui.View) error, description string) *Binding {
+	binding := gui.key(viewName, name, handler)
+	binding.Description = description
+
+	return binding
+}
+
 func (gui *Gui) GetInitialKeybindings() []*Binding {
 	bindings := []*Binding{
-		{ViewName: "", Key: gocui.KeyEsc, Handler: wrappedHandler(gui.escape)},
+		{ViewName: "", Key: gocui.KeyEsc, Handler: wrappedHandler(gui.escape), Description: "Close what is open, or step back one level"},
 		gui.key("", KeyQuit, gui.quit),
-		{ViewName: "", Key: gocui.KeyCtrlC, Handler: gui.quit},
+		{ViewName: "", Key: gocui.KeyCtrlC, Handler: gui.quit, Description: "Quit"},
 		gui.key("", KeyScrollMainPageUp, wrappedHandler(gui.scrollUpMain)),
 		gui.key("", KeyScrollMainPageDown, wrappedHandler(gui.scrollDownMain)),
 		gui.key("", KeyScrollMainUp, wrappedHandler(gui.scrollUpMain)),
 		gui.key("", KeyScrollMainDown, wrappedHandler(gui.scrollDownMain)),
-		{ViewName: "", Key: gocui.KeyEnd, Handler: gui.autoScrollMain},
-		{ViewName: "", Key: gocui.KeyHome, Handler: gui.jumpToTopMain},
+		{ViewName: "", Key: gocui.KeyEnd, Handler: gui.autoScrollMain, Description: "Follow the bottom of the main panel"},
+		{ViewName: "", Key: gocui.KeyHome, Handler: gui.jumpToTopMain, Description: "Jump to the top of the main panel"},
 		gui.key("", KeyOptionsMenu, gui.handleCreateOptionsMenu),
 		gui.key("", KeyHelp, gui.handleCreateOptionsMenu),
 		gui.key("", KeyRefreshAll, wrappedHandler(gui.handleRefreshAll)),
@@ -130,12 +145,13 @@ func (gui *Gui) GetInitialKeybindings() []*Binding {
 		gui.key("", KeySettings, wrappedHandler(gui.handleToggleSettings)),
 		gui.key("", KeyAmazonQ, wrappedHandler(gui.handleToggleQ)),
 
-		{ViewName: "main", Key: gocui.KeyEsc, Handler: gui.handleQMainEscape, Description: "return"},
-		{ViewName: "main", Key: gocui.KeyTab, Handler: wrappedHandler(gui.handleQFocusNext), Description: "next pane"},
-		{ViewName: "main", Key: gocui.KeyArrowLeft, Handler: gui.scrollLeftMain},
-		{ViewName: "main", Key: gocui.KeyArrowRight, Handler: gui.scrollRightMain},
+		{ViewName: "main", Key: gocui.KeyEsc, Handler: gui.handleQMainEscape, Description: "back to the panel column"},
+		{ViewName: "main", Key: gocui.KeyTab, Handler: wrappedHandler(gui.handleMainTabNext), Description: "next detail tab"},
+		{ViewName: "main", Key: gocui.KeyBacktab, Handler: wrappedHandler(gui.handleMainTabPrev), Description: "previous detail tab"},
+		{ViewName: "main", Key: gocui.KeyArrowLeft, Handler: gui.scrollLeftMain, Description: "scroll left"},
+		{ViewName: "main", Key: gocui.KeyArrowRight, Handler: gui.scrollRightMain, Description: "scroll right"},
 		gui.key("main", KeyNavLeft, gui.scrollLeftMain),
-		gui.key("main", KeyNavRight, gui.scrollRightMain),
+		gui.describedKey("main", KeyNavRight, gui.scrollRightMain, "scroll right"),
 		gui.key("main", KeyPrevTab, wrappedHandler(gui.handleMainPrevTab)),
 		gui.key("main", KeyNextTab, wrappedHandler(gui.handleMainNextTab)),
 		{ViewName: "main", Key: gocui.KeyEnter, Handler: wrappedHandler(gui.handleMainEnter), Description: "select"},
@@ -191,25 +207,27 @@ func (gui *Gui) GetInitialKeybindings() []*Binding {
 		&Binding{Key: '8', Handler: gui.handleGoTo(gui.Views.VPC), Description: "focus vpc panel"},
 	)
 
+	// Left and right walk the panel column, the same as Tab and Shift+Tab: eight lists stacked in one column are what the four keys are for, and Enter is the one that leaves it for the pane beside them.
 	for _, panel := range gui.allSidePanels() {
 		name := panel.GetView().Name()
 		bindings = append(bindings,
-			&Binding{ViewName: name, Key: gocui.KeyArrowLeft, Handler: gui.previousView},
-			&Binding{ViewName: name, Key: gocui.KeyArrowRight, Handler: gui.nextView},
-			gui.key(name, KeyNavLeft, gui.previousView),
-			gui.key(name, KeyNavRight, gui.nextView),
-			&Binding{ViewName: name, Key: gocui.KeyTab, Handler: gui.nextView},
-			&Binding{ViewName: name, Key: gocui.KeyBacktab, Handler: gui.previousView},
+			&Binding{ViewName: name, Key: gocui.KeyArrowLeft, Handler: gui.previousView, Description: "previous panel"},
+			&Binding{ViewName: name, Key: gocui.KeyArrowRight, Handler: gui.nextView, Description: "next panel"},
+			gui.describedKey(name, KeyNavLeft, gui.previousView, "previous panel"),
+			gui.describedKey(name, KeyNavRight, gui.nextView, "next panel"),
+			&Binding{ViewName: name, Key: gocui.KeyTab, Handler: gui.nextView, Description: "next panel"},
+			&Binding{ViewName: name, Key: gocui.KeyBacktab, Handler: gui.previousView, Description: "previous panel"},
 		)
 	}
 
+	// The arrows carry the same description as their vim key, so the menu lists the pair on one row rather than saying the same thing twice.
 	setUpDownClickBindings := func(viewName string, onUp, onDown, onClick func() error) {
 		bindings = append(bindings,
 			gui.key(viewName, KeyNavUp, wrappedHandler(onUp)),
-			&Binding{ViewName: viewName, Key: gocui.KeyArrowUp, Handler: wrappedHandler(onUp)},
+			&Binding{ViewName: viewName, Key: gocui.KeyArrowUp, Handler: wrappedHandler(onUp), Description: gui.Keys.Get(KeyNavUp).Description},
 			&Binding{ViewName: viewName, Key: gocui.MouseWheelUp, Handler: wrappedHandler(onUp)},
 			gui.key(viewName, KeyNavDown, wrappedHandler(onDown)),
-			&Binding{ViewName: viewName, Key: gocui.KeyArrowDown, Handler: wrappedHandler(onDown)},
+			&Binding{ViewName: viewName, Key: gocui.KeyArrowDown, Handler: wrappedHandler(onDown), Description: gui.Keys.Get(KeyNavDown).Description},
 			&Binding{ViewName: viewName, Key: gocui.MouseWheelDown, Handler: wrappedHandler(onDown)},
 			&Binding{ViewName: viewName, Key: gocui.MouseLeft, Handler: wrappedHandler(onClick)},
 		)
@@ -236,7 +254,8 @@ func (gui *Gui) GetInitialKeybindings() []*Binding {
 	for _, panel := range gui.allSidePanels() {
 		name := panel.GetView().Name()
 		bindings = append(bindings,
-			&Binding{ViewName: name, Key: gocui.KeyEnter, Handler: gui.handleEnterMain, Description: "focus main panel"},
+			// The same words as the right arrow's, so the menu shows one row for the one thing they both do.
+			&Binding{ViewName: name, Key: gocui.KeyEnter, Handler: gui.handleEnterMain, Description: "go to the main panel"},
 			gui.key(name, KeyPrevTab, wrappedHandler(panel.HandlePrevMainTab)),
 			gui.key(name, KeyNextTab, wrappedHandler(panel.HandleNextMainTab)),
 		)

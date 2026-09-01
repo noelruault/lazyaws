@@ -5,27 +5,26 @@ import (
 )
 
 // Detail-tab bindings must remain active after focus enters the main view.
+// The keys are read from the keymap rather than written out here, so a preset or a rebind that moves them cannot fail a test that is really about the main view keeping them.
 func TestMainViewHasTabKeybindings(t *testing.T) {
 	gui := newTestGui(t)
 
-	var hasPrev, hasNext bool
+	bound := map[KeyName]bool{}
 	for _, b := range gui.GetInitialKeybindings() {
 		if b.ViewName != "main" {
 			continue
 		}
-		switch b.Key {
-		case '[':
-			hasPrev = true
-		case ']':
-			hasNext = true
+		for _, name := range []KeyName{KeyPrevTab, KeyNextTab} {
+			if b.Key == gui.Keys.Get(name).Key {
+				bound[name] = true
+			}
 		}
 	}
 
-	if !hasPrev {
-		t.Error(`'[' (previous tab) is not bound on the "main" view`)
-	}
-	if !hasNext {
-		t.Error(`']' (next tab) is not bound on the "main" view`)
+	for _, name := range []KeyName{KeyPrevTab, KeyNextTab} {
+		if !bound[name] {
+			t.Errorf("%q (%v) is not bound on the \"main\" view", name, gui.Keys.Get(name).Key)
+		}
 	}
 }
 

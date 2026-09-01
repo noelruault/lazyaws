@@ -1,4 +1,3 @@
-// main_panel.go — the lazyaws port of lazydocker's pkg/gui/main_panel.go (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (
@@ -82,6 +81,25 @@ func (gui *Gui) onMainTabClick(tabIndex int) error {
 }
 
 // handleMainNextTab resolves the backing panel so tab keys survive main focus.
+// handleMainTabNext moves within whatever main is holding: the chat screen's three panes while it owns main, the detail tabs otherwise.
+// One key for both is what makes Tab mean "the next thing in the window I am in" wherever it is pressed, which is the same promise it keeps in the panel column.
+func (gui *Gui) handleMainTabNext() error {
+	if gui.mainBelongsToQ() {
+		return gui.handleQFocusNext()
+	}
+
+	return gui.handleMainNextTab()
+}
+
+// handleMainTabPrev is Shift+Tab's half, and it stops at the chat screen: its pane cycle has no reverse, and sending it forward instead would move focus the opposite way from the one the key names.
+func (gui *Gui) handleMainTabPrev() error {
+	if gui.mainBelongsToQ() {
+		return nil
+	}
+
+	return gui.handleMainPrevTab()
+}
+
 func (gui *Gui) handleMainNextTab() error {
 	panel, ok := gui.sidePanelForMain()
 	if !ok {

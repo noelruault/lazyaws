@@ -66,8 +66,11 @@ export async function run ({ term, seed }) {
   if (eks.startsWith('Overview')) {
     throw new Error(`EKS has no seeded cluster, so the pane must not offer an Overview; tab bar is ${JSON.stringify(eks)}`)
   }
-  // The app is still live and the focus really moved: the empty panel's own options line is what a list offers, not what main offers.
-  assertScreen(await term.footer(), 'Enter Inspect', 'focus on the empty EKS panel')
+  // The app is still live on an empty panel: the footer no longer names the focused view, so the menu the footer points at is what answers, and it has to open and close over the dashboard.
+  await term.sendKeys('?')
+  await term.waitForText('╭─Menu')
+  await term.sendKeys('Escape')
+  await term.settle()
   assertScreen(await term.readScreen(), 'no EKS clusters', 'EKS in-panel empty state')
 
   await term.resize(wide.width, wide.height)
@@ -127,24 +130,24 @@ export async function run ({ term, seed }) {
   }
   await term.screenshot('overview-stacked')
 
-  // Tabs cycle from the list itself and not only from the focused main pane, so ] must land on the tab after Overview and [ must come back to it.
+  // Tabs cycle from the list itself and not only from the focused main pane, so . must land on the tab after Overview and , must come back to it.
   // EC2 is down to one tab, so ECS is where the cycle is observable; the tab BAR is not the assertion: gocui marks the open tab in the title's attributes and leaves the list of names alone, so only the pane's body says which tab is showing.
   await term.sendKeys('2')
   await term.waitForText('╭─Overview - Instances')
   await assertSections(term, resources[0], { timeout: 20000 })
-  await term.sendKeys(']')
+  await term.sendKeys('.')
   const instances = paneCells(await term.settle())
   if (instances.includes('▤ Configuration')) {
-    throw new Error(`] left the Overview open: the pane still holds its Configuration section`)
+    throw new Error(`. left the Overview open: the pane still holds its Configuration section`)
   }
   // The seeded cluster runs on Fargate, so the Instances tab's whole answer is its empty state.
   if (!instances.some(cell => cell.startsWith('no container instances'))) {
-    throw new Error(`] did not open the Instances tab: no container-instance line in the pane\n${instances.filter(Boolean).slice(0, 12).join('\n')}`)
+    throw new Error(`. did not open the Instances tab: no container-instance line in the pane\n${instances.filter(Boolean).slice(0, 12).join('\n')}`)
   }
 
-  await term.sendKeys('[')
+  await term.sendKeys(',')
   const back = paneCells(await term.settle())
   if (!back.includes('▤ Configuration')) {
-    throw new Error(`[ did not come back to the Overview: no Configuration section in the pane`)
+    throw new Error(`, did not come back to the Overview: no Configuration section in the pane`)
   }
 }

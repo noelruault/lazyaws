@@ -1,10 +1,10 @@
-// Ported from lazydocker's pkg/gui/app_status_manager.go (MIT, © 2018 Jesse Duffield), adapted for lazyaws.
 package ui
 
 import (
 	"sync"
 	"time"
 
+	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/utils"
 )
 
@@ -102,71 +102,13 @@ func (gui *Gui) WithWaitingStatus(name string, f func() error) error {
 }
 
 func (gui *Gui) getInformationContent() string {
-	return gui.Version
+	return presentation.VersionBullet(gui.Version, gui.updateState)
 }
 
+// renderGlobalOptions draws the dashboard footer, which is one entry: the key that opens the menu listing every binding for the focused view.
+// The menu is contextual and complete, so printing a subset of the same keys along the bottom row spent a whole terminal row restating what one keycap already reaches.
 func (gui *Gui) renderGlobalOptions() error {
-	return gui.renderString(gui.g, "options", optionsToString(gui.dashboardOptions(gui.currentViewName())))
-}
+	help := option{key: describeKey(gui.Keys.Get(KeyHelp).Key), label: "keys"}
 
-// dashboardOptions is the options line for the eight lists and the main pane, in reading order rather than alphabetically by keycap.
-// Every rebindable label resolves through the keymap; arrows, Enter, Esc and Tab stay literal so config cannot remove baseline navigation.
-// It is deliberately shorter than the set of keys that work here: the line is one row of a shared bottom line, and the menu (x / ?) is where the full list lives.
-func (gui *Gui) dashboardOptions(viewName string) []option {
-	named := func(name KeyName, label string) option {
-		return option{key: describeKey(gui.Keys.Get(name).Key), label: label}
-	}
-
-	panel, isList := gui.sidePanelNamed(viewName)
-	onMain := viewName == "main"
-
-	// The chat screen hands focus to main, and there the dashboard's keys do nothing: the lists are hidden, so there is no selection to inspect, copy or act on, and main holds a conversation rather than tabs.
-	if onMain && gui.mainBelongsToQ() {
-		return []option{
-			{key: "Arrows", label: "scroll"},
-			{key: "Tab", label: "next pane"},
-			{key: "Esc", label: "dashboard"},
-			named(KeyQuit, "quit"),
-		}
-	}
-
-	options := []option{{key: "Arrows", label: "navigate"}}
-	if onMain {
-		options = []option{{key: "Arrows", label: "scroll"}, {key: "[ ]", label: "tabs"}}
-	}
-
-	switch {
-	case onMain:
-		options = append(options, option{key: "Enter", label: "select"})
-	case viewName == "profile":
-		options = append(options, option{key: "Enter", label: "switch"})
-	case viewName == "ecs":
-		options = append(options, option{key: "Enter", label: "drill down"})
-	case isList:
-		options = append(options, option{key: "Enter", label: "inspect"})
-	}
-
-	if isList || onMain {
-		options = append(options, named(KeyCopyID, "copy ARN"))
-	}
-	options = append(options, named(KeyRefreshPanel, "refresh"))
-
-	// The filter label follows the same condition as the filter BINDING, so a panel that cannot be filtered never advertises it.
-	if isList && !panel.IsFilterDisabled() {
-		options = append(options, named(KeyFilter, "filter"))
-	}
-	if isList || onMain {
-		options = append(options, named(KeyActions, "actions"))
-	}
-
-	switch viewName {
-	case "ecs":
-		options = append(options, named(KeyECSExec, "exec"))
-	case "ec2":
-		options = append(options, named(KeyEC2Connect, "connect"))
-	case "secrets":
-		options = append(options, named(KeySecretsReveal, "reveal"))
-	}
-
-	return append(options, named(KeyQuit, "quit"))
+	return gui.renderString(gui.g, "options", optionsToString([]option{help}))
 }

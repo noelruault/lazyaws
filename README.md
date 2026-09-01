@@ -56,14 +56,17 @@ Everyday AWS questions, which tasks are failing, what changed in this deployment
 
 | Key | Action |
 | --- | --- |
-| `1`-`8` | Jump to a panel (`1` Profiles, `2` ECS, `3` EC2, `4` S3, `5` EKS, `6` ECR, `7` Secrets, `8` VPC) |
-| `Tab`/`Shift+Tab`, `←`/`→` | Move focus between the side panels; arrows scroll the main panel horizontally |
-| `↑`/`↓` | Move the cursor in the focused view |
-| `Enter` | Focus the main panel; ECS drills into the selected cluster/service; Profiles switches to the selected profile |
-| `Esc` | Return from the main panel, or go up one ECS drill level. Never quits |
-| `Home`/`End` | Jump to the top / follow the bottom of the main panel |
-| Mouse | Click to focus, click a detail-tab header to switch tabs, wheel to scroll |
+| `1` to `8` | Jump to a panel (`1` Profiles, `2` ECS, `3` EC2, `4` S3, `5` EKS, `6` ECR, `7` Secrets, `8` VPC) |
+| `Tab` / `Shift+Tab`, `←` / `→`, `h` / `l` | Next or previous panel. In the main panel the arrows scroll it horizontally, and `Tab` moves between detail tabs |
+| `↑` / `↓`, `k` / `j` | Move the cursor in the focused view |
+| `Enter` | Look into the selection: ECS drills into the cluster or service, Profiles switches profile, every other list opens it in the main panel |
+| `Esc` | Back to the panel column, or up one ECS drill level. Never quits |
+| `,` / `.` | Previous or next detail tab, from a list as well as from the main panel. Set `keybindingPreset: lazy` for lazydocker's `[` and `]` instead |
+| `Home` / `End` | Jump to the top, or follow the bottom, of the main panel |
+| Mouse | Click to focus, click a detail tab header to switch tabs, wheel to scroll |
 | `Ctrl+C` | Quit |
+
+The bottom line carries one hint, `? Keys`. Press `?` (or `x`) for every binding the focused view answers to, arrows and vim keys listed together, and the path of the file that rebinds them.
 
 ### Rebindable keys
 
@@ -86,8 +89,8 @@ Generated from `DefaultKeys` in `ui/keymap.go`: each config name, default chord,
 | `copy-id` | `y` | Show the selected item's full id / ARN, untruncated, to copy by hand (every panel, and the main panel) |
 | `refresh-panel` | `r` | Refresh the focused panel |
 | `refresh-all` | `R` | Refresh everything |
-| `prev-tab` | `[` | Previous detail tab |
-| `next-tab` | `]` | Next detail tab |
+| `prev-tab` | `,` | Previous detail tab |
+| `next-tab` | `.` | Next detail tab |
 | `screen-mode-next` | `+` | Next screen-size mode (normal / half / full main) |
 | `screen-mode-prev` | `_` | Previous screen-size mode |
 | `options-menu` | `x` | Show the keybindings for the current view |
@@ -115,6 +118,38 @@ keybindings:
   nav-down: n
   nav-up: p
 ```
+
+### Navigation presets
+
+A preset moves a handful of those keys at once, so a whole layout is one line instead of a dozen rebinds. Name none and you get `international`, which is the layout the table above already prints.
+
+```yaml
+keybindingPreset: emacs   # emacs | international | lazy | vim
+keybindings:
+  filter: Ctrl+S          # a hand written key still wins over the preset
+```
+
+<!-- BEGIN GENERATED PRESETS -->
+| Preset | Moves |
+| --- | --- |
+| `emacs` | `chat-new-conversation` to `Ctrl+T`, `chat-pick-model` to `Ctrl+O`, `nav-down` to `Ctrl+N`, `nav-left` to `Ctrl+B`, `nav-right` to `Ctrl+F`, `nav-up` to `Ctrl+P`, `refresh-all` to `G`, `refresh-panel` to `g`, `scroll-main-page-down` to `Ctrl+V` |
+| `international` | nothing, this is the table above |
+| `lazy` | `next-tab` to `]`, `prev-tab` to `[` |
+| `vim` | `chat-toggle-folds` to `Ctrl+K`, `scroll-main-page-down` to `Ctrl+F`, `scroll-main-page-up` to `Ctrl+B` |
+<!-- END GENERATED PRESETS -->
+
+Each preset lists only what it changes; every other key stays as the table above prints it. Both layers are validated at startup, so a preset that does not exist, or a chord that cannot be parsed, is reported as a startup problem rather than silently leaving you without the key.
+
+What each one is for:
+
+- `international`: the layout the table above prints, so it moves nothing. Detail tabs are on `,` and `.`, which are unshifted everywhere. It is what you get without naming a preset, because on Spanish, French, German, Italian and Portuguese layouts the brackets sit behind AltGr, and a terminal sending Option as Meta delivers them as `Esc` plus a character, so the pane would drill up instead of changing tab.
+- `lazy`: lazydocker's own layout, where this UI came from. It puts detail tabs back on `[` and `]`; everything else already matches.
+- `vim`: the shipped keys are already vim's, since lazydocker borrowed `hjkl`, `/` and `:` from it. What was missing is the full page pair, `Ctrl+F` and `Ctrl+B`, next to the half page `Ctrl+D` and `Ctrl+U` that were already there. The chat's fold key gives up `Ctrl+F` and takes `Ctrl+K`.
+- `emacs`: cursor movement on `Ctrl+P`, `Ctrl+N`, `Ctrl+B`, `Ctrl+F`, paging on `Ctrl+V`, and `g` to refresh, which is what magit and dired trained most emacs users on. The chat's model picker and new conversation move off `Ctrl+P` and `Ctrl+N` so the cursor can have them. `M-v` and `M-x` are absent because gocui parses `Alt` only with a named key, not with a letter, and isearch's `Ctrl+S` is absent because terminals still use it for flow control; set it by hand if you have turned that off.
+
+Adding one is a map entry in `ui/keymap.go` and nothing else: the docs table, the Settings row and the tests all read `KeyPresets`, so a new layout is validated, listed and documented without touching any of them.
+
+A preset applies at startup, so changing it from the Settings screen takes effect the next time lazyaws runs.
 
 ### The command bar
 
@@ -207,7 +242,7 @@ When a dependency or a borrowed component is dropped, it is not paraphrased. The
 
 That is how `ui/layout` came to exist. It replaced a third-party layout engine and matches it exactly on all 336 layouts this application can produce, while fixing a panic the original hit when no child claimed a weight and clamping fixed panels that could previously draw past their parent. It shares no implementation with what it replaced, so it carries no attribution. The chat's line wrapper and the AWS context preamble were rebuilt the same way.
 
-The method has a boundary worth stating plainly. **The TUI foundation is a genuine port of lazydocker, not a clean-room rewrite** — around 62% of its non-comment lines still match upstream, and several files considerably more. It is used under MIT with the copyright notice retained, credited above and in [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md), and per-file headers name what each one derives from. The same is true of the fzf-derived matcher in `ui/fuzzy`. Nothing here is presented as original that isn't.
+The method has a boundary worth stating plainly. Not everything here was rebuilt that way: the TUI foundation and the `ui/fuzzy` matcher build on upstream work, used under MIT with the copyright notices retained in [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) and [LICENSES](LICENSES/) and credited above. Nothing here is presented as original that isn't.
 
 lazyaws is an independent project and is not affiliated with, sponsored by, or endorsed by Amazon Web Services. Amazon Web Services, AWS, Amazon Q, Amazon Bedrock, and Kiro are trademarks of Amazon.com, Inc. or its affiliates.
 

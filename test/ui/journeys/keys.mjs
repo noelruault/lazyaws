@@ -1,33 +1,26 @@
 import { execFileSync } from 'node:child_process'
 import { assertScreen } from '../harness.mjs'
 
-// The footer is the claim under test: it is built per focused view from the keymap, so every keycap it prints has to be bound HERE and do what its label says.
-// It is parsed rather than hardcoded, so a rebound key moves the assertion with it instead of failing it.
-function footerKeys (footer) {
-  // Entries are separated by the renderer's three-space gap (optionsSeparator in ui/view_helpers.go); the wider run before a trailing app status splits away with it.
-  return new Map(footer.split(/\s{3,}/).map(entry => {
-    const [key, ...label] = entry.trim().split(' ')
-    return [key, label.join(' ')]
+// The menu behind "?" is the claim under test: the footer is one hint now, so this is the only place a panel's keys are advertised, and every keycap it lists has to be bound HERE and do what its description says.
+// It is read rather than hardcoded, so a rebound key moves the assertion with it instead of failing it.
+async function menuKeys (term) {
+  await term.sendKeys('?')
+  await term.waitForText('╭─Menu')
+  const rows = popupBody(await term.readScreen(), 'Menu')
+  await assertClosed(term, '╭─Menu', '?')
+
+  // A row is its keycaps, a run of padding, then the description. Keys that do the same thing share a row ("k / ▲"), so each one is entered separately and the menu reads as the map of the keyboard it is.
+  return new Map(rows.flatMap(row => {
+    const [, keys, description] = row.match(/^(\S+(?: \/ \S+)*)\s{2,}(\S.*)$/) ?? []
+    return keys ? keys.split(' / ').map(key => [key, description.trim()]) : []
   }))
 }
 
-// The options line shares the bottom row with the app status and the version, and gocui cuts whatever does not fit.
-// So a footer read while a load is in flight can arrive with a trailing status ("…   q Quit        loading s3 ⠋") and short of its tail, which silently removes keys from the very list this journey checks. Waiting for a line that still has BOTH ends and nothing after them is what makes the snapshot trustworthy.
-async function cleanFooter (term, { timeout = 15000 } = {}) {
-  const deadline = Date.now() + timeout
-  let footer = ''
-  while (Date.now() < deadline) {
-    footer = await term.footer()
-    if (footer.startsWith('Arrows') && footer.endsWith('Quit')) return footer
-    await term.page.waitForTimeout(150)
-  }
-  throw new Error(`the options line never came back clean; last read ${JSON.stringify(footer)}`)
-}
-
-function assertAdvertises (footer, key, label) {
-  const advertised = footerKeys(footer).get(key)
-  if (advertised !== label) {
-    throw new Error(`footer advertises ${JSON.stringify(key)} as ${JSON.stringify(advertised)}, want ${JSON.stringify(label)}\n${footer}`)
+// The popup cuts a description at its own width, so the row is asserted as a prefix of the keymap's text rather than as the whole of it: what matters is that this key is listed and says it does this.
+function assertBinds (menu, key, description) {
+  const bound = menu.get(key)
+  if (!bound || !description.startsWith(bound)) {
+    throw new Error(`the menu lists ${JSON.stringify(key)} as ${JSON.stringify(bound)}, want ${JSON.stringify(description)}\n${[...menu].map(([k, d]) => `${k}  ${d}`).join('\n')}`)
   }
 }
 
@@ -65,7 +58,7 @@ export async function run ({ term, seed, endpoint }) {
   await term.sendKeys('3')
   // Sorted by name, so the instance with no Name tag leads and is what every assertion below is about.
   const first = await term.waitForSelectedRow(/^▶ \(no name\)/)
-  const footer = await cleanFooter(term)
+  const menu = await menuKeys(term)
 
   // --- rebound navigation ---------------------------------------------------------------------
   await term.sendKeys('n')
@@ -74,7 +67,7 @@ export async function run ({ term, seed, endpoint }) {
   await term.waitForSelectedRow(/^▶ \(no name\)/)
 
   // --- y copy popup ---------------------------------------------------------------------------
-  assertAdvertises(footer, 'y', 'Copy ARN')
+  assertBinds(menu, 'y', "Show the selected item's full id / ARN, untruncated, to copy by hand")
   if (!first.includes('…')) {
     throw new Error(`the copy popup only proves something against a truncated row, and this row is not truncated: ${JSON.stringify(first)}`)
   }
@@ -89,28 +82,26 @@ export async function run ({ term, seed, endpoint }) {
 
   // --- a actions menu -------------------------------------------------------------------------
   // Opened and closed, never chosen from: every entry in here mutates infrastructure, and this loop reads only.
-  assertAdvertises(footer, 'a', 'Actions')
+  assertBinds(menu, 'a', 'Open the actions menu for the focused item')
   await term.sendKeys('a')
   await term.waitForText('EC2 Instances actions')
   await assertClosed(term, 'EC2 Instances actions', 'a')
 
-  // --- x options menu -------------------------------------------------------------------------
+  // --- x opens the same menu as ? ---------------------------------------------------------------
+  // Both keys open it and the footer advertises only one, so the other is covered here or nowhere.
   await term.sendKeys('x')
   await term.waitForText('╭─Menu')
-  // x lists every binding, which makes it the cross-check on the footer: a keycap the footer advertises for this view that the menu does not bind is a label with nothing behind it.
-  const menu = await term.readScreen()
-  for (const [key, label] of footerKeys(footer)) {
-    // Only the single-character keycaps: the arrow and enter keys are literals no config can move, and the menu lists those under their own names rather than as a keycap.
-    if (!/^[a-z/]$/.test(key)) continue
-    // A menu row is the popup's own border followed by the keycap and its description, which is what keeps this from matching a list row behind the popup.
-    if (!new RegExp(`│${key}\\s{2,}\\S`).test(menu)) {
-      throw new Error(`the footer advertises "${key} ${label}" but the x menu does not bind ${JSON.stringify(key)} in this view\n--- menu ---\n${menu}`)
-    }
-  }
   await assertClosed(term, '╭─Menu', 'x')
 
+  // Every key pressed below has to be one this panel's menu offers: with the footer down to a single hint, a working key the menu omits is a key nothing on screen points at.
+  for (const key of ['/', 'r', 'q']) {
+    if (!menu.has(key)) {
+      throw new Error(`the EC2 menu does not bind ${JSON.stringify(key)}, so nothing on screen tells the user it works\n${[...menu.keys()].join(' ')}`)
+    }
+  }
+
   // --- / filter -------------------------------------------------------------------------------
-  assertAdvertises(footer, '/', 'Filter')
+  assertBinds(menu, '/', 'Filter the focused list')
   await term.sendKeys('/')
   await term.type('web')
   // The filter takes over the bottom row from the options line, which is how the app says it is capturing keys.
@@ -135,7 +126,7 @@ export async function run ({ term, seed, endpoint }) {
   }
 
   // --- r refresh ------------------------------------------------------------------------------
-  assertAdvertises(footer, 'r', 'Refresh')
+  assertBinds(menu, 'r', 'Refresh the focused panel')
   // r cannot be told from the panel tier's own tick by anything on screen: it TRIGGERS the same throttle the 2s tier triggers (ui/refresh.go, reloadFocusedPanel), deliberately, so a reload arriving after r is not evidence that r caused it.
   // What is assertable is that it is bound here and costs nothing — the panel keeps its rows and its selection.
   const before = await term.selectedRow()
@@ -167,7 +158,7 @@ export async function run ({ term, seed, endpoint }) {
 
   // --- q quit ---------------------------------------------------------------------------------
   // Last, because it takes the app away: ttyd's session ends with the process, and the terminal is dead after this.
-  assertAdvertises(footer, 'q', 'Quit')
+  assertBinds(menu, 'q', 'Quit')
   await term.screenshot('keys')
   await term.sendKeys('q')
   const deadline = Date.now() + 10000
