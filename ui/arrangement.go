@@ -1,4 +1,3 @@
-// arrangement.go — the lazyaws port of lazydocker's pkg/gui/arrangement.go (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (
@@ -142,7 +141,7 @@ func (gui *Gui) qScreenBox(infoSectionSize int, infoSectionChildren []*layout.Bo
 }
 
 func (gui *Gui) infoSectionChildren(informationStr string, appStatus string) []*layout.Box {
-	// The status trails the whole line so a load in flight never shifts the hints the user is reading.
+	// The status sits between the hint and the version, in the slack the hint gives up: a load starting or finishing must not move either of them.
 	var statusBox []*layout.Box
 	if len(appStatus) > 0 {
 		statusBox = []*layout.Box{
@@ -171,17 +170,14 @@ func (gui *Gui) infoSectionChildren(informationStr string, appStatus string) []*
 		}, statusBox...)
 	}
 
-	return append([]*layout.Box{
-		{
-			Window: "options",
-			Weight: 1,
-		},
-		{
-			Window: "information",
-			// ANSI escapes occupy bytes but no terminal cells, so strip them before measuring.
-			Size: runewidth.StringWidth(infoSectionPadding) + runewidth.StringWidth(utils.Decolorise(informationStr)),
-		},
-	}, statusBox...)
+	information := &layout.Box{
+		Window: "information",
+		// ANSI escapes occupy bytes but no terminal cells, so strip them before measuring.
+		Size: runewidth.StringWidth(infoSectionPadding) + runewidth.StringWidth(utils.Decolorise(informationStr)),
+	}
+
+	// The version goes last so it stays pinned to the right edge, and the hint carries the weight so it stays pinned to the left: a status that appears while a load is in flight opens and closes the gap between them, and neither of the two things the user reads moves.
+	return append(append([]*layout.Box{{Window: "options", Weight: 1}}, statusBox...), information)
 }
 
 func (gui *Gui) sidePanelChildren(width int, height int) []*layout.Box {

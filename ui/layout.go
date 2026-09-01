@@ -1,4 +1,3 @@
-// layout.go — the lazyaws port of lazydocker's pkg/gui/layout.go (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (
@@ -10,8 +9,9 @@ func (gui *Gui) layout(g *gocui.Gui) error {
 	width, height := g.Size()
 
 	appStatus := gui.statusManager.getStatusString()
+	informationStr := gui.getInformationContent()
 
-	viewDimensions := gui.getWindowDimensions(gui.getInformationContent(), appStatus)
+	viewDimensions := gui.getWindowDimensions(informationStr, appStatus)
 
 	// createAllViews runs before this manager, so every mapping must resolve to an existing view.
 	setViewFromDimensions := func(viewName string) (*gocui.View, error) {
@@ -51,6 +51,12 @@ func (gui *Gui) layout(g *gocui.Gui) error {
 		if err != nil && !gocui.IsUnknownView(err) {
 			return err
 		}
+	}
+
+	// The information cell is painted here rather than from a render pass because layout is the one place that already knows the string, and the box was sized from that same value a few lines up: writing it anywhere else lets the text and the width it reserved drift apart.
+	// The padding leads the version because the version ends the line: it is the gap after whatever precedes it, and it is the space the box was sized for.
+	if err := gui.setViewContent(gui.Views.Information, infoSectionPadding+informationStr); err != nil {
+		return err
 	}
 
 	// Chat rewraps here because layout owns race-free access to the new width.
@@ -98,7 +104,20 @@ func (gui *Gui) getFocusLayout() func(g *gocui.Gui) error {
 func (gui *Gui) onFocusChange() error {
 	currentView := gui.g.CurrentView()
 	for _, view := range gui.g.Views() {
-		view.Highlight = view == currentView && gui.showsFocus(view)
+		focused := view == currentView && gui.showsFocus(view)
+
+		// A resource list marks its selected row whether or not it holds focus: the main pane describes that row, and drilling into it moves focus away, so a list that marks its selection only while focused leaves the pane describing a resource nothing on screen points at.
+		// Only the focused list gets the selection bar; the rest keep the bold, brightened row gocui draws under Highlight when no background is set, so eight lists never claim the cursor at once.
+		if _, isList := gui.sidePanelNamed(view.Name()); isList {
+			view.Highlight = true
+			view.SelBgColor = gocui.ColorDefault
+			if focused {
+				view.SelBgColor = gui.selectedLineBgColor
+			}
+			continue
+		}
+
+		view.Highlight = focused
 	}
 	return nil
 }
@@ -114,6 +133,10 @@ func (gui *Gui) onFocusLost(v *gocui.View, newView *gocui.View) {
 
 	if !gui.isPopupPanel(newView.Name()) {
 		v.ParentView = nil
+	}
+
+	if v.Name() == "profile" {
+		gui.snapProfileToConnected(newView.Name())
 	}
 
 	// A squashed resize can move the selected row outside the new viewport.

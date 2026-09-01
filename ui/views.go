@@ -1,4 +1,3 @@
-// views.go — the lazyaws port of lazydocker's pkg/gui/views.go (MIT, © 2018 Jesse Duffield).
 package ui
 
 import (
@@ -103,6 +102,8 @@ func (gui *Gui) createAllViews() error {
 	}
 
 	selectedLineBgColor := GetGocuiStyle(gui.Config.User.Gui.Theme.SelectedLineBgColor)
+	// Kept for onFocusChange, which hands the bar to whichever list holds focus and takes it back when focus leaves.
+	gui.selectedLineBgColor = selectedLineBgColor
 
 	var err error
 	for _, mapping := range gui.orderedViewNameMappings() {

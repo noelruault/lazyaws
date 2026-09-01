@@ -11,7 +11,9 @@ import (
 
 	"github.com/noelruault/lazyaws/apps/aws"
 	"github.com/noelruault/lazyaws/config"
+	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/types"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
 
 func TestSettingsScreenOpensAndCloses(t *testing.T) {
@@ -465,6 +467,98 @@ func TestReadOnlyAllowsTheBedrockBackend(t *testing.T) {
 
 	if !ask(g, gui.qScreenActive) {
 		t.Error("the Bedrock-backed chat was refused in read-only mode, though it cannot change anything")
+	}
+}
+
+// The Settings screen is where the build names itself, because the information line has room for a bullet but not for the release the bullet is about.
+func TestSettingsScreenNamesTheBuildAndANewerRelease(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	run(t, g, func() error {
+		gui.Version = "v0.3.0"
+		return gui.handleToggleSettings()
+	})
+
+	waitForView(t, g, gui.Views.Settings, "lazyaws v0.3.0")
+
+	run(t, g, func() error {
+		gui.latestVersion = "v0.4.0"
+		gui.updateState = presentation.UpdateOutdated
+		gui.renderSettings()
+		return nil
+	})
+
+	listing := waitForView(t, g, gui.Views.Settings, "(v0.4.0 available)")
+	if !strings.Contains(listing, "Read-only mode") {
+		t.Errorf("settings = %q, want the version alongside the rows, not instead of them", listing)
+	}
+}
+
+// Drilling into a resource moves focus to the detail pane, and the pane then describes a row in a list that is no longer focused.
+// If the list drops its selection marker there, nothing on screen says which of its rows the pane is about.
+func TestAListKeepsItsSelectionMarkedAfterFocusMovesToTheDetailPane(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+
+	// onFocusChange is what decides which views draw a highlight, and it runs from the focus manager on every frame; the headless harness registers no managers, so it is driven here the way the loop drives it.
+	focus := func(view *gocui.View) {
+		t.Helper()
+		run(t, g, func() error {
+			if err := gui.switchFocus(view); err != nil {
+				return err
+			}
+			return gui.onFocusChange()
+		})
+	}
+
+	focus(gui.Views.S3)
+	if !ask(g, func() bool { return gui.Views.S3.Highlight }) {
+		t.Fatal("the focused S3 list does not mark its selected row, so this test cannot see the case it is about")
+	}
+	if got := ask(g, func() gocui.Attribute { return gui.Views.S3.SelBgColor }); got != gui.selectedLineBgColor {
+		t.Errorf("the focused list's selection bar is %v, want the theme's %v", got, gui.selectedLineBgColor)
+	}
+
+	focus(gui.Views.Main)
+	if !ask(g, func() bool { return gui.Views.S3.Highlight }) {
+		t.Error("the S3 list stopped marking its selected row once focus moved to the pane describing it")
+	}
+	if ask(g, func() bool { return gui.Views.Main.Highlight }) {
+		t.Error("the detail pane marks a selected line of its own, which competes with the list's")
+	}
+
+	// Exactly one bar on screen is what keeps "which panel takes the keys" answerable: unfocused lists keep the marker gocui draws without a background.
+	for _, view := range []*gocui.View{gui.Views.S3, gui.Views.EC2, gui.Views.Profile} {
+		if got := ask(g, func() gocui.Attribute { return view.SelBgColor }); got != gocui.ColorDefault {
+			t.Errorf("the unfocused %s list still paints a selection bar (%v)", view.Name(), got)
+		}
+	}
+}
+
+// Sizing the information box is not the same as filling it: for a long time the version was measured into a gap at the end of the bottom line and never written there.
+func TestLayoutPaintsTheVersionIntoTheInformationCell(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+
+	run(t, g, func() error {
+		gui.Version = "v0.3.0"
+		gui.updateState = presentation.UpdateCurrent
+		return gui.layout(g)
+	})
+
+	if got := utils.Decolorise(readView(g, gui.Views.Information)); !strings.Contains(got, "v0.3.0 ●") {
+		t.Errorf("information cell = %q, want the version and its bullet", got)
+	}
+}
+
+// The information line carries the version wherever the user is, so it must render the state the indicator was given rather than the version alone.
+func TestInformationLineCarriesTheVersionBullet(t *testing.T) {
+	gui := &Gui{Version: "v0.3.0"}
+
+	if got := gui.getInformationContent(); got != "v0.3.0" {
+		t.Errorf("unchecked build: getInformationContent() = %q, want the bare version", got)
+	}
+
+	gui.updateState = presentation.UpdateOutdated
+	if got := utils.Decolorise(gui.getInformationContent()); got != "v0.3.0 ●" {
+		t.Errorf("outdated build: getInformationContent() = %q, want %q", got, "v0.3.0 ●")
 	}
 }
 

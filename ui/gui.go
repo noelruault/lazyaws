@@ -1,4 +1,4 @@
-// Package ui is the lazyaws port of lazydocker's gocui TUI (MIT, © 2018 Jesse Duffield).
+// Package ui is the lazyaws terminal UI: the gocui dashboard, its panels and their keybindings.
 package ui
 
 import (
@@ -13,6 +13,7 @@ import (
 	"github.com/noelruault/lazyaws/apps/aws"
 	"github.com/noelruault/lazyaws/config"
 	"github.com/noelruault/lazyaws/ui/panels"
+	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/resources"
 	"github.com/noelruault/lazyaws/ui/tasks"
 	"github.com/noelruault/lazyaws/ui/types"
@@ -37,9 +38,17 @@ type Gui struct {
 
 	dimmed map[string]gocui.Attribute
 
+	// selectedLineBgColor is the theme's selection bar, resolved once at view creation so focus changes can move it between lists without reading config again.
+	selectedLineBgColor gocui.Attribute
+
 	statusManager *statusManager
 
 	Version string
+
+	// latestVersion and updateState are the version indicator's other half: the newest published release and how this build compares to it.
+	// Nothing fills them yet, so the indicator stays at UpdateUnknown and shows the version alone; the release check that would set them is deliberately not built.
+	latestVersion string
+	updateState   presentation.UpdateState
 
 	// PauseBackgroundThreads protects subprocess ownership of the tty.
 	// Atomic because the refresh tiers read it from their own goroutines while the subprocess helper sets it from the UI loop.
@@ -186,7 +195,7 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 		Client:        client,
 	}
 	gui.Registry = gui.newRegistry()
-	gui.Keys, gui.startupProblems = buildKeymap(cfg.User.Keybindings)
+	gui.Keys, gui.startupProblems = buildKeymap(cfg.User.KeybindingPreset, cfg.User.Keybindings)
 	gui.throttledRefresh = newThrottle(50*time.Millisecond, gui.refresh)
 	gui.rerenderMainTab = newThrottle(50*time.Millisecond, gui.rerenderCurrentMainTab)
 	gui.panelReloads = guardedReloaders(gui.panelReloaders())

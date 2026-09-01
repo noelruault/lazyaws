@@ -148,35 +148,44 @@ func TestSidePanelsTileTheColumnExactly(t *testing.T) {
 	}
 }
 
-// The app status trails the bottom line so a load in flight never shifts the hints the user is reading, in every bottom-line mode the status can appear in.
-// Every State write and every infoSectionChildren call runs on the loop's goroutine through run/ask: the render loop reads the same state, and touching it from the test goroutine is a data race under -race.
-func TestAppStatusIsTheBottomLinesLastBox(t *testing.T) {
+// The hint holds the left edge and the version the right, so a load starting or finishing opens and closes the gap between them rather than moving either one.
+// Asserted on the dimensions the layout produced rather than on the box order, because "does not move" is a claim about columns: an ordering that reads correctly can still shift the version if a box beside it changes width.
+// Every State write and every layout call runs on the loop's goroutine through run/ask: the render loop reads the same state, and touching it from the test goroutine is a data race under -race.
+func TestALoadInFlightMovesNeitherTheHintNorTheVersion(t *testing.T) {
 	gui, g := newHeadlessGui(t)
 
-	bottomBoxes := func(status string) []*layout.Box {
-		return ask(g, func() []*layout.Box { return gui.infoSectionChildren("v1.0", status) })
+	bottomLine := func(status string) map[string]layout.Dimensions {
+		return ask(g, func() map[string]layout.Dimensions { return gui.getWindowDimensions("v1.0", status) })
 	}
+
+	loading, idle := bottomLine("loading ec2 ⠋"), bottomLine("")
+
+	if loading["information"] != idle["information"] {
+		t.Errorf("the version sits at %+v while loading and %+v when idle, so a spinner shifts it", loading["information"], idle["information"])
+	}
+	if loading["options"].X0 != idle["options"].X0 {
+		t.Errorf("the hint starts at column %d while loading and %d when idle", loading["options"].X0, idle["options"].X0)
+	}
+	if _, ok := idle["appStatus"]; ok {
+		t.Error("an empty status still claims a box on the bottom line")
+	}
+}
+
+// The filter and command prompts take over the whole bottom line, and there the status is the last box: no version sits beside them to end it.
+func TestTheStatusEndsTheLineTheInputsTakeOver(t *testing.T) {
+	gui, g := newHeadlessGui(t)
 
 	assertLast := func(mode string) {
 		t.Helper()
-		boxes := bottomBoxes("loading ec2 ⠋")
+		boxes := ask(g, func() []*layout.Box { return gui.infoSectionChildren("v1.0", "loading ec2 ⠋") })
 		if got := boxes[len(boxes)-1].Window; got != "appStatus" {
 			t.Errorf("with %s the status is not the line's last box; the last is %q", mode, got)
 		}
 	}
-
-	assertLast("the options line showing")
 
 	run(t, g, func() error { gui.State.Filter.active = true; return nil })
 	assertLast("the filter open")
 	run(t, g, func() error { gui.State.Filter.active = false; gui.State.Command.active = true; return nil })
 	assertLast("the command bar open")
 	run(t, g, func() error { gui.State.Command.active = false; return nil })
-
-	// No load in flight leaves no status box at all rather than an empty sliver.
-	for _, box := range bottomBoxes("") {
-		if box.Window == "appStatus" {
-			t.Errorf("an empty status still claims a box on the bottom line")
-		}
-	}
 }

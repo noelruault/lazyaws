@@ -10,6 +10,7 @@ import (
 	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/config"
+	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/utils"
 )
 
@@ -87,6 +88,15 @@ func (gui *Gui) settings() []setting {
 			path: []string{"readOnly"},
 			get:  func(user *config.UserConfig) bool { return user.ReadOnly },
 			set:  func(user *config.UserConfig, value bool) { user.ReadOnly = value },
+		},
+		{
+			// The help says "restart" because gocui registers every binding once at startup: the file is written now, the keys move next run.
+			name:      "Keybinding preset",
+			help:      "navigation layout, applied on restart",
+			path:      []string{"keybindingPreset"},
+			choices:   PresetNames,
+			getChoice: func(user *config.UserConfig) string { return user.KeybindingPreset },
+			setChoice: func(user *config.UserConfig, value string) { user.KeybindingPreset = value },
 		},
 		{
 			name: "Dim behind popups",
@@ -313,13 +323,15 @@ func (gui *Gui) renderSettings() {
 	}
 	selected := gui.State.Settings.selected
 
+	version := presentation.VersionLine(gui.Version, gui.latestVersion, gui.updateState)
+
 	gui.g.Update(func(*gocui.Gui) error {
 		view := gui.Views.Settings
 		content, err := renderSettingsTable(rows)
 		if err != nil {
 			return err
 		}
-		if err := gui.setViewContent(view, content); err != nil {
+		if err := gui.setViewContent(view, content+"\n\n"+version); err != nil {
 			return err
 		}
 		gui.FocusY(selected, len(rows), view)

@@ -9,7 +9,7 @@ import (
 )
 
 // Run checks authentication before gocui owns the terminal so recovery guidance remains readable.
-func Run(cfg config.Config) error {
+func Run(cfg config.Config, version string) error {
 	profile := currentProfileName()
 	profiles := listAWSProfiles()
 
@@ -31,6 +31,7 @@ func Run(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	gui.Version = version
 	gui.CurrentProfile = os.Getenv("AWS_PROFILE")
 	if degraded {
 		gui.authProblem = credentialsProblem(client, err)
