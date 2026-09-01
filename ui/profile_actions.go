@@ -2,8 +2,12 @@
 package ui
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/noelruault/lazyaws/ui/resources"
 )
@@ -38,13 +42,50 @@ func (gui *Gui) ProfileActions() []resources.Action {
 	}}
 }
 
-// loginAndReconnect hands the terminal to the AWS CLI and reconnects with whatever it wrote.
-// An SSO login prints a code and waits on a browser, so it needs the tty rather than a captured pipe; runSubprocess is the same path ECS exec and the SSM session take.
-// The reconnect is a full profile switch rather than a refresh: the credentials on disk are new, and the client holding the expired ones cannot be told about them.
+// ssoLoginTimeout is how long the browser half of the login gets before the attempt is abandoned.
+// Generous on purpose: the wait includes finding the window, signing in and approving, and the cost of being wrong is a login the user has to start again.
+const ssoLoginTimeout = 3 * time.Minute
+
+// loginAndReconnect must NOT suspend gocui, unlike ECS exec and the SSM session: this child wants no keyboard, and suspending for it left the app rendering into a screen that was gone, so the terminal came back cooked and echoing.
+// The transcript reaches main as it arrives so the URL is on screen when the browser does not open by itself.
 func (gui *Gui) loginAndReconnect(profile string) error {
-	if err := gui.runSubprocess(exec.Command("aws", "sso", "login", "--profile", profile)); err != nil {
-		return err
+	transcript, err := gui.runSSOLogin(profile)
+	if err != nil {
+		return gui.createErrorPanel(loginCommand(profile) + " failed:\n\n" + strings.TrimSpace(transcript) + "\n\n" + err.Error())
 	}
 
 	return gui.switchProfile(profile)
+}
+
+// runSSOLogin hands back the transcript as well as the error so a failure can be shown with the CLI's own words, and so a test can drive the whole path with a fake aws on PATH instead of a browser.
+func (gui *Gui) runSSOLogin(profile string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), ssoLoginTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "aws", "sso", "login", "--profile", profile)
+
+	reader, writer := io.Pipe()
+	cmd.Stdout, cmd.Stderr = writer, writer
+
+	done := make(chan error, 1)
+	go func() {
+		err := cmd.Run()
+		// Closing the writer is what ends the scan below, so it has to happen whether or not the command worked.
+		_ = writer.Close()
+		done <- err
+	}()
+
+	var transcript strings.Builder
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		transcript.WriteString(scanner.Text() + "\n")
+		gui.reRenderStringMainOrdered(loginTranscript(profile, transcript.String()))
+	}
+
+	return transcript.String(), <-done
+}
+
+// loginTranscript frames the CLI's own words rather than replacing them, because the URL and the device code it prints are the whole point of showing this.
+func loginTranscript(profile string, output string) string {
+	return "Signing in to " + profile + ", finish it in your browser.\n\n" + output
 }

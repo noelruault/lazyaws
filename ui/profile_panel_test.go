@@ -74,6 +74,59 @@ func TestProfileRefreshOpensOnTheCurrentProfileThenLeavesTheCursorAlone(t *testi
 	}
 }
 
+// fakeAWSOnPath puts a stand-in for the AWS CLI first on PATH, which is how the login path is driven without a browser.
+func fakeAWSOnPath(t *testing.T, body string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "aws"), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatalf("writing fake aws: %v", err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+// The login prints a URL and waits on a browser. Handing it the terminal is what left the app drawing into a screen that was gone, so it runs with its output piped and that output has to reach the pane, or the URL exists nowhere the user can see when the browser fails to open.
+func TestTheSSOLoginShowsItsURLWithoutTakingTheTerminal(t *testing.T) {
+	url := "https://device.sso.eu-west-1.amazonaws.com/?user_code=ABCD-1234"
+	fakeAWSOnPath(t, "printf '%s\\n' 'Attempting to open your default browser.' '"+url+"'")
+
+	gui, g := newHeadlessGui(t)
+
+	transcript := ask(g, func() string {
+		out, err := gui.runSSOLogin("prod")
+		if err != nil {
+			t.Errorf("the login reported %v", err)
+		}
+		return out
+	})
+
+	if !strings.Contains(transcript, url) {
+		t.Errorf("the transcript lost the URL:\n%s", transcript)
+	}
+	if pane := waitForView(t, g, gui.Views.Main, url); !strings.Contains(pane, "Signing in to prod") {
+		t.Errorf("the pane does not say what is happening:\n%s", pane)
+	}
+}
+
+// A failed login has to keep the CLI's own words: "exit status 1" alone tells the user nothing about which of the many ways it went wrong.
+func TestAFailedSSOLoginKeepsWhatTheCLISaid(t *testing.T) {
+	fakeAWSOnPath(t, "echo 'The SSO session associated with this profile has expired' >&2; exit 1")
+
+	gui, g := newHeadlessGui(t)
+
+	transcript := ask(g, func() string {
+		out, err := gui.runSSOLogin("prod")
+		if err == nil {
+			t.Error("a failing aws sso login was reported as success")
+		}
+		return out
+	})
+
+	if !strings.Contains(transcript, "has expired") {
+		t.Errorf("the transcript lost the CLI's reason:\n%s", transcript)
+	}
+}
+
 // An expired session used to reach this pane as "Account ID: none", which names no cause and offers no way out.
 // The startup banner does say both, but the first render of this tab paints over it, so the words have to live here too.
 func TestTheCredentialsTabSaysHowToSignInWhenTheSessionIsGone(t *testing.T) {
