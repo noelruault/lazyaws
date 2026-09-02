@@ -167,6 +167,52 @@ func TestEveryPresetIsValidAndConflictFree(t *testing.T) {
 	}
 }
 
+// -keymap is sold as a one-time switch, so it has to reach the config file rather than the process, and it has to refuse a name that does not exist instead of leaving the old layout in place and looking like it worked.
+func TestRememberKeymapWritesTheChoiceAndRefusesNonsense(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	for _, preset := range PresetNames() {
+		chosen, err := RememberKeymap(preset)
+		if err != nil {
+			t.Fatalf("RememberKeymap(%q): %v", preset, err)
+		}
+		if chosen != preset {
+			t.Errorf("RememberKeymap(%q) answered %q", preset, chosen)
+		}
+
+		written, err := os.ReadFile(config.ConfigFilename())
+		if err != nil {
+			t.Fatalf("reading the config back: %v", err)
+		}
+		if !strings.Contains(string(written), "keybindingPreset: "+preset) {
+			t.Errorf("the config file does not carry %q:\n%s", preset, written)
+		}
+
+		// The next startup has to read back the layout the flag chose.
+		user, err := config.LoadUserConfig()
+		if err != nil {
+			t.Fatalf("loading the config back: %v", err)
+		}
+		keymap, problems := buildKeymap(user.KeybindingPreset, user.Keybindings)
+		if len(problems) > 0 {
+			t.Fatalf("the written preset does not load cleanly: %v", problems)
+		}
+		for name, chord := range KeyPresets[preset] {
+			wantKey, _ := gocui.MustParse(chord)
+			if got := keymap.Get(name).Key; got != wantKey {
+				t.Errorf("after -keymap=%s, %s is %v, want %v", preset, name, got, wantKey)
+			}
+		}
+	}
+
+	if _, err := RememberKeymap("dvorak"); err == nil {
+		t.Error("an unknown keymap was accepted")
+	} else if !strings.Contains(err.Error(), "dvorak") || !strings.Contains(err.Error(), "emacs") {
+		t.Errorf("the error names neither the bad keymap nor the real ones: %v", err)
+	}
+}
+
 // Which preset ships is one constant, and this is what keeps the three places that depend on it in agreement: the config's own value, an empty value, and KeyPresets.
 // Nothing here names a layout, so changing ShippedPreset needs no edit in this file.
 func TestTheShippedPresetIsRealAndIsWhatAnEmptyConfigGets(t *testing.T) {

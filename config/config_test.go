@@ -24,6 +24,13 @@ func TestParse(t *testing.T) {
 		{name: "region round-trips", args: []string{"-region", "eu-west-1"}, want: Config{Region: "eu-west-1"}},
 		{name: "region defaults to AWS_REGION", env: "us-east-1", want: Config{Region: "us-east-1"}},
 		{name: "region flag overrides AWS_REGION", env: "us-east-1", args: []string{"-region", "eu-west-1", "-version"}, want: Config{Region: "eu-west-1", ShowVersion: true}},
+		// -keymap answers two different questions, and which one it answered has to survive parsing.
+		{name: "keymap names a layout", args: []string{"-keymap=vim"}, want: Config{Keymap: "vim"}},
+		// The space form is what a user types first. flag stops at the leftover word, so it arrives as an argument rather than the flag's value.
+		{name: "keymap takes the space form too", args: []string{"-keymap", "emacs"}, want: Config{Keymap: "emacs"}},
+		{name: "keymap alone asks where the file is", args: []string{"-keymap"}, want: Config{KeymapReport: true}},
+		// A flag after the bare form is not a layout name, so it must not be mistaken for one.
+		{name: "keymap alone with another flag still reports", args: []string{"-keymap", "-debug"}, want: Config{Debug: true, KeymapReport: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

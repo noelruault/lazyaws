@@ -146,11 +146,13 @@ func (gui *Gui) GetInitialKeybindings() []*Binding {
 		gui.key("", KeyAmazonQ, wrappedHandler(gui.handleToggleQ)),
 
 		{ViewName: "main", Key: gocui.KeyEsc, Handler: gui.handleQMainEscape, Description: "back to the panel column"},
-		{ViewName: "main", Key: gocui.KeyTab, Handler: wrappedHandler(gui.handleMainTabNext), Description: "next detail tab"},
-		{ViewName: "main", Key: gocui.KeyBacktab, Handler: wrappedHandler(gui.handleMainTabPrev), Description: "previous detail tab"},
+		// The keymap's own wording, so Tab lands on the same menu row as whatever prev-tab and next-tab are bound to instead of repeating it in different case.
+		{ViewName: "main", Key: gocui.KeyTab, Handler: wrappedHandler(gui.handleMainTabNext), Description: gui.Keys.Get(KeyNextTab).Description},
+		{ViewName: "main", Key: gocui.KeyBacktab, Handler: wrappedHandler(gui.handleMainTabPrev), Description: gui.Keys.Get(KeyPrevTab).Description},
 		{ViewName: "main", Key: gocui.KeyArrowLeft, Handler: gui.scrollLeftMain, Description: "scroll left"},
 		{ViewName: "main", Key: gocui.KeyArrowRight, Handler: gui.scrollRightMain, Description: "scroll right"},
-		gui.key("main", KeyNavLeft, gui.scrollLeftMain),
+		// Both say what they do HERE rather than carrying the keymap's general wording, or the arrow and its vim key would sit on two rows saying the same thing differently.
+		gui.describedKey("main", KeyNavLeft, gui.scrollLeftMain, "scroll left"),
 		gui.describedKey("main", KeyNavRight, gui.scrollRightMain, "scroll right"),
 		gui.key("main", KeyPrevTab, wrappedHandler(gui.handleMainPrevTab)),
 		gui.key("main", KeyNextTab, wrappedHandler(gui.handleMainNextTab)),
@@ -196,15 +198,18 @@ func (gui *Gui) GetInitialKeybindings() []*Binding {
 		{ViewName: "menu", Key: 'y', Handler: wrappedHandler(gui.handleMenuPress)},
 	}
 
+	// One description for all eight, so the menu shows them as a single row: the number that reaches each panel is already printed in that panel's own title, and eight rows saying "focus the x panel" crowded out everything else.
+	const jumpToPanel = "jump to a panel, numbered as its title shows"
+
 	bindings = append(bindings,
-		&Binding{Key: '1', Handler: gui.handleGoTo(gui.Views.Profile), Description: "focus profile panel"},
-		&Binding{Key: '2', Handler: gui.handleGoTo(gui.Views.ECS), Description: "focus ecs panel"},
-		&Binding{Key: '3', Handler: gui.handleGoTo(gui.Views.EC2), Description: "focus ec2 panel"},
-		&Binding{Key: '4', Handler: gui.handleGoTo(gui.Views.S3), Description: "focus s3 panel"},
-		&Binding{Key: '5', Handler: gui.handleGoTo(gui.Views.EKS), Description: "focus eks panel"},
-		&Binding{Key: '6', Handler: gui.handleGoTo(gui.Views.ECR), Description: "focus ecr panel"},
-		&Binding{Key: '7', Handler: gui.handleGoTo(gui.Views.Secrets), Description: "focus secrets panel"},
-		&Binding{Key: '8', Handler: gui.handleGoTo(gui.Views.VPC), Description: "focus vpc panel"},
+		&Binding{Key: '1', Handler: gui.handleGoTo(gui.Views.Profile), Description: jumpToPanel},
+		&Binding{Key: '2', Handler: gui.handleGoTo(gui.Views.ECS), Description: jumpToPanel},
+		&Binding{Key: '3', Handler: gui.handleGoTo(gui.Views.EC2), Description: jumpToPanel},
+		&Binding{Key: '4', Handler: gui.handleGoTo(gui.Views.S3), Description: jumpToPanel},
+		&Binding{Key: '5', Handler: gui.handleGoTo(gui.Views.EKS), Description: jumpToPanel},
+		&Binding{Key: '6', Handler: gui.handleGoTo(gui.Views.ECR), Description: jumpToPanel},
+		&Binding{Key: '7', Handler: gui.handleGoTo(gui.Views.Secrets), Description: jumpToPanel},
+		&Binding{Key: '8', Handler: gui.handleGoTo(gui.Views.VPC), Description: jumpToPanel},
 	)
 
 	// Left and right walk the panel column, the same as Tab and Shift+Tab: eight lists stacked in one column are what the four keys are for, and Enter is the one that leaves it for the pane beside them.

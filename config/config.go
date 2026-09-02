@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -15,7 +16,16 @@ type Config struct {
 	ShowVersion bool
 	ShowGallery bool
 	Debug       bool
-	User        UserConfig
+
+	// Keymap is the preset named by -keymap=<name> on this run, empty when the flag named nothing.
+	// It is a one-time switch rather than a per-run override: main writes it to the config file, so the choice outlives the process that made it.
+	Keymap string
+
+	// KeymapReport is -keymap with no value, which asks where the keys live instead of moving them.
+	// The path is platform dependent and too long for the help menu, so the flag is where a user finds it.
+	KeymapReport bool
+
+	User UserConfig
 }
 
 var (
@@ -38,20 +48,56 @@ func Load() Config {
 	return cfg
 }
 
+// keymapFlag lets -keymap be both a question and a switch.
+// IsBoolFlag is what allows the bare form: the flag package demands a value for anything else, so `-keymap` alone would be a usage error rather than "tell me where the keys live".
+type keymapFlag struct {
+	name string
+	bare bool
+}
+
+func (f *keymapFlag) String() string { return f.name }
+
+func (f *keymapFlag) IsBoolFlag() bool { return true }
+
+func (f *keymapFlag) Set(value string) error {
+	// The flag package hands a bare boolean-looking flag the string "true", which is not a layout anyone asked for.
+	if value == "true" {
+		f.bare = true
+		return nil
+	}
+
+	f.name = value
+
+	return nil
+}
+
 func parse(fs *flag.FlagSet, args []string) Config {
 	region := fs.String("region", os.Getenv("AWS_REGION"), "AWS region (overrides AWS_REGION)")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	showGallery := fs.Bool("gallery", false, "print the UI component gallery and exit")
 	debug := fs.Bool("debug", false, "log to ~/.lazyaws/debug.log instead of discarding")
+
+	keymap := &keymapFlag{}
+	fs.Var(keymap, "keymap", "-keymap=<name> switches the navigation layout for good (international, lazy, vim, emacs); -keymap alone says where the file is")
+
 	if !fs.Parsed() {
 		_ = fs.Parse(args)
 	}
 
+	// A bare -keymap takes no value, so a name given the other way round, `-keymap vim`, arrives as a leftover argument, and flag parsing stops at it so anything after is left unparsed too.
+	// Reading the first leftover here means the space form switches rather than silently reporting, which is what a user typing it expects.
+	name := keymap.name
+	if keymap.bare && fs.NArg() > 0 && !strings.HasPrefix(fs.Arg(0), "-") {
+		name = fs.Arg(0)
+	}
+
 	return Config{
-		Region:      *region,
-		ShowVersion: *showVersion,
-		ShowGallery: *showGallery,
-		Debug:       *debug,
+		Region:       *region,
+		ShowVersion:  *showVersion,
+		ShowGallery:  *showGallery,
+		Debug:        *debug,
+		Keymap:       name,
+		KeymapReport: keymap.bare && name == "",
 	}
 }
 

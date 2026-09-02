@@ -9,6 +9,20 @@ Drill from an ECS cluster to a service to live logs in a few keypresses. Switch 
 <!-- The checked-in GIF is recorded by test/ui/demo.mjs against the seeded moto harness, so published media cannot disclose an AWS account; regenerate it with `make ui-demo`. -->
 <p align="center"><img src="docs/demo.gif" alt="lazyaws demo: the eight resource panels, the EC2 and secret overviews, filtering with the pane following the selection, and the full-id copy popup" width="900"></p>
 
+## Navigation in ten seconds
+
+`↑` `↓` or `k` `j` move the cursor. `Tab` and `Shift+Tab`, or `←` `→`, or `h` `l`, move between the eight panels. `Enter` looks into whatever is selected. `,` and `.` change the detail tab on the right. `?` lists every key the panel you are on answers to, and `q` quits.
+
+`,` and `.` are the shipped tab keys because `[` and `]` sit behind AltGr on Spanish, French, German, Italian and Portuguese layouts, where a terminal can deliver them as `Esc` and drill the pane up instead. If your fingers expect something else, switch once and lazyaws remembers it:
+
+```sh
+lazyaws --keymap=lazy    # lazydocker's layout: detail tabs back on [ and ]
+lazyaws --keymap=vim     # adds Ctrl+F and Ctrl+B paging beside Ctrl+D and Ctrl+U
+lazyaws --keymap=emacs   # Ctrl+P, Ctrl+N, Ctrl+B, Ctrl+F to move, Ctrl+V to page, g to refresh
+```
+
+The flag writes the choice into `config.yml` and then starts as usual, so it is one run and never again. `--keymap=international` goes back to the shipped layout. `?` lists whichever layout is in force, so the menu follows the switch rather than describing the default forever.
+
 ## Quickstart
 
 ```sh
@@ -25,7 +39,7 @@ You need:
 - For SSO (IAM Identity Center), a valid session: `aws sso login` against the `sso-session` your profiles share covers all of them at once. Setting the file up is [AWS's CLI SSO guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html); static credential profiles work too and need no login step.
 - A region, from `AWS_REGION` or `-region <region>`.
 
-Credentials are checked before the UI starts: an expired SSO session gets one clear message with the exact `aws sso login` line to run, not the same SDK error repeated in every panel. `-version` prints the build version, `-debug` logs to `~/.lazyaws/debug.log`. Temporary session credentials are cached in plaintext at `~/.lazyaws/session` (0600) to speed startup; delete the file to clear it, and exclude `~/.lazyaws` from dotfile syncers and backups.
+Credentials are checked before the UI starts: an expired SSO session gets one clear message with the exact `aws sso login` line to run, not the same SDK error repeated in every panel. `-version` prints the build version, `-debug` logs to `~/.lazyaws/debug.log`, `-keymap` switches the navigation layout for good. Temporary session credentials are cached in plaintext at `~/.lazyaws/session` (0600) to speed startup; delete the file to clear it, and exclude `~/.lazyaws` from dotfile syncers and backups.
 
 ## Why lazyaws
 
@@ -122,6 +136,8 @@ keybindings:
 ### Navigation presets
 
 A preset moves a handful of those keys at once, so a whole layout is one line instead of a dozen rebinds. Name none and you get `international`, which is the layout the table above already prints.
+
+`lazyaws --keymap=<name>` is the same thing from the command line: it validates the name, writes it here and carries on starting. The file is the source of truth either way.
 
 ```yaml
 keybindingPreset: emacs   # emacs | international | lazy | vim

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jesseduffield/gocui"
+
+	"github.com/noelruault/lazyaws/config"
 )
 
 // KeyName must remain stable because config overrides and generated docs address it rather than the current chord.
@@ -163,6 +165,37 @@ var KeyPresets = map[string]map[KeyName]string{
 		KeyChatPickModel:       "Ctrl+O",
 		KeyChatNewConversation: "Ctrl+T",
 	},
+}
+
+// KeymapReport answers a bare -keymap: which layout is in force, where the file that holds it lives, and what else could go there.
+// The path belongs here rather than in the help menu, which is per platform, long, and was being truncated to a stub.
+func KeymapReport(current string) string {
+	if current == "" {
+		current = ShippedPreset
+	}
+
+	var out strings.Builder
+	out.WriteString("keymap: " + current + "\n")
+	out.WriteString("file:   " + config.ConfigFilename() + "\n")
+	out.WriteString("others: " + strings.Join(PresetNames(), ", ") + "\n\n")
+	out.WriteString("switch with: lazyaws --keymap=<name>\n")
+	out.WriteString("edit by hand: the keybindings: block in that file, or press o then e inside lazyaws\n")
+
+	return out.String()
+}
+
+// RememberKeymap validates a preset named on the command line and writes it to the config file, so -keymap is a one-time switch rather than a flag to repeat.
+// It answers with the name it stored, and refuses an unknown one by listing what exists: silently keeping the old layout would look like the flag did nothing.
+func RememberKeymap(preset string) (string, error) {
+	if _, ok := KeyPresets[preset]; !ok {
+		return "", fmt.Errorf("keymap %q does not exist, try one of: %s", preset, strings.Join(PresetNames(), ", "))
+	}
+
+	if err := config.SetStringSetting([]string{"keybindingPreset"}, preset); err != nil {
+		return "", fmt.Errorf("writing the keymap to the config file: %w", err)
+	}
+
+	return preset, nil
 }
 
 // PresetNames lists every preset by name, alphabetically, for the docs, the config comment and the Settings row.

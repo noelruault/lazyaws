@@ -37,6 +37,23 @@ const galleryFallbackWidth = 110
 
 func main() {
 	cfg := config.Load()
+
+	if cfg.KeymapReport {
+		fmt.Print(ui.KeymapReport(cfg.User.KeybindingPreset))
+		return
+	}
+
+	// Handled before anything that can exit early: the switch writes a config file, and which of -version, -gallery or the dashboard follows it is beside the point.
+	if cfg.Keymap != "" {
+		chosen, err := ui.RememberKeymap(cfg.Keymap)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		cfg.User.KeybindingPreset = chosen
+		fmt.Println("keymap set to " + chosen + ", written to " + config.ConfigFilename())
+	}
+
 	if cfg.ShowVersion {
 		fmt.Println("lazyaws " + resolveVersion())
 		return
