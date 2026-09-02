@@ -26,12 +26,14 @@ The flag writes the choice into `config.yml` and then starts as usual, so it is 
 ## Quickstart
 
 ```sh
-go install github.com/noelruault/lazyaws@latest
+brew install noelruault/tap/lazyaws          # macOS and Linux, prebuilt
 aws sso login --sso-session <your-session>   # or: aws sso login --profile <profile>
 lazyaws
 ```
 
-Or clone the repo and run `make build`, which builds `./lazyaws` with the version stamped from `git describe`.
+`brew upgrade lazyaws` moves you to the next release; the bullet next to the version in the bottom right turns yellow when the build you are running is not the newest tag.
+
+Without Homebrew: `go install github.com/noelruault/lazyaws@latest` builds from source, the [releases page](https://github.com/noelruault/lazyaws/releases) carries archives for macOS, Linux and Windows with their `SHA256SUMS`, and cloning plus `make build` produces `./lazyaws` with the version stamped from `git describe`.
 
 You need:
 
@@ -243,6 +245,8 @@ The current profile, region and account ID go with every question, so "which ins
 ## Development and contributing
 
 Run `make` for the target list. `make dev` runs the TUI from source, `make lint test` is what CI enforces, and `make prepare-release` runs the whole gate (lint, dependency and license checks, `go mod tidy -diff`, build, race-enabled tests, release binary). `make release` produces a current-platform archive with the binary and every project, adapted-source and dependency license notice required for redistribution. `make setup` points git at `.githooks` so the gate also runs on pre-push.
+
+Cutting a release: `make release-all` builds the five archives and `dist/SHA256SUMS`, all six get uploaded to the tag, and then `make brew-formula VERSION=vX.Y.Z` writes `dist/lazyaws.rb` with the hashes read back out of the published `SHA256SUMS`, which is the file that lands in [noelruault/homebrew-tap](https://github.com/noelruault/homebrew-tap) as `Formula/lazyaws.rb`. Nobody types a hash by hand, and a formula generated from a local `dist/` agrees with one generated from the release.
 
 There is no CONTRIBUTING.md yet; issues and small PRs are welcome. The navigation registry is cloud-agnostic and `ui/providers/aws/register.go` is the single AWS-aware seam, so a new service panel, or a second cloud as a sibling package, is the cheapest substantial contribution.
 

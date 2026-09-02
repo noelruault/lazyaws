@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release release-all release-archive clean ui-test ui-demo
+.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release release-all release-archive release-checksums brew-formula clean ui-test ui-demo
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -103,11 +103,21 @@ release: ## Build a license-complete archive for the current platform
 # The platforms a release ships for. tcell and gocui are pure Go, so every one of these cross-compiles from any host.
 RELEASE_PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64
 
-release-all: ## Build license-complete archives for every supported platform
+release-all: ## Build license-complete archives for every supported platform, plus SHA256SUMS
 	$(MAKE) prepare-release
 	@set -eu; for p in $(RELEASE_PLATFORMS); do \
 		GOOS="$${p%/*}" GOARCH="$${p#*/}" $(MAKE) release-archive; \
 	done
+	$(MAKE) release-checksums
+
+# The checksums file is what the Homebrew formula is generated from, so nobody types a hash by hand.
+# Upload it with the archives: a formula generated from a local dist/ and one generated from the published release must agree, and they only can if the hashes come from the same file.
+release-checksums: ## Write dist/SHA256SUMS over the archives already in dist/ (release-all does this for you)
+	@set -eu; cd "$(DIST_DIR)"; shasum -a 256 lazyaws-*.tar.gz > SHA256SUMS; \
+		echo "Wrote $(DIST_DIR)/SHA256SUMS"; cat SHA256SUMS
+
+brew-formula: ## Generate the Homebrew formula for VERSION=vX.Y.Z into dist/lazyaws.rb
+	@set -eu; bash scripts/brew-formula.sh "$(VERSION)"
 
 # release-archive builds ONE platform's archive with no gate of its own: prepare-release runs `go test -race`, which cannot execute a cross-compiled binary, so the gate runs once on the host and the archives trust it.
 # GOOS/GOARCH arrive via the environment; TARGET_GOOS/TARGET_GOARCH read `go env`, which honours them, so the archive name and the binary inside can never disagree.
