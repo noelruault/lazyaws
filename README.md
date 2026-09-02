@@ -16,12 +16,14 @@ Drill from an ECS cluster to a service to live logs in a few keypresses. Switch 
 `,` and `.` are the shipped tab keys because `[` and `]` sit behind AltGr on Spanish, French, German, Italian and Portuguese layouts, where a terminal can deliver them as `Esc` and drill the pane up instead. If your fingers expect something else, switch once and lazyaws remembers it:
 
 ```sh
-lazyaws --keymap=lazy    # lazydocker's layout: detail tabs back on [ and ]
-lazyaws --keymap=vim     # adds Ctrl+F and Ctrl+B paging beside Ctrl+D and Ctrl+U
-lazyaws --keymap=emacs   # Ctrl+P, Ctrl+N, Ctrl+B, Ctrl+F to move, Ctrl+V to page, g to refresh
+lazyaws --keymap=international   # shipped: , and . change the detail tab
+lazyaws --keymap=lazy            # lazydocker: [ and ] change the detail tab
+lazyaws --keymap=vim             # adds Ctrl+F and Ctrl+B paging beside Ctrl+D and Ctrl+U
+lazyaws --keymap=emacs           # Ctrl+P, Ctrl+N, Ctrl+B, Ctrl+F move, Ctrl+V pages, g refreshes
+lazyaws --keymap                 # prints the active layout and the config.yml it was written to
 ```
 
-The flag writes the choice into `config.yml` and then starts as usual, so it is one run and never again. `--keymap=international` goes back to the shipped layout. `?` lists whichever layout is in force, so the menu follows the switch rather than describing the default forever.
+The flag validates the name, writes it into `config.yml` and then starts as usual, so it is one run and never again. Single keys are rebindable in that same file under `keybindings:`, or press `o` then `e` inside lazyaws to open it where it sits. `?` lists whichever layout is in force, so the menu follows the switch rather than describing the shipped layout forever.
 
 ## Quickstart
 

@@ -102,9 +102,18 @@ class Lazyaws < Formula
 
         aws sso login --sso-session <your-session>
 
-      Navigation: hjkl or the arrows to move, Tab to change panel, Enter to look into a resource,
-      "," and "." for the detail tabs, and "?" for every key the focused panel answers to.
-      If you would rather have vim, emacs or lazydocker keys: lazyaws --keymap=vim
+      hjkl or the arrows move, Tab changes panel, Enter looks into a resource, "," and "."
+      change the detail tab, and "?" lists every key the focused panel answers to.
+
+      Four navigation layouts ship. Pick one once and lazyaws remembers it:
+
+        lazyaws --keymap=international   # shipped: , and . change the detail tab
+        lazyaws --keymap=lazy            # lazydocker: [ and ] change the detail tab
+        lazyaws --keymap=vim             # adds Ctrl+F and Ctrl+B paging beside Ctrl+D and Ctrl+U
+        lazyaws --keymap=emacs           # Ctrl+P, Ctrl+N, Ctrl+B, Ctrl+F move, Ctrl+V pages, g refreshes
+
+      lazyaws --keymap on its own prints the active layout and the config.yml it was written to.
+      Single keys are rebindable in that file under keybindings:, or press o then e inside lazyaws.
     EOS
   end
 
