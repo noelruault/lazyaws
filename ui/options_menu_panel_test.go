@@ -8,7 +8,21 @@ import (
 
 	"github.com/noelruault/lazyaws/config"
 	"github.com/noelruault/lazyaws/ui/types"
+	"github.com/noelruault/lazyaws/ui/utils"
 )
+
+// menuGroupTitle names the group a heading row opens, and returns "" for every other row.
+// A heading is recognised by its second column being the rule, because the first column carries a colour and cannot be compared against a plain title.
+func menuGroupTitle(item *types.MenuItem) string {
+	if len(item.LabelColumns) != 2 {
+		return ""
+	}
+	if utils.Decolorise(item.LabelColumns[1]) != strings.Repeat("─", menuRuleWidth) {
+		return ""
+	}
+
+	return utils.Decolorise(item.LabelColumns[0])
+}
 
 // The footer is one hint now, so the menu is the whole map of the keyboard: a key that works in a view and is missing here is a key nothing on screen mentions.
 func TestTheMenuListsEveryKeyTheFocusedViewAnswersTo(t *testing.T) {
@@ -38,19 +52,22 @@ func TestTheMenuListsEveryKeyTheFocusedViewAnswersTo(t *testing.T) {
 	}
 }
 
-// Every key here is rebindable and the menu is where a user goes looking, so it has to say so and name the file.
+// Every key here is rebindable and the menu is where a user goes looking, so it has to say so and point at both routes.
+// The path itself is deliberately absent: it is long enough to set the popup's width on its own, and `lazyaws --keymap` prints it on demand.
 func TestTheMenuSaysWhereTheKeysAreRebound(t *testing.T) {
 	gui, g := newHeadlessGui(t)
 
 	run(t, g, func() error { return gui.switchFocus(gui.Views.EC2) })
 	run(t, g, func() error { return gui.handleCreateOptionsMenu(g, gui.Views.EC2) })
 
-	menu := waitForView(t, g, gui.Views.Menu, "keybindings:")
-	if !strings.Contains(menu, "keybindings:") {
-		t.Errorf("the menu never mentions the config key that rebinds these:\n%s", menu)
+	menu := utils.Decolorise(waitForView(t, g, gui.Views.Menu, "REBIND"))
+	for _, want := range []string{"o then e", "--keymap"} {
+		if !strings.Contains(menu, want) {
+			t.Errorf("the menu does not offer %q as a way to rebind these keys:\n%s", want, menu)
+		}
 	}
-	if !strings.Contains(menu, config.ConfigFilename()) {
-		t.Errorf("the menu does not name the file to rebind them in (%s):\n%s", config.ConfigFilename(), menu)
+	if strings.Contains(menu, config.ConfigFilename()) {
+		t.Errorf("the menu spells out the config path, which the flag reports instead:\n%s", menu)
 	}
 }
 
@@ -67,8 +84,8 @@ func TestTheMenuGroupsKeysByWhatTheyDo(t *testing.T) {
 
 			var titles []string
 			for _, item := range items {
-				if item.LabelColumns[0] == "" && item.LabelColumns[1] != "" {
-					titles = append(titles, item.LabelColumns[1])
+				if title := menuGroupTitle(item); title != "" {
+					titles = append(titles, title)
 				}
 			}
 
@@ -103,12 +120,16 @@ func TestTheMenuGroupsKeysByWhatTheyDo(t *testing.T) {
 			inMoving := false
 			moving := map[string]bool{}
 			for _, item := range items {
-				if item.LabelColumns[0] == "" {
-					inMoving = item.LabelColumns[1] == menuGroups[0].title
+				if title := menuGroupTitle(item); title != "" {
+					inMoving = title == menuGroups[0].title
 					continue
 				}
+				keys := utils.Decolorise(item.LabelColumns[0])
+				if keys == "" {
+					continue // the blank row between groups
+				}
 				if inMoving {
-					for _, key := range strings.Split(item.LabelColumns[0], " / ") {
+					for _, key := range strings.Split(keys, " / ") {
 						moving[key] = true
 					}
 				}
