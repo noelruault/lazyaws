@@ -28,14 +28,18 @@ The flag validates the name, writes it into `config.yml` and then starts as usua
 ## Quickstart
 
 ```sh
-brew install noelruault/tap/lazyaws          # macOS and Linux, prebuilt
+brew install noelruault/tap/lazyaws
 aws sso login --sso-session <your-session>   # or: aws sso login --profile <profile>
 lazyaws
 ```
 
-`brew upgrade lazyaws` moves you to the next release. The build you are running is printed in the bottom right of the dashboard and by `lazyaws -version`; nothing phones home to compare it against the newest tag.
+Homebrew is the install: macOS and Linux, arm64 and amd64, a prebuilt binary and no Go toolchain. There is no `brew tap` and no `brew trust` step either, because naming the formula in full does both at once. `brew upgrade lazyaws` moves you to the next release, and the build you are running is printed in the bottom right of the dashboard and by `lazyaws -version`; nothing phones home to compare it against the newest tag.
 
-Without Homebrew: `go install github.com/noelruault/lazyaws@latest` builds from source, the [releases page](https://github.com/noelruault/lazyaws/releases) carries archives for macOS, Linux and Windows with their `SHA256SUMS`, and cloning plus `make build` produces `./lazyaws` with the version stamped from `git describe`.
+### Other ways in
+
+- `go install github.com/noelruault/lazyaws@latest` builds from source, and needs Go 1.27 or newer.
+- The [releases page](https://github.com/noelruault/lazyaws/releases) carries archives for macOS, Linux and Windows, each with its `SHA256SUMS`. Windows is archive-only; Homebrew does not ship it.
+- Cloning the repo and running `make build` produces `./lazyaws` with the version stamped from `git describe`.
 
 You need:
 
