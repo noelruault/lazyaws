@@ -33,7 +33,7 @@ aws sso login --sso-session <your-session>   # or: aws sso login --profile <prof
 lazyaws
 ```
 
-`brew upgrade lazyaws` moves you to the next release; the bullet next to the version in the bottom right turns yellow when the build you are running is not the newest tag.
+`brew upgrade lazyaws` moves you to the next release. The build you are running is printed in the bottom right of the dashboard and by `lazyaws -version`; nothing phones home to compare it against the newest tag.
 
 Without Homebrew: `go install github.com/noelruault/lazyaws@latest` builds from source, the [releases page](https://github.com/noelruault/lazyaws/releases) carries archives for macOS, Linux and Windows with their `SHA256SUMS`, and cloning plus `make build` produces `./lazyaws` with the version stamped from `git describe`.
 
