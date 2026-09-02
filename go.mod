@@ -2,6 +2,13 @@ module github.com/noelruault/lazyaws
 
 go 1.27.0
 
+// Superseded by v0.4.0.
+retract (
+	v0.3.0
+	v0.2.0
+	v0.1.0
+)
+
 require (
 	github.com/aws/aws-sdk-go-v2 v1.43.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.37
