@@ -144,6 +144,16 @@ func overviewUnavailableBecause(kind string, err error) string {
 // syncMainWidth re-renders the open tab when main's inner width changes.
 // It runs from layout for the same reason syncQWidth does: that is the one place view dimensions can be read without racing the render.
 // An overview is laid out for the width captured when its task was built and wrapping is off, so after a resize the old text is either cut off or leaves its second column stranded.
+// syncSideListWidths re-renders whichever side lists are laid out for a width their view no longer has.
+// Each panel compares its own last render width, so a settled layout costs eight integer comparisons per frame and re-renders nothing.
+func (gui *Gui) syncSideListWidths() {
+	for _, sidePanel := range gui.allSidePanels() {
+		if err := sidePanel.RerenderListIfResized(); err != nil {
+			gui.Log.Warn(err.Error())
+		}
+	}
+}
+
 func (gui *Gui) syncMainWidth() {
 	width := gui.Views.Main.InnerWidth()
 	if width == gui.mainWidth {

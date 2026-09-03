@@ -29,12 +29,16 @@ type ISideListPanel interface {
 	HandleNextMainTab() error
 	CurrentMainRows() *MainRows
 	SelectedCopyValue() (string, bool)
+	RerenderListIfResized() error
 }
 
 type SideListPanel[T comparable] struct {
 	ContextState *ContextState[T]
 
 	ListPanel[T]
+
+	// renderedWidth is the view's inner width as of the last render, so a layout pass can tell rows that fit from rows laid out for a geometry the view no longer has.
+	renderedWidth int
 
 	NoItemsMessage string
 
@@ -339,8 +343,22 @@ func (self *SideListPanel[T]) RerenderList() error {
 	return nil
 }
 
+// RerenderListIfResized re-lays the rows out when the view is not the width they were rendered for.
+// Without it a list rendered before the first layout pass keeps that geometry: views are created 10 columns wide, so every row sits truncated to 8 characters until something else happens to re-render the panel. A refresh tick normally hides this, which is why it showed up as a logged-out bug: with no credentials the tick returns early and the stale render is what stays on screen.
+// It also covers the terminal being resized, where the same staleness lasts until the next tick.
+func (self *SideListPanel[T]) RerenderListIfResized() error {
+	if self.View == nil || self.View.InnerWidth() == self.renderedWidth {
+		return nil
+	}
+
+	return self.RerenderList()
+}
+
 // renderTable lays the rows out for the view's current width, which is why it must run inside the Update closure rather than ahead of it.
+// The width it used is recorded here, on the one goroutine gocui runs Update closures on, so RerenderListIfResized can tell a stale layout from a current one.
 func (self *SideListPanel[T]) renderTable(items []T) (string, error) {
+	self.renderedWidth = self.View.InnerWidth()
+
 	if self.GetTableCellsFit == nil {
 		table := make([][]string, len(items))
 		for i, item := range items {

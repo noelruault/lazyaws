@@ -59,6 +59,10 @@ func (gui *Gui) layout(g *gocui.Gui) error {
 		return err
 	}
 
+	// Side lists re-lay out here for the same reason main's tabs do below: this is the pass that just gave them their width.
+	// Without it the first render survives at the geometry views are created with, 10 columns, and every row stays cut to 8 characters until something else re-renders the panel. A refresh tick usually does, which is what made it look like a logged-out-only bug: with no credentials the tick returns before rendering anything.
+	gui.syncSideListWidths()
+
 	// Chat rewraps here because layout owns race-free access to the new width.
 	gui.syncQWidth()
 
