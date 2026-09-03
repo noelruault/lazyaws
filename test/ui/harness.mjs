@@ -142,6 +142,11 @@ export async function openTerminal ({ url, screenshotDir, viewport = defaultView
       await page.screenshot({ path: `${screenshotDir}/${name}.png` })
     },
 
+    // A region of the same page, for a still that documents one row rather than the whole dashboard.
+    async screenshotClip (name, clip) {
+      await page.screenshot({ path: `${screenshotDir}/${name}.png`, clip })
+    },
+
     close: () => browser.close(),
   }
 

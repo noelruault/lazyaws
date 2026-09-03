@@ -9,6 +9,15 @@ Drill from an ECS cluster to a service to live logs in a few keypresses. Switch 
 <!-- The checked-in GIF is recorded by test/ui/demo.mjs against the seeded moto harness, so published media cannot disclose an AWS account; regenerate it with `make ui-demo`. -->
 <p align="center"><img src="docs/demo.gif" alt="lazyaws demo: the eight resource panels, the EC2 and secret overviews, filtering with the pane following the selection, and the full-id copy popup" width="900"></p>
 
+## It cannot change your account unless you ask it to
+
+A plain `lazyaws` is a viewer. Nothing that starts, stops, deletes, rotates, scales or edits is offered, no shell opens, and the AWS client itself refuses a mutating call **before it is signed or sent**, so a first run on production cannot break what you are looking at. The footer says which mode you are in, always, in every panel:
+
+<!-- Captured from the real binary against the seeded moto harness by test/ui/shot.mjs, so published media carries fabricated data only; regenerate it with `make ui-shots`. Shown at its natural 300px so the browser does not upscale a one-row crop. -->
+<p align="center"><img src="docs/read-only-footer.png" alt="the lazyaws footer showing a green [read-only] badge next to the ? keys hint" width="300"></p>
+
+Want the actions? Start it as `lazyaws --allow-writes` and the badge turns into a yellow `[writes]`. That flag is the only thing that grants them: no config file, no menu, no setting can. [How it is enforced](#read-only-by-default), including what a read-only session is still allowed to do.
+
 ## Navigation in ten lines
 
 `↑` `↓` or `k` `j` move the cursor. `Tab` and `Shift+Tab`, or `←` `→`, or `h` `l`, move between the eight panels. `Enter` looks into whatever is selected. `,` and `.` change the detail tab on the right. `?` lists every key the panel you are on answers to, and `q` quits.

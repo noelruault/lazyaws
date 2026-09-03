@@ -78,11 +78,11 @@ go build -o "$here/.lazyaws" "$repo"
 
 # ttyd owns the pty; the browser viewport is what sizes it (see harness.mjs).
 # The journeys need --allow-writes: they drive the actions menus, which a default run does not offer because lazyaws starts read-only.
-# The demo recording deliberately runs without it. It only browses, so the published GIF shows the [read-only] badge a first run really carries rather than a mode nobody starts in.
+# The demo recording and the still captures deliberately run without it. They only browse, so the published media shows the [read-only] badge a first run really carries rather than a mode nobody starts in.
 app_flags=--allow-writes
-if [ "${DRIVER:-}" = demo.mjs ]; then
-	app_flags=
-fi
+case "${DRIVER:-}" in
+demo.mjs | shot.mjs) app_flags= ;;
+esac
 
 # XDG_CONFIG_HOME pinned because os.UserConfigDir answers ~/Library/Application Support on macOS, and the rebind config written above must resolve on every platform the harness runs on.
 env -i HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" PATH="$PATH" TERM=xterm-256color \

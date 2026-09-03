@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release release-all release-archive release-checksums brew-formula clean ui-test ui-demo
+.PHONY: help dev debug build install test lint vuln license-check publish-check bench cover keys deps-outdated setup prepare-release release release-all release-archive release-checksums brew-formula clean ui-test ui-shots ui-demo
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -34,6 +34,9 @@ test: ## Run the test suite
 
 ui-test: ## Drive the built TUI in ttyd against a seeded fake AWS with Playwright (needs docker, ttyd, aws, bun; one-off: cd test/ui && bun install && bunx playwright install chromium)
 	bash test/ui/run.sh $(JOURNEYS)
+
+ui-shots: ## Re-capture the README's still images (docs/read-only-footer.png) against the seeded fake AWS (needs ui-test's tools)
+	DRIVER=shot.mjs bash test/ui/run.sh
 
 ui-demo: ## Re-record docs/demo.gif against the seeded fake AWS, so the published media carries fabricated data only (needs ui-test's tools plus ffmpeg)
 	DRIVER=demo.mjs bash test/ui/run.sh
