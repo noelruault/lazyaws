@@ -404,7 +404,8 @@ func TestShippedActionMenusMarkTheirMutatingItems(t *testing.T) {
 		{"EC2", func() error { return gui.openActionsMenu("EC2", gui.EC2Actions()) }, nil},
 		{"S3", func() error { return gui.openActionsMenu("S3", gui.S3Actions()) }, nil},
 		{"EKS", func() error { return gui.openActionsMenu("EKS", gui.EKSActions()) }, nil},
-		{"ECR", func() error { return gui.openActionsMenu("ECR", gui.ECRActions()) }, []string{"Preview lifecycle policy (dry run)"}},
+		// The lifecycle preview left this menu when the guard arrived: it changes no policy, but StartLifecyclePolicyPreview is still a call asking ECR to make something, and a read-only session promises none are made.
+		{"ECR", func() error { return gui.openActionsMenu("ECR", gui.ECRActions()) }, nil},
 		{"Secrets", func() error { return gui.openActionsMenu("Secrets", gui.SecretsActions()) }, []string{"View value"}},
 	}
 
@@ -442,7 +443,7 @@ func TestReadOnlyRefusesTheCLIBackend(t *testing.T) {
 
 	run(t, g, gui.handleToggleQ)
 
-	message := waitForView(t, g, gui.Views.Confirmation, "read-only mode")
+	message := waitForView(t, g, gui.Views.Confirmation, "Read-only mode is on")
 	if !strings.Contains(message, "--trust-all-tools") {
 		t.Errorf("message = %q, want the actual reason: the CLI runs commands", message)
 	}

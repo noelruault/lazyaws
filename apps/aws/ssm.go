@@ -61,6 +61,11 @@ func (c *Client) CheckSSMConnectivity(ctx context.Context, instanceID string) (*
 }
 
 func (c *Client) LaunchSSMSession(instanceID string, region string) error {
+	// A shell on an instance, in a window this process does not own, so neither the SDK guard nor the subprocess gate would ever see it.
+	if err := requireWrites("a shell on " + instanceID); err != nil {
+		return err
+	}
+
 	terminal := detectTerminal()
 	if terminal == "" {
 		return fmt.Errorf("could not detect terminal emulator")
@@ -128,6 +133,11 @@ func detectTerminal() string {
 }
 
 func (c *Client) StartPortForward(instanceID string, region string, localPort int, remotePort int, remoteHost string) error {
+	// A tunnel into the account is an action even though traffic through it may only read: SSM opens a session, and the port outlives this process.
+	if err := requireWrites("a port forward to " + instanceID); err != nil {
+		return err
+	}
+
 	terminal := detectTerminal()
 	if terminal == "" {
 		return fmt.Errorf("could not detect terminal emulator")

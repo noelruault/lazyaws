@@ -10,6 +10,12 @@ import (
 
 // Run checks authentication before gocui owns the terminal so recovery guidance remains readable.
 func Run(cfg config.Config, version string) error {
+	// Before the first client exists, and in one place, so the flag and the gate it opens cannot drift apart.
+	// Nothing closes the gate again: a session that started read-only stays read-only, which is what makes the flag on the command line the whole answer to "can this change anything".
+	if cfg.AllowWrites {
+		awsapp.AllowWrites()
+	}
+
 	profile := currentProfileName()
 	profiles := listAWSProfiles()
 

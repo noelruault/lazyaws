@@ -31,6 +31,10 @@ func TestParse(t *testing.T) {
 		{name: "keymap alone asks where the file is", args: []string{"-keymap"}, want: Config{KeymapReport: true}},
 		// A flag after the bare form is not a layout name, so it must not be mistaken for one.
 		{name: "keymap alone with another flag still reports", args: []string{"-keymap", "-debug"}, want: Config{Debug: true, KeymapReport: true}},
+		// The default is the whole point: parsing nothing must leave writes denied, and only the flag may grant them.
+		{name: "writes are denied unless asked for", args: []string{"-debug"}, want: Config{Debug: true}},
+		{name: "allow-writes grants writes", args: []string{"-allow-writes"}, want: Config{AllowWrites: true}},
+		{name: "the double dash form works too", args: []string{"--allow-writes"}, want: Config{AllowWrites: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -16,7 +16,8 @@ func (gui *Gui) handleOpenConfig(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	return gui.WithWaitingStatus("opening editor", func() error {
-		return gui.runSubprocess(exec.Command(editor, config.ConfigFilename()))
+		// Permitted while read-only: the file is lazyaws's own settings on this machine, and nothing in AWS moves because someone edited it.
+		return gui.runSubprocessAllowedInReadOnly(exec.Command(editor, config.ConfigFilename()))
 	})
 }
 

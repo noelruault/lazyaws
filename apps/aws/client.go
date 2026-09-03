@@ -28,6 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/logging"
+	"github.com/aws/smithy-go/middleware"
 )
 
 type Config struct {
@@ -83,6 +84,10 @@ func newClientFromConfig(cfg aws.Config) *Client {
 	// A retry mode set only through load options is skipped on the cached path, which is the path taken in normal operation.
 	// Each service client resolves cfg.RetryMode into its own retryer as it is constructed, so this has to be assigned before the clients below are built. An explicit cfg.Retryer still wins: the SDK resolves that first and leaves the mode unread.
 	cfg.RetryMode = retryMode
+
+	// Every service client below inherits this, and this constructor is the only one in the package, so no client exists that a mutating call can be made through unrefused.
+	// Copied rather than appended in place: cfg arrives by value but its APIOptions slice does not, and growing the caller's backing array would attach the guard to whatever else shares it.
+	cfg.APIOptions = append(append(make([]func(*middleware.Stack) error, 0, len(cfg.APIOptions)+1), cfg.APIOptions...), readOnlyGuard)
 
 	return &Client{
 		EC2:                    ec2.NewFromConfig(cfg),

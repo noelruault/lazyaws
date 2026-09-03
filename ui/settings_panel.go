@@ -14,12 +14,30 @@ import (
 	"github.com/noelruault/lazyaws/ui/utils"
 )
 
+// readOnlySettingName is shared by the row and the guard that refuses to toggle it, so a rename cannot silently unhook one from the other.
+const readOnlySettingName = "Read-only mode"
+
+// readOnly is the effective policy, and it starts closed: without --allow-writes nothing here offers to change anything, and a nil config counts as read-only rather than as permission.
+// The config file's own switch stacks on top and can only tighten it, because a file inherited from a dotfile repo should never be able to grant writes nobody asked for today.
 func (gui *Gui) readOnly() bool {
-	return gui.Config != nil && gui.Config.User.ReadOnly
+	if gui.Config == nil || !gui.Config.AllowWrites {
+		return true
+	}
+
+	return gui.Config.User.ReadOnly
 }
 
 func (gui *Gui) refuseReadOnly(what string) error {
-	return gui.createConfirmationPanel("Read-only mode", what+" changes things, so read-only mode won't do it.\n\nTurn read-only mode off in Settings (press o) if you meant to.", nil, nil)
+	return gui.createConfirmationPanel("Read-only", what+" changes things, so lazyaws won't do it.\n\n"+gui.readOnlyReason(), nil, nil)
+}
+
+// readOnlyReason names whichever of the two switches is actually in force, so the way out is the one that applies rather than both.
+func (gui *Gui) readOnlyReason() string {
+	if gui.Config == nil || !gui.Config.AllowWrites {
+		return "lazyaws starts read-only. Restart it as `lazyaws --allow-writes` to permit actions."
+	}
+
+	return "Read-only mode is on. Turn it off in Settings (press o) if you meant to."
 }
 
 type settingsState struct {
@@ -83,7 +101,7 @@ func (gui *Gui) settings() []setting {
 			emptyHint: "(no models listed yet)",
 		},
 		{
-			name: "Read-only mode",
+			name: readOnlySettingName,
 			help: "hide every action that changes AWS state",
 			path: []string{"readOnly"},
 			get:  func(user *config.UserConfig) bool { return user.ReadOnly },
@@ -253,6 +271,11 @@ func (gui *Gui) handleSettingsToggle() error {
 		return nil
 	}
 	selected := all[gui.State.Settings.selected]
+
+	// Turning this row off would otherwise look like it granted writes and change nothing, because the flag is what the guard reads.
+	if selected.name == readOnlySettingName && (gui.Config == nil || !gui.Config.AllowWrites) {
+		return gui.createConfirmationPanel("Read-only", "This session cannot be given write access.\n\nlazyaws starts read-only and only `lazyaws --allow-writes` lifts it, so the switch here would change the file without changing what this session can do.", nil, nil)
+	}
 
 	var save error
 	switch {

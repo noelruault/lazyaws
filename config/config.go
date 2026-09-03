@@ -25,6 +25,10 @@ type Config struct {
 	// The path is platform dependent and too long for the help menu, so the flag is where a user finds it.
 	KeymapReport bool
 
+	// AllowWrites is the only thing that permits lazyaws to change anything in AWS, and it exists only as a flag.
+	// It is deliberately not a config file setting: a first run should be safe without anyone having read the documentation, and a file that grants writes could be inherited from a dotfile repo without the user deciding it today.
+	AllowWrites bool
+
 	User UserConfig
 }
 
@@ -76,6 +80,7 @@ func parse(fs *flag.FlagSet, args []string) Config {
 	showVersion := fs.Bool("version", false, "print version and exit")
 	showGallery := fs.Bool("gallery", false, "print the UI component gallery and exit")
 	debug := fs.Bool("debug", false, "log to ~/.lazyaws/debug.log instead of discarding")
+	allowWrites := fs.Bool("allow-writes", false, "permit actions that change AWS state; without it every mutating call is refused")
 
 	keymap := &keymapFlag{}
 	fs.Var(keymap, "keymap", "-keymap=<name> switches the navigation layout for good (international, lazy, vim, emacs); -keymap alone says where the file is")
@@ -98,6 +103,7 @@ func parse(fs *flag.FlagSet, args []string) Config {
 		Debug:        *debug,
 		Keymap:       name,
 		KeymapReport: keymap.bare && name == "",
+		AllowWrites:  *allowWrites,
 	}
 }
 

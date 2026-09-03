@@ -77,11 +77,12 @@ CONF
 go build -o "$here/.lazyaws" "$repo"
 
 # ttyd owns the pty; the browser viewport is what sizes it (see harness.mjs).
+# --allow-writes because the journeys drive the actions menus, which a default run does not offer: lazyaws starts read-only. The read-only default has its own tests in Go, where a refusal can be asserted without a browser.
 # XDG_CONFIG_HOME pinned because os.UserConfigDir answers ~/Library/Application Support on macOS, and the rebind config written above must resolve on every platform the harness runs on.
 env -i HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" PATH="$PATH" TERM=xterm-256color \
 	AWS_ENDPOINT_URL="$endpoint" AWS_REGION="$region" AWS_PROFILE="$profile" \
 	AWS_ACCESS_KEY_ID=lazyaws-ui-test AWS_SECRET_ACCESS_KEY=lazyaws-ui-test \
-	ttyd --writable --port "$ttyd_port" --interface 127.0.0.1 "$here/.lazyaws" \
+	ttyd --writable --port "$ttyd_port" --interface 127.0.0.1 "$here/.lazyaws" --allow-writes \
 	>"$here/.ttyd.log" 2>&1 &
 ttyd_pid=$!
 for _ in $(seq 1 40); do

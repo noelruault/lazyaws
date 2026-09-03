@@ -59,12 +59,27 @@ func newHeadlessGui(t *testing.T) (*Gui, *gocui.Gui) {
 	return newHeadlessGuiWithConfig(t, user)
 }
 
+// newHeadlessGuiWithConfig builds the app as `lazyaws --allow-writes` runs it, because a test that drives an action wants the app that offers actions.
+// The default, writes denied, has its own constructor below and its own tests: making it the default here would turn every action test into a test of the refusal panel.
 func newHeadlessGuiWithConfig(t *testing.T, user config.UserConfig) (*Gui, *gocui.Gui) {
+	t.Helper()
+
+	return newHeadlessGuiWithAppConfig(t, config.Config{User: user, AllowWrites: true})
+}
+
+// newReadOnlyHeadlessGui builds the app as a bare `lazyaws` run does, with no flag and therefore no way to change anything.
+func newReadOnlyHeadlessGui(t *testing.T) (*Gui, *gocui.Gui) {
+	t.Helper()
+
+	return newHeadlessGuiWithAppConfig(t, config.Config{User: config.DefaultUserConfig()})
+}
+
+func newHeadlessGuiWithAppConfig(t *testing.T, appConfig config.Config) (*Gui, *gocui.Gui) {
 	t.Helper()
 
 	g := testScreen
 
-	gui, err := NewGui(&config.Config{User: user}, nil, make(chan error, 1))
+	gui, err := NewGui(&appConfig, nil, make(chan error, 1))
 	if err != nil {
 		t.Fatalf("NewGui failed: %v", err)
 	}

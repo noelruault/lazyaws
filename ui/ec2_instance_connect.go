@@ -15,6 +15,11 @@ import (
 )
 
 func (gui *Gui) handleEC2InstanceConnect(inst *aws.Instance) error {
+	// Refused at the front door rather than three steps in: the flow prompts for a user, generates a key and pushes it with SendSSHPublicKey, and asking all that before refusing wastes the answer.
+	if gui.readOnly() {
+		return gui.refuseReadOnly("A shell on the instance")
+	}
+
 	host := ec2InstanceConnectHost(inst)
 	if host == "" {
 		return gui.createErrorPanel(fmt.Sprintf("instance %s has no reachable IP", inst.ID))

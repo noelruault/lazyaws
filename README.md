@@ -47,11 +47,13 @@ You need:
 - For SSO (IAM Identity Center), a valid session: `aws sso login` against the `sso-session` your profiles share covers all of them at once. Setting the file up is [AWS's CLI SSO guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html); static credential profiles work too and need no login step.
 - A region, from `AWS_REGION` or `-region <region>`.
 
-Credentials are checked before the UI starts: an expired SSO session gets one clear message with the exact `aws sso login` line to run, not the same SDK error repeated in every panel. `-version` prints the build version, `-debug` logs to `~/.lazyaws/debug.log`, `-keymap` switches the navigation layout for good. Temporary session credentials are cached in plaintext at `~/.lazyaws/session` (0600) to speed startup; delete the file to clear it, and exclude `~/.lazyaws` from dotfile syncers and backups.
+**lazyaws starts read-only.** A plain `lazyaws` can look at everything and change nothing: mutating calls are refused inside the AWS client itself, not merely hidden in the menus, so a first run cannot break anything you are looking at. Add `--allow-writes` when you want the actions, and see [Read-only by default](#read-only-by-default) for what that covers.
+
+Credentials are checked before the UI starts: an expired SSO session gets one clear message with the exact `aws sso login` line to run, not the same SDK error repeated in every panel. `-version` prints the build version, `-debug` logs to `~/.lazyaws/debug.log`, `-keymap` switches the navigation layout for good, `--allow-writes` permits actions. Temporary session credentials are cached in plaintext at `~/.lazyaws/session` (0600) to speed startup; delete the file to clear it, and exclude `~/.lazyaws` from dotfile syncers and backups.
 
 ## Why lazyaws
 
-Everyday AWS questions, which tasks are failing, what changed in this deployment, what is in that secret, mean either a chain of console pages or a CLI command whose flags you have to look up. lazyaws keeps the whole account on one screen, a keypress away, with guardrails: read-only mode hides every mutating action, and the chat is off until you turn it on.
+Everyday AWS questions, which tasks are failing, what changed in this deployment, what is in that secret, mean either a chain of console pages or a CLI command whose flags you have to look up. lazyaws keeps the whole account on one screen, a keypress away, with guardrails: it starts read-only and needs `--allow-writes` before it will change anything, and the chat is off until you turn it on.
 
 ## Features
 
@@ -59,7 +61,7 @@ Everyday AWS questions, which tasks are failing, what changed in this deployment
 - Actions on every resource: scale or redeploy a service, exec into a task, stop it, connect to an EC2 instance over SSM, reveal a secret.
 - A command bar: `:ecs:my-cluster:my-service` goes straight there, `:scrts` fuzzy-matches when nothing else does, and every keystroke previews what Enter will do.
 - Chat about the account you are browsing, on your own credentials: the default `bedrock` backend is a plain AWS call to models the account can already invoke, and the optional `kiro` backend shells out to the Kiro CLI. Off by default.
-- Read-only mode: one switch makes lazyaws a viewer. Nothing that starts, stops, deletes, rotates or edits is offered, and shells are refused.
+- Read-only by default: without `--allow-writes` nothing that starts, stops, deletes, rotates or edits is offered, shells are refused, and the AWS client itself refuses a mutating call before it is sent.
 - A settings screen: `o` lists switches, toggles write straight into `config.yml`, and your comments and unmanaged keys survive the write.
 - Profile switching with preflight: profiles from `~/.aws/config`, one Enter to switch, and every tab reloads for the new account.
 
@@ -234,9 +236,13 @@ readOnly: false                             # hide every action that changes AWS
 
 You don't have to write any of this by hand: `o` opens the Settings screen, toggles write straight into the file (keeping your comments and any keys they don't manage), and `o` then `e` opens it in `$EDITOR` for the keys the screen doesn't cover (theme, panel widths, keybindings). The refresh intervals cycle through a ladder of values on the screen; the file takes any number.
 
-### Read-only mode
+### Read-only by default
 
-`readOnly: true` (or the Settings switch) makes lazyaws a viewer. The actions menus keep only what reads; SSM shells and ECS exec are refused, because a shell can change anything; the `kiro` chat backend is refused too, since `--trust-all-tools` lets it run AWS commands. Browsing, filtering, logs, presigned URLs and secret reveal all still work.
+lazyaws cannot change anything unless you start it as `lazyaws --allow-writes`. Without the flag the actions menus keep only what reads, SSM shells and ECS exec are refused because a shell can change anything, and the `kiro` chat backend is refused too since `--trust-all-tools` lets it run AWS commands. Browsing, filtering, logs, presigned URLs and secret reveal all still work, and the footer says `read only` so you can see which mode you are in.
+
+This is enforced rather than presented. Every AWS client the app builds carries a guard in its middleware stack that refuses any operation outside a read allowlist before the request is serialized, signed or sent, so a mutating call is not made rather than made and ignored; the few things that run outside the SDK, an SSM session in a new terminal window, a port forward, `aws eks update-kubeconfig`, and the `aws ecs execute-command` and `aws ssm start-session` children, refuse on their own. The test suite reads every AWS operation the code calls back out of the source and fails if one is not classified, so a new call cannot slip in unclassified.
+
+`readOnly: true` in the config file (or the Settings switch) is the other half: it can tighten the policy but never loosen it, so a config inherited from a dotfile repo cannot grant writes and the Settings row says so instead of pretending to work. Reading an object to a local file, editing lazyaws's own config, and signing in are all permitted while read-only: none of them change anything in AWS.
 
 ### Chat
 

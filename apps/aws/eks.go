@@ -361,6 +361,11 @@ func (c *Client) GetAddonDetails(ctx context.Context, clusterName, addonName str
 }
 
 func (c *Client) UpdateKubeconfig(ctx context.Context, clusterName string) error {
+	// Rewrites the operator's ~/.kube/config, which is a change to their machine rather than to AWS, and still not one a read-only session should make.
+	if err := requireWrites("rewriting ~/.kube/config for " + clusterName); err != nil {
+		return err
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)

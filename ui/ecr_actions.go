@@ -54,8 +54,10 @@ func (gui *Gui) ECRActions() []resources.Action {
 			},
 		},
 		{
-			// Preview remains available in read-only mode because ECR's dry run does not change the policy.
+			// A dry run leaves the policy alone, but StartLifecyclePolicyPreview is still a call that asks ECR to create something, and a read-only session promises that no such call is made.
+			// So it is marked mutating and hidden with the rest: allowing it would mean read-only means "almost nothing", which is not a promise worth making.
 			Name:    "Preview lifecycle policy (dry run)",
+			Mutates: true,
 			Timeout: 30 * time.Second,
 			Run:     gui.ecrPreviewLifecyclePolicy(repo),
 		},

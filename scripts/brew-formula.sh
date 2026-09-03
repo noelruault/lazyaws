@@ -102,6 +102,10 @@ class Lazyaws < Formula
 
         aws sso login --sso-session <your-session>
 
+      lazyaws starts read-only: it can look at everything and change nothing, because every
+      mutating AWS call is refused inside the client rather than merely hidden in the menus.
+      Start it as "lazyaws --allow-writes" when you want the actions.
+
       hjkl or the arrows move, Tab changes panel, Enter looks into a resource, "," and "."
       change the detail tab, and "?" lists every key the focused panel answers to.
 
