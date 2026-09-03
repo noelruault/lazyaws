@@ -4,8 +4,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fatih/color"
-
 	"github.com/noelruault/lazyaws/ui/presentation"
 	"github.com/noelruault/lazyaws/ui/utils"
 )
@@ -117,13 +115,12 @@ func (gui *Gui) renderGlobalOptions() error {
 }
 
 // modeBadge names which of the two modes this session is in, and never renders nothing: an absent badge would leave the writable session, the one worth noticing, looking exactly like a session whose footer had not painted yet.
-// Green for read-only because it is the safe state and the badge is reassurance; yellow for writes because it is a caution and not an error, which red is reserved for here.
 func (gui *Gui) modeBadge() string {
 	if gui.readOnly() {
-		return utils.ColoredString("["+readOnlyBadge+"]", color.FgGreen)
+		return presentation.Pill(readOnlyBadge, presentation.PillSuccess)
 	}
 
-	return utils.ColoredString("["+writesBadge+"]", color.FgYellow)
+	return presentation.Pill(writesBadge, presentation.PillWarning)
 }
 
 // The two labels are constants because the tests that prove the footer says so read them, and a literal in both places would let the badge and its test drift apart.
