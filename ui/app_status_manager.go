@@ -111,16 +111,23 @@ func (gui *Gui) getInformationContent() string {
 // The menu is contextual and complete, so printing a subset of the same keys along the bottom row spent a whole terminal row restating what one keycap already reaches.
 func (gui *Gui) renderGlobalOptions() error {
 	help := option{key: describeKey(gui.Keys.Get(KeyHelp).Key), label: "keys"}
-	line := optionsToString([]option{help})
 
-	// Said on the dashboard, not only inside the menus: starting read-only is worth nothing to a first-time user who cannot see that it is in force.
-	// Green rather than a warning colour, because this is the safe state and the badge is reassurance rather than an alarm.
-	if gui.readOnly() {
-		line += optionsSeparator + utils.ColoredString(readOnlyBadge, color.FgGreen)
-	}
-
-	return gui.renderString(gui.g, "options", line)
+	// The badge leads the footer because it answers the question a user asks before any keybinding matters: can this thing change my account.
+	return gui.renderString(gui.g, "options", gui.modeBadge()+optionsSeparator+optionsToString([]option{help}))
 }
 
-// readOnlyBadge is checked by the test that proves the footer says so, which is why it is a constant rather than a literal in the line above.
-const readOnlyBadge = "read only"
+// modeBadge names which of the two modes this session is in, and never renders nothing: an absent badge would leave the writable session, the one worth noticing, looking exactly like a session whose footer had not painted yet.
+// Green for read-only because it is the safe state and the badge is reassurance; yellow for writes because it is a caution and not an error, which red is reserved for here.
+func (gui *Gui) modeBadge() string {
+	if gui.readOnly() {
+		return utils.ColoredString("["+readOnlyBadge+"]", color.FgGreen)
+	}
+
+	return utils.ColoredString("["+writesBadge+"]", color.FgYellow)
+}
+
+// The two labels are constants because the tests that prove the footer says so read them, and a literal in both places would let the badge and its test drift apart.
+const (
+	readOnlyBadge = "read-only"
+	writesBadge   = "writes"
+)

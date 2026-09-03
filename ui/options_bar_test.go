@@ -13,8 +13,9 @@ func TestTheFooterPointsAtTheKeyThatOpensTheMenu(t *testing.T) {
 	gui, g := newHeadlessGui(t)
 
 	run(t, g, gui.renderGlobalOptions)
-	if line := utils.Decolorise(waitForView(t, g, gui.Views.Options, "Keys")); strings.TrimSpace(line) != "? Keys" {
-		t.Errorf("the footer reads %q, want just the menu key", strings.TrimSpace(line))
+	// The mode badge leads the line, so the keys entry is what follows it rather than the whole footer.
+	if line := utils.Decolorise(waitForView(t, g, gui.Views.Options, "Keys")); strings.TrimSpace(line) != "["+writesBadge+"]"+optionsSeparator+"? Keys" {
+		t.Errorf("the footer reads %q, want the mode badge then the menu key", strings.TrimSpace(line))
 	}
 
 	keymap, problems := buildKeymap(ShippedPreset, map[string]string{"help": "h"})

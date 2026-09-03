@@ -45,7 +45,7 @@ export async function openTerminal ({ url, screenshotDir, viewport = defaultView
     readScreen,
     size: () => page.evaluate(() => ({ cols: window.term.cols, rows: window.term.rows })),
 
-    // The bottom row carries the version, the menu hint and the app status; it no longer names the focused view, so a journey reads it for the version and the loading spinner rather than for focus.
+    // The bottom row carries the mode badge, the menu hint, the app status and the version; it no longer names the focused view, so a journey reads it for the mode, the version and the loading spinner rather than for focus.
     async footer () {
       const lines = (await readScreen()).split('\n').filter(line => line.trim() !== '')
       return lines[lines.length - 1] ?? ''

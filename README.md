@@ -9,7 +9,7 @@ Drill from an ECS cluster to a service to live logs in a few keypresses. Switch 
 <!-- The checked-in GIF is recorded by test/ui/demo.mjs against the seeded moto harness, so published media cannot disclose an AWS account; regenerate it with `make ui-demo`. -->
 <p align="center"><img src="docs/demo.gif" alt="lazyaws demo: the eight resource panels, the EC2 and secret overviews, filtering with the pane following the selection, and the full-id copy popup" width="900"></p>
 
-## Navigation in ten seconds
+## Navigation in ten lines
 
 `↑` `↓` or `k` `j` move the cursor. `Tab` and `Shift+Tab`, or `←` `→`, or `h` `l`, move between the eight panels. `Enter` looks into whatever is selected. `,` and `.` change the detail tab on the right. `?` lists every key the panel you are on answers to, and `q` quits.
 
@@ -238,7 +238,7 @@ You don't have to write any of this by hand: `o` opens the Settings screen, togg
 
 ### Read-only by default
 
-lazyaws cannot change anything unless you start it as `lazyaws --allow-writes`. Without the flag the actions menus keep only what reads, SSM shells and ECS exec are refused because a shell can change anything, and the `kiro` chat backend is refused too since `--trust-all-tools` lets it run AWS commands. Browsing, filtering, logs, presigned URLs and secret reveal all still work, and the footer says `read only` so you can see which mode you are in.
+lazyaws cannot change anything unless you start it as `lazyaws --allow-writes`. Without the flag the actions menus keep only what reads, SSM shells and ECS exec are refused because a shell can change anything, and the `kiro` chat backend is refused too since `--trust-all-tools` lets it run AWS commands. Browsing, filtering, logs, presigned URLs and secret reveal all still work, and the footer opens with a badge naming the mode: a green `[read-only]`, or a yellow `[writes]` once the flag is on. It is always there, so which mode you are in is never a guess.
 
 This is enforced rather than presented. Every AWS client the app builds carries a guard in its middleware stack that refuses any operation outside a read allowlist before the request is serialized, signed or sent, so a mutating call is not made rather than made and ignored; the few things that run outside the SDK, an SSM session in a new terminal window, a port forward, `aws eks update-kubeconfig`, and the `aws ecs execute-command` and `aws ssm start-session` children, refuse on their own. The test suite reads every AWS operation the code calls back out of the source and fails if one is not classified, so a new call cannot slip in unclassified.
 

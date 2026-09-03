@@ -164,20 +164,34 @@ func TestTheReadOnlySettingCannotGrantWrites(t *testing.T) {
 	}
 }
 
-// A promise nobody can see is not reassurance, so the footer says which mode this is.
-func TestTheFooterSaysTheSessionIsReadOnly(t *testing.T) {
+// A promise nobody can see is not reassurance, so the footer leads with the mode and never omits it.
+func TestTheFooterLeadsWithTheModeBadge(t *testing.T) {
 	gui, g := newReadOnlyHeadlessGui(t)
 
 	run(t, g, gui.renderGlobalOptions)
 	footer := utils.Decolorise(waitForView(t, g, gui.Views.Options, readOnlyBadge))
-	if !strings.Contains(footer, readOnlyBadge) {
-		t.Errorf("footer = %q, want it to carry %q", footer, readOnlyBadge)
+
+	badge := strings.Index(footer, "["+readOnlyBadge+"]")
+	keys := strings.Index(footer, "Keys")
+	switch {
+	case badge < 0:
+		t.Errorf("footer = %q, want it to carry [%s]", footer, readOnlyBadge)
+	case keys < 0:
+		t.Errorf("footer = %q, want it to keep the keys hint", footer)
+	case badge > keys:
+		t.Errorf("footer = %q, want the badge before the keys hint", footer)
+	}
+	if strings.Contains(footer, writesBadge) {
+		t.Errorf("footer = %q, want no writes badge in a read-only session", footer)
 	}
 
-	// And stops saying it once writes are permitted, or the badge would be furniture rather than information.
+	// The writable session is the one worth noticing, so it says so rather than saying nothing.
 	writable, wg := newHeadlessGuiWithAppConfig(t, config.Config{User: config.DefaultUserConfig(), AllowWrites: true})
 	run(t, wg, writable.renderGlobalOptions)
-	line := utils.Decolorise(waitForView(t, wg, writable.Views.Options, "Keys"))
+	line := utils.Decolorise(waitForView(t, wg, writable.Views.Options, writesBadge))
+	if !strings.HasPrefix(strings.TrimSpace(line), "["+writesBadge+"]") {
+		t.Errorf("footer = %q, want it to open with [%s] once writes are allowed", line, writesBadge)
+	}
 	if strings.Contains(line, readOnlyBadge) {
 		t.Errorf("footer = %q, want no read-only badge when writes are allowed", line)
 	}
