@@ -66,7 +66,8 @@ const ecrImagesShown = 10
 
 // FormatECRRepositoryOverview lays a repository out for the Overview tab: the posture that decides whether a tag can move under a deployment, then what is actually in the repository.
 // Everything but the image list is already on the row the list fetched, so this pane costs the one DescribeImages call the Images tab makes.
-func FormatECRRepositoryOverview(r *aws.ECRRepository, images []aws.ECRImage, imagesErr error, width int, now time.Time) string {
+// policies arrives separately from the row because it is fetched for the selection rather than carried by every row; nil means the read was never made, which is neither "attached" nor "none".
+func FormatECRRepositoryOverview(r *aws.ECRRepository, policies *aws.ECRRepositoryPolicies, images []aws.ECRImage, imagesErr error, width int, now time.Time) string {
 	// No mutability badge beside the name: the Mutability card is the same field, and the Configuration row keeps the raw enum an audit reads.
 	header := HeaderWithStats(width,
 		ResourceHeader("Repository", r.Name, "", "", r.URI, ecrCreated(r, now)),
@@ -74,7 +75,7 @@ func FormatECRRepositoryOverview(r *aws.ECRRepository, images []aws.ECRImage, im
 	)
 
 	column := ColumnWidth(width, overviewGap)
-	left := joinBlocks(ecrConfigBlock(r), ecrPolicyBlock(r, now))
+	left := joinBlocks(ecrConfigBlock(r), ecrPolicyBlock(policies, now))
 	right := ecrImagesBlock(images, imagesErr, column, now)
 
 	return header + "\n\n" + Columns(width, overviewGap, left, right)
@@ -150,23 +151,27 @@ func ecrEncryptionLine(r *aws.ECRRepository) string {
 }
 
 // ecrPolicyBlock reports each policy against its OWN read: the two calls fail independently, so one unavailable section would delete the answer the other one returned.
-func ecrPolicyBlock(r *aws.ECRRepository, now time.Time) string {
+func ecrPolicyBlock(policies *aws.ECRRepositoryPolicies, now time.Time) string {
 	rows := []kv{
-		{"Repository policy", ecrPolicyLine(r)},
-		{"Lifecycle policy", ecrLifecycleLine(r, now)},
+		{"Repository policy", ecrPolicyLine(policies)},
+		{"Lifecycle policy", ecrLifecycleLine(policies, now)},
 	}
 
 	return SectionTitle("Policies") + "\n" + kvBlock(rows)
 }
 
 // ecrPolicyLine keeps a policy that could not be read apart from a repository that has none.
-// Both are the empty string, and the list fetch spends one deadline on the repository pages plus two policy calls per repository, so a timeout, a throttle or a denial reaching here is not evidence of an absence and "none" would be the pane inventing the safer of the two answers.
-func ecrPolicyLine(r *aws.ECRRepository) string {
-	if r.PolicyErr != nil {
-		return fieldUnavailable(r.PolicyErr)
+// Both are the empty string, so a timeout, a throttle or a denial reaching here is not evidence of an absence, and "none" would be the pane inventing the safer of the two answers.
+// A nil policies is the third case, a read that has not happened, and it says so rather than borrowing either answer.
+func ecrPolicyLine(policies *aws.ECRRepositoryPolicies) string {
+	if policies == nil {
+		return "not read"
 	}
-	if r.PolicyText != "" {
-		return "attached, shown on the Config tab"
+	if policies.PolicyErr != nil {
+		return fieldUnavailable(policies.PolicyErr)
+	}
+	if policies.Policy != "" {
+		return "attached, shown on the Policies tab"
 	}
 
 	return "none"
@@ -174,18 +179,21 @@ func ecrPolicyLine(r *aws.ECRRepository) string {
 
 // ecrLifecycleLine carries the last evaluation because an attached lifecycle policy that has never run has not deleted anything yet, and the two states look identical without it.
 // A read that failed is a third state: the stamp is nil then too, so it is checked before either.
-func ecrLifecycleLine(r *aws.ECRRepository, now time.Time) string {
-	if r.LifecyclePolicyErr != nil {
-		return fieldUnavailable(r.LifecyclePolicyErr)
+func ecrLifecycleLine(policies *aws.ECRRepositoryPolicies, now time.Time) string {
+	if policies == nil {
+		return "not read"
 	}
-	if r.LifecyclePolicy == "" {
+	if policies.LifecycleErr != nil {
+		return fieldUnavailable(policies.LifecycleErr)
+	}
+	if policies.Lifecycle == "" {
 		return "none"
 	}
-	if r.LifecycleEvaluated == nil {
+	if policies.LifecycleEvaluated == nil {
 		return "attached, never evaluated"
 	}
 
-	return "attached, evaluated " + RelTime(*r.LifecycleEvaluated, now)
+	return "attached, evaluated " + RelTime(*policies.LifecycleEvaluated, now)
 }
 
 func ecrImagesBlock(images []aws.ECRImage, err error, width int, now time.Time) string {

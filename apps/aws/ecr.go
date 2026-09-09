@@ -24,13 +24,27 @@ type ECRRepository struct {
 	TagMutability  string
 	EncryptionType string
 	KMSKey         string
-	// PolicyText and LifecyclePolicy are "" when no policy is attached and "" again when the read failed, which is what the Err fields beside them are for: without checking those first, a renderer states an absence it cannot know.
-	// These two are the least reliable fields on the row — the list fetch spends one deadline on the repository pages AND two policy calls per repository, so they are what runs out of budget.
-	PolicyText         string
+}
+
+// ECRRepositoryPolicies is the two policy documents attached to ONE repository, read for the repository on screen rather than for every row.
+// They used to be fields on the row above, filled by the list fetch, which made listing a registry cost 1 + 2N sequential calls on a single deadline: thirty repositories meant sixty-one round trips before anything could render, and an account slower than the budget failed the whole panel with "context deadline exceeded" attributed to DescribeRepositories. Nothing in the list rows ever read them.
+//
+// Policy and Lifecycle are "" when no policy is attached and "" again when the read failed, which is what the Err fields are for: without checking those first, a renderer states an absence it cannot know.
+type ECRRepositoryPolicies struct {
+	Policy             string
 	PolicyErr          error
-	LifecyclePolicy    string
+	Lifecycle          string
 	LifecycleEvaluated *time.Time
-	LifecyclePolicyErr error
+	LifecycleErr       error
+}
+
+// Errs is what a caller feeds the throttle engine, since a rate-limited policy read must reach the backoff or the pane keeps asking at full rate.
+func (p *ECRRepositoryPolicies) Errs() []error {
+	if p == nil {
+		return nil
+	}
+
+	return []error{p.PolicyErr, p.LifecycleErr}
 }
 
 type ECRImage struct {
@@ -115,13 +129,6 @@ func (c *Client) ListECRRepositoriesDetailed(ctx context.Context) ([]ECRReposito
 				repo.KMSKey = getString(r.EncryptionConfiguration.KmsKey)
 			}
 
-			// Optional policy calls must not hide the repository metadata, which is why their failure is carried on the row instead of failing the list: a repository is still worth showing without them.
-			pol, polErr := c.ECR.GetRepositoryPolicy(timeoutCtx, &ecr.GetRepositoryPolicyInput{RepositoryName: r.RepositoryName})
-			repo.PolicyText, repo.PolicyErr = repositoryPolicyResult(pol, polErr)
-
-			lc, lcErr := c.ECR.GetLifecyclePolicy(timeoutCtx, &ecr.GetLifecyclePolicyInput{RepositoryName: r.RepositoryName})
-			repo.LifecyclePolicy, repo.LifecycleEvaluated, repo.LifecyclePolicyErr = lifecyclePolicyResult(lc, lcErr)
-
 			repos = append(repos, repo)
 		}
 		if out.NextToken == nil {
@@ -131,6 +138,40 @@ func (c *Client) ListECRRepositoriesDetailed(ctx context.Context) ([]ECRReposito
 	}
 
 	return repos, nil
+}
+
+// GetECRRepositoryPolicies reads both policy documents for one repository, which is two calls for the row on screen instead of two calls for every row in the registry.
+// Memoised because the Overview and the Policies tab both want them and both redraw on a timer, while a policy document changes on a deploy: without the memo, opening a tab would re-ask ECR for an unchanged document every couple of seconds, and ECR's policy APIs are among the tightest-limited it has.
+// maxAge of 0 means the reading stands until the selection moves, the same meaning a refresh interval of 0 carries everywhere else here.
+func (c *Client) GetECRRepositoryPolicies(ctx context.Context, repoName string, maxAge time.Duration) (*ECRRepositoryPolicies, error) {
+	if c.ECR == nil {
+		return nil, fmt.Errorf("ECR client not initialized")
+	}
+	if repoName == "" {
+		return nil, fmt.Errorf("repository name is required")
+	}
+
+	if cached, ok := c.ecrPolicies.fresh(repoName, maxAge, time.Now()); ok {
+		return cached, nil
+	}
+
+	timeoutCtx, cancel := withDefaultTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	policies := &ECRRepositoryPolicies{}
+
+	pol, polErr := c.ECR.GetRepositoryPolicy(timeoutCtx, &ecr.GetRepositoryPolicyInput{RepositoryName: aws.String(repoName)})
+	policies.Policy, policies.PolicyErr = repositoryPolicyResult(pol, polErr)
+
+	lc, lcErr := c.ECR.GetLifecyclePolicy(timeoutCtx, &ecr.GetLifecyclePolicyInput{RepositoryName: aws.String(repoName)})
+	policies.Lifecycle, policies.LifecycleEvaluated, policies.LifecycleErr = lifecyclePolicyResult(lc, lcErr)
+
+	// A failed read is not memoised: it would pin "unavailable" on the pane for the whole staleness window, and the next redraw is the natural retry.
+	if policies.PolicyErr == nil && policies.LifecycleErr == nil {
+		c.ecrPolicies.keep(repoName, policies, time.Now())
+	}
+
+	return policies, nil
 }
 
 // repositoryPolicyResult pairs the policy with the read that produced it, because "none attached" and "could not be read" are both the empty string and only the error tells them apart.

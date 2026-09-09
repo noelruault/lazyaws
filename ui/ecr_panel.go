@@ -79,8 +79,8 @@ func (gui *Gui) loadECRList() error {
 // ecrSelectionKey identifies a repository across reloads; repository names are unique per registry.
 func ecrSelectionKey(repo *aws.ECRRepository) string { return repo.Name }
 
-// ecrRepositoryOverview reads the repository off the list row and fetches only the images, which is the one thing the row does not carry.
-// The image list is what keeps this off the refresh ticker: DescribeImages pages the whole repository, so its cost grows with the repository rather than staying flat.
+// ecrRepositoryOverview reads the repository off the list row and fetches what the row does not carry: the images, and the two policy documents for THIS repository.
+// The image list is what keeps this off the refresh ticker: DescribeImages pages the whole repository, so its cost grows with the repository rather than staying flat. The policies are memoised in the client, so a redraw does not re-read a document that changes on a deploy.
 func (gui *Gui) ecrRepositoryOverview(ctx context.Context, repo *aws.ECRRepository, width int) string {
 	if gui.Client == nil {
 		return overviewUnavailable("repository")
@@ -90,44 +90,72 @@ func (gui *Gui) ecrRepositoryOverview(ctx context.Context, repo *aws.ECRReposito
 	defer cancel()
 
 	images, err := gui.Client.ListECRImages(fetchCtx, repo.Name)
-	gui.throttles.observe(ecrOverviewErrs(repo, err)...)
+	// The policies are read for THIS repository, not for the list: filling them per row cost two extra calls for every repository in the registry, on one deadline, and a registry big enough to run that deadline out failed the whole panel.
+	policies, _ := gui.Client.GetECRRepositoryPolicies(fetchCtx, repo.Name, gui.metricsMaxAge())
+	gui.throttles.observe(ecrOverviewErrs(policies, err)...)
 
-	return presentation.FormatECRRepositoryOverview(repo, images, err, width, time.Now())
+	return presentation.FormatECRRepositoryOverview(repo, policies, images, err, width, time.Now())
 }
 
-// ecrOverviewErrs is everything one repository Overview can be throttled on, which is not the same as everything that can fail it: the two policy reads happen per repository inside the list fetch and do not surface as its error, so a throttle on either would otherwise never reach the backoff engine and this pane would keep asking at full rate.
-func ecrOverviewErrs(repo *aws.ECRRepository, err error) []error {
-	return []error{err, repo.PolicyErr, repo.LifecyclePolicyErr}
+// ecrOverviewErrs is everything one repository Overview can be throttled on, which is not the same as everything that can fail it: a policy read failing leaves the rest of the pane renderable, so a throttle on either would otherwise never reach the backoff engine and this pane would keep asking at full rate.
+func ecrOverviewErrs(policies *aws.ECRRepositoryPolicies, err error) []error {
+	return append([]error{err}, policies.Errs()...)
 }
 
-// renderECRConfig reuses policy data already fetched with the repository row.
+// renderECRPolicies fetches the two documents for the selected repository, which is where the cost belongs: they are the whole content of this tab and nothing else on screen needs them.
+// The client memoises them, so switching between this tab and the Overview does not re-ask ECR for a document that changes on a deploy.
 func (gui *Gui) renderECRPolicies(repo *aws.ECRRepository) tasks.TaskFunc {
-	return gui.NewSimpleRenderStringTask(func() string {
-		return formatECRPolicies(repo)
-	})
+	name := repo.Name
+
+	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
+		if gui.Client == nil {
+			gui.RenderStringMain(overviewUnavailable("policies"))
+			return
+		}
+
+		gen := gui.Gen
+		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+
+		policies, err := gui.Client.GetECRRepositoryPolicies(fetchCtx, name, gui.metricsMaxAge())
+		if gen != gui.Gen {
+			return
+		}
+		if err != nil {
+			gui.RenderStringMain("error loading policies: " + err.Error())
+			return
+		}
+		gui.throttles.observe(policies.Errs()...)
+
+		gui.RenderStringMain(formatECRPolicies(policies))
+	}})
 }
 
-func formatECRPolicies(repo *aws.ECRRepository) string {
+func formatECRPolicies(policies *aws.ECRRepositoryPolicies) string {
+	if policies == nil {
+		return "policies not read"
+	}
+
 	out := "Repository Policy:\n"
 	switch {
-	case repo.PolicyErr != nil:
-		out += "unavailable: " + repo.PolicyErr.Error() + "\n"
-	case repo.PolicyText == "":
+	case policies.PolicyErr != nil:
+		out += "unavailable: " + policies.PolicyErr.Error() + "\n"
+	case policies.Policy == "":
 		out += "not configured\n"
 	default:
-		out += repo.PolicyText + "\n"
+		out += policies.Policy + "\n"
 	}
 
 	out += "\nLifecycle Policy:\n"
 	switch {
-	case repo.LifecyclePolicyErr != nil:
-		out += "unavailable: " + repo.LifecyclePolicyErr.Error() + "\n"
-	case repo.LifecyclePolicy == "":
+	case policies.LifecycleErr != nil:
+		out += "unavailable: " + policies.LifecycleErr.Error() + "\n"
+	case policies.Lifecycle == "":
 		out += "not configured\n"
 	default:
-		out += repo.LifecyclePolicy + "\n"
-		if repo.LifecycleEvaluated != nil {
-			out += fmt.Sprintf("last evaluated: %s\n", repo.LifecycleEvaluated.Format(time.RFC3339))
+		out += policies.Lifecycle + "\n"
+		if policies.LifecycleEvaluated != nil {
+			out += fmt.Sprintf("last evaluated: %s\n", policies.LifecycleEvaluated.Format(time.RFC3339))
 		}
 	}
 

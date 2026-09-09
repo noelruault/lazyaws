@@ -80,14 +80,37 @@ func ecrToggleLabel(turningOn bool, what string) string {
 	return "Disable " + what
 }
 
+// lifecyclePolicyPreviewable answers whether there is a policy worth previewing, kept apart from the fetch so the distinction it exists for can be tested without a client.
+// The empty policy is also what an unreadable one leaves behind, and telling an operator a repository has no policy is how they come to write a second one over the policy that is already there.
+func lifecyclePolicyPreviewable(policies *aws.ECRRepositoryPolicies, name string) error {
+	if policies == nil {
+		return fmt.Errorf("%s: lifecycle policy was not read", name)
+	}
+	if policies.LifecycleErr != nil {
+		return fmt.Errorf("%s: lifecycle policy could not be read: %w", name, policies.LifecycleErr)
+	}
+	if policies.Lifecycle == "" {
+		return fmt.Errorf("%s has no lifecycle policy to preview", name)
+	}
+
+	return nil
+}
+
 func (gui *Gui) ecrPreviewLifecyclePolicy(repo *aws.ECRRepository) func(context.Context, string) error {
 	return func(ctx context.Context, _ string) error {
-		// The empty policy is also what an unreadable one leaves behind, and telling an operator a repository has no policy is how they come to write a second one over it.
-		if repo.LifecyclePolicyErr != nil {
-			return fmt.Errorf("%s: lifecycle policy could not be read: %w", repo.Name, repo.LifecyclePolicyErr)
+		if gui.Client == nil {
+			return fmt.Errorf("%s: no AWS session", repo.Name)
 		}
-		if repo.LifecyclePolicy == "" {
-			return fmt.Errorf("%s has no lifecycle policy to preview", repo.Name)
+
+		// Read here rather than off the row: the list no longer carries the policies, and this precondition is worth one call because the alternative is previewing a policy nobody has.
+		// Memoised in the client, so opening the Policies tab first makes this free.
+		policies, err := gui.Client.GetECRRepositoryPolicies(ctx, repo.Name, gui.metricsMaxAge())
+		if err != nil {
+			return fmt.Errorf("%s: lifecycle policy could not be read: %w", repo.Name, err)
+		}
+
+		if err := lifecyclePolicyPreviewable(policies, repo.Name); err != nil {
+			return err
 		}
 
 		preview, err := gui.Client.PreviewLifecyclePolicy(ctx, repo.Name, "")

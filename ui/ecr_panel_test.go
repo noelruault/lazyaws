@@ -10,18 +10,17 @@ import (
 )
 
 func TestFormatECRPoliciesNoLifecycle(t *testing.T) {
-	out := formatECRPolicies(&aws.ECRRepository{Name: "svc-api"})
+	out := formatECRPolicies(&aws.ECRRepositoryPolicies{})
 	if !strings.Contains(out, "Lifecycle Policy:\nnot configured") {
 		t.Errorf("expected 'not configured' lifecycle, got:\n%s", out)
 	}
 }
 
-// The Policies tab publishes the same two policy fields the Overview does, so it has the same two states to keep apart: "not configured" is a claim only a successful read supports.
+// The Policies tab publishes the two documents the Overview reports the presence of, so it has the same two states to keep apart: "not configured" is a claim only a successful read supports.
 func TestFormatECRPoliciesTellsAFailedPolicyReadFromAnAbsentPolicy(t *testing.T) {
-	out := formatECRPolicies(&aws.ECRRepository{
-		Name:               "svc-api",
-		PolicyErr:          errors.New("ThrottlingException"),
-		LifecyclePolicyErr: errors.New("AccessDenied"),
+	out := formatECRPolicies(&aws.ECRRepositoryPolicies{
+		PolicyErr:    errors.New("ThrottlingException"),
+		LifecycleErr: errors.New("AccessDenied"),
 	})
 
 	for _, want := range []string{"Repository Policy:\nunavailable: ThrottlingException", "Lifecycle Policy:\nunavailable: AccessDenied"} {
@@ -41,7 +40,7 @@ func TestECROverviewErrsCarriesEveryThrottleableRead(t *testing.T) {
 	policyErr := errors.New("GetRepositoryPolicy")
 	lifecycleErr := errors.New("GetLifecyclePolicy")
 
-	got := ecrOverviewErrs(&aws.ECRRepository{PolicyErr: policyErr, LifecyclePolicyErr: lifecycleErr}, imagesErr)
+	got := ecrOverviewErrs(&aws.ECRRepositoryPolicies{PolicyErr: policyErr, LifecycleErr: lifecycleErr}, imagesErr)
 	for _, want := range []error{imagesErr, policyErr, lifecycleErr} {
 		if !slices.ContainsFunc(got, func(err error) bool { return errors.Is(err, want) }) {
 			t.Errorf("ecrOverviewErrs() does not carry %v, got %v", want, got)
@@ -50,8 +49,7 @@ func TestECROverviewErrsCarriesEveryThrottleableRead(t *testing.T) {
 }
 
 func TestFormatECRPoliciesWithLifecycle(t *testing.T) {
-	repo := &aws.ECRRepository{Name: "svc-api", LifecyclePolicy: `{"rules":[]}`}
-	out := formatECRPolicies(repo)
+	out := formatECRPolicies(&aws.ECRRepositoryPolicies{Lifecycle: `{"rules":[]}`})
 	if !strings.Contains(out, `{"rules":[]}`) {
 		t.Errorf("expected lifecycle policy text, got:\n%s", out)
 	}

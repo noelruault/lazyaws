@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -10,12 +9,10 @@ import (
 )
 
 // The preview refuses on an empty policy, which is also what a failed read leaves behind: told a repository has no lifecycle policy, an operator writes one over the policy that is already there.
-// The guard runs before any client call, so the nil Gui is never reached.
 func TestPreviewLifecyclePolicyTellsAFailedReadFromAnAbsentPolicy(t *testing.T) {
 	readErr := errors.New("ThrottlingException")
-	gui := &Gui{}
 
-	err := gui.ecrPreviewLifecyclePolicy(&aws.ECRRepository{Name: "svc-api", LifecyclePolicyErr: readErr})(context.Background(), "")
+	err := lifecyclePolicyPreviewable(&aws.ECRRepositoryPolicies{LifecycleErr: readErr}, "svc-api")
 	if !errors.Is(err, readErr) {
 		t.Errorf("preview on an unreadable policy = %v, want it to carry %v", err, readErr)
 	}
@@ -23,9 +20,18 @@ func TestPreviewLifecyclePolicyTellsAFailedReadFromAnAbsentPolicy(t *testing.T) 
 		t.Errorf("preview reports an unreadable policy as an absent one: %v", err)
 	}
 
-	absent := gui.ecrPreviewLifecyclePolicy(&aws.ECRRepository{Name: "svc-api"})(context.Background(), "")
+	absent := lifecyclePolicyPreviewable(&aws.ECRRepositoryPolicies{}, "svc-api")
 	if absent == nil || !strings.Contains(absent.Error(), "has no lifecycle policy to preview") {
 		t.Errorf("preview on a repository with no policy = %v, want it to say so", absent)
+	}
+
+	// A read that never happened is a third state, and it must not read as an absence either.
+	if unread := lifecyclePolicyPreviewable(nil, "svc-api"); unread == nil || strings.Contains(unread.Error(), "has no lifecycle policy") {
+		t.Errorf("preview with no reading = %v, want it to say the policy was not read", unread)
+	}
+
+	if ok := lifecyclePolicyPreviewable(&aws.ECRRepositoryPolicies{Lifecycle: `{"rules":[]}`}, "svc-api"); ok != nil {
+		t.Errorf("preview on an attached policy = %v, want it permitted", ok)
 	}
 }
 

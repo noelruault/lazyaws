@@ -107,7 +107,7 @@ func BenchmarkFormatECRRepositoryOverview(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = FormatECRRepositoryOverview(repository, images, nil, overviewWidth, overviewNow)
+		_ = FormatECRRepositoryOverview(repository, overviewPolicies(), images, nil, overviewWidth, overviewNow)
 	}
 }
 

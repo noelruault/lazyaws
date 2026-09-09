@@ -15,27 +15,34 @@ import (
 )
 
 // plainRepository renders the overview as the words it chose: escapes stripped and the alignment padding collapsed, since neither is what these states are about.
-func plainRepository(r *aws.ECRRepository, images []aws.ECRImage, err error, width int) string {
-	return kvPadding.ReplaceAllString(utils.Decolorise(FormatECRRepositoryOverview(r, images, err, width, overviewNow)), " ")
+func plainRepository(r *aws.ECRRepository, policies *aws.ECRRepositoryPolicies, images []aws.ECRImage, err error, width int) string {
+	return kvPadding.ReplaceAllString(utils.Decolorise(FormatECRRepositoryOverview(r, policies, images, err, width, overviewNow)), " ")
+}
+
+// overviewPolicies is the repository's policy pair as a successful read returns it, which used to be three fields on the row until the list stopped paying two calls per repository to fill them.
+func overviewPolicies() *aws.ECRRepositoryPolicies {
+	evaluated := overviewNow.Add(-6 * time.Hour)
+
+	return &aws.ECRRepositoryPolicies{
+		Policy:             `{"Version":"2012-10-17"}`,
+		Lifecycle:          `{"rules":[]}`,
+		LifecycleEvaluated: &evaluated,
+	}
 }
 
 func overviewRepository() *aws.ECRRepository {
 	created := overviewNow.Add(-90 * 24 * time.Hour)
-	evaluated := overviewNow.Add(-6 * time.Hour)
 
 	return &aws.ECRRepository{
-		Name:               "app-api",
-		Arn:                "arn:aws:ecr:eu-west-1:123456789012:repository/app-api",
-		URI:                "123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-api",
-		RegistryID:         "123456789012",
-		CreatedAt:          &created,
-		ScanOnPush:         true,
-		TagMutability:      "MUTABLE",
-		EncryptionType:     "KMS",
-		KMSKey:             "arn:aws:kms:eu-west-1:123456789012:key/2f7c",
-		PolicyText:         `{"Version":"2012-10-17"}`,
-		LifecyclePolicy:    `{"rules":[]}`,
-		LifecycleEvaluated: &evaluated,
+		Name:           "app-api",
+		Arn:            "arn:aws:ecr:eu-west-1:123456789012:repository/app-api",
+		URI:            "123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-api",
+		RegistryID:     "123456789012",
+		CreatedAt:      &created,
+		ScanOnPush:     true,
+		TagMutability:  "MUTABLE",
+		EncryptionType: "KMS",
+		KMSKey:         "arn:aws:kms:eu-west-1:123456789012:key/2f7c",
 	}
 }
 
@@ -50,7 +57,7 @@ func overviewImages() []aws.ECRImage {
 }
 
 func TestRepositoryOverviewRendersEverySection(t *testing.T) {
-	got := plainRepository(overviewRepository(), overviewImages(), nil, stackedWidth)
+	got := plainRepository(overviewRepository(), overviewPolicies(), overviewImages(), nil, stackedWidth)
 
 	for _, want := range []string{
 		"Repository", "app-api",
@@ -58,7 +65,8 @@ func TestRepositoryOverviewRendersEverySection(t *testing.T) {
 		"123456789012.dkr.ecr.eu-west-1.amazonaws.com/app-api",
 		// No scan-on-push row and no header badge: the cards carry both, and the raw enum row stays because MUTABLE_WITH_EXCLUSION and MUTABLE are one card word but two policies.
 		"Configuration", "Tag mutability: MUTABLE", "KMS · arn:aws:kms:eu-west-1:123456789012:key/2f7c", "Registry: 123456789012",
-		"Policies", "Repository policy: attached, shown on the Config tab", "Lifecycle policy: attached, evaluated 6h ago",
+		// "Policies tab", not "Config tab": the tab holding the documents is titled Policies, and this line pointed at a tab that does not exist.
+		"Policies", "Repository policy: attached, shown on the Policies tab", "Lifecycle policy: attached, evaluated 6h ago",
 		"Images", "2 images · 150.0 MiB",
 		"Tag", "Pushed", "Size", "Digest",
 		"1.4.0, latest", "2h ago", "100.0 MiB", "aaaabbbbcccc",
@@ -69,7 +77,7 @@ func TestRepositoryOverviewRendersEverySection(t *testing.T) {
 		}
 	}
 
-	plain := utils.Decolorise(FormatECRRepositoryOverview(overviewRepository(), overviewImages(), nil, stackedWidth, overviewNow))
+	plain := utils.Decolorise(FormatECRRepositoryOverview(overviewRepository(), overviewPolicies(), overviewImages(), nil, stackedWidth, overviewNow))
 	header := strings.SplitN(plain, "\n\n", 2)[0]
 	if strings.Count(header, "┌") != 3 {
 		t.Errorf("header does not contain three stat cards\n%s", header)
@@ -108,7 +116,7 @@ func TestRepositoryOverviewCardsUsePostureColours(t *testing.T) {
 		t.Errorf("scan-off card = %+v, want plain off", got)
 	}
 
-	rendered := FormatECRRepositoryOverview(overviewRepository(), overviewImages(), nil, stackedWidth, overviewNow)
+	rendered := FormatECRRepositoryOverview(overviewRepository(), overviewPolicies(), overviewImages(), nil, stackedWidth, overviewNow)
 	if digest := utils.ColoredString("aaaabbbbcccc", color.Faint); !strings.Contains(rendered, digest) {
 		t.Errorf("image digest is not faint\n%s", utils.Decolorise(rendered))
 	}
@@ -121,14 +129,14 @@ func TestRepositoryOverviewDatesTheCreationStamp(t *testing.T) {
 		t.Errorf("ecrCreated() = %q, want %q", got, want)
 	}
 
-	if got := plainRepository(overviewRepository(), overviewImages(), nil, 180); !strings.Contains(got, "(90d ago)") {
+	if got := plainRepository(overviewRepository(), overviewPolicies(), overviewImages(), nil, 180); !strings.Contains(got, "(90d ago)") {
 		t.Errorf("overview does not date the creation stamp\n%s", got)
 	}
 }
 
 // Every optional field a repository can omit says what it is, rather than leaving a blank the reader has to interpret.
 func TestRepositoryOverviewStatesEveryAbsence(t *testing.T) {
-	got := plainRepository(&aws.ECRRepository{Name: "bare"}, nil, nil, stackedWidth)
+	got := plainRepository(&aws.ECRRepository{Name: "bare"}, &aws.ECRRepositoryPolicies{}, nil, nil, stackedWidth)
 
 	for _, want := range []string{
 		// Scan on push lives in its header card, off and plain for a bare repository.
@@ -154,11 +162,10 @@ func TestRepositoryOverviewStatesEveryAbsence(t *testing.T) {
 // A policy read that failed is not a repository without a policy, and both leave the field empty.
 // Each read is reported on its own row: the two calls fail independently, so the one that answered must keep answering.
 func TestRepositoryOverviewTellsAFailedPolicyReadFromAnAbsentPolicy(t *testing.T) {
-	absent := plainRepository(&aws.ECRRepository{Name: "bare"}, nil, nil, stackedWidth)
-	unreadable := plainRepository(&aws.ECRRepository{
-		Name:               "bare",
-		PolicyErr:          errors.New("ThrottlingException"),
-		LifecyclePolicyErr: errors.New("AccessDenied"),
+	absent := plainRepository(&aws.ECRRepository{Name: "bare"}, &aws.ECRRepositoryPolicies{}, nil, nil, stackedWidth)
+	unreadable := plainRepository(&aws.ECRRepository{Name: "bare"}, &aws.ECRRepositoryPolicies{
+		PolicyErr:    errors.New("ThrottlingException"),
+		LifecycleErr: errors.New("AccessDenied"),
 	}, nil, nil, stackedWidth)
 
 	for _, want := range []string{
@@ -180,7 +187,7 @@ func TestRepositoryOverviewTellsAFailedPolicyReadFromAnAbsentPolicy(t *testing.T
 	}
 
 	// One read failing must not take the other's answer with it.
-	oneSide := plainRepository(&aws.ECRRepository{Name: "bare", PolicyErr: errors.New("ThrottlingException"), LifecyclePolicy: `{"rules":[]}`}, nil, nil, stackedWidth)
+	oneSide := plainRepository(&aws.ECRRepository{Name: "bare"}, &aws.ECRRepositoryPolicies{PolicyErr: errors.New("ThrottlingException"), Lifecycle: `{"rules":[]}`}, nil, nil, stackedWidth)
 	if !strings.Contains(oneSide, "Lifecycle policy: attached, never evaluated") {
 		t.Errorf("a failed repository-policy read took the lifecycle answer down with it\n%s", oneSide)
 	}
@@ -188,10 +195,10 @@ func TestRepositoryOverviewTellsAFailedPolicyReadFromAnAbsentPolicy(t *testing.T
 
 // An attached lifecycle policy that has never run has deleted nothing yet, and reporting it as merely attached hides that.
 func TestRepositoryOverviewSeparatesAnUnevaluatedLifecyclePolicy(t *testing.T) {
-	repo := overviewRepository()
-	repo.LifecycleEvaluated = nil
+	policies := overviewPolicies()
+	policies.LifecycleEvaluated = nil
 
-	if got := plainRepository(repo, nil, nil, stackedWidth); !strings.Contains(got, "Lifecycle policy: attached, never evaluated") {
+	if got := plainRepository(overviewRepository(), policies, nil, nil, stackedWidth); !strings.Contains(got, "Lifecycle policy: attached, never evaluated") {
 		t.Errorf("overview does not distinguish an unevaluated lifecycle policy\n%s", got)
 	}
 }
@@ -199,7 +206,7 @@ func TestRepositoryOverviewSeparatesAnUnevaluatedLifecyclePolicy(t *testing.T) {
 // A failed DescribeImages costs the image table and nothing else: the repository's own posture came off the list row and is still answerable.
 func TestRepositoryOverviewSurvivesAFailedImageFetch(t *testing.T) {
 	err := errors.New("AccessDenied")
-	got := plainRepository(overviewRepository(), nil, err, stackedWidth)
+	got := plainRepository(overviewRepository(), overviewPolicies(), nil, err, stackedWidth)
 
 	if !strings.Contains(got, "Images\nunavailable: AccessDenied") {
 		t.Errorf("overview does not report the failed image fetch\n%s", got)
@@ -226,7 +233,7 @@ func TestRepositoryOverviewOrdersImagesNewestFirst(t *testing.T) {
 		{Digest: "sha256:midmidmidmid0000", Tags: []string{"middle"}, PushedAt: &middle},
 	}
 
-	got := plainRepository(overviewRepository(), images, nil, stackedWidth)
+	got := plainRepository(overviewRepository(), overviewPolicies(), images, nil, stackedWidth)
 	order := []string{"newest", "middle", "oldest", "undated"}
 	at := make([]int, len(order))
 	for i, tag := range order {
@@ -249,7 +256,7 @@ func TestRepositoryOverviewCapsTheImageTableAndSaysSo(t *testing.T) {
 		images = append(images, aws.ECRImage{Digest: "sha256:d", Tags: []string{"tag-" + string(rune('a'+i))}, PushedAt: &pushed})
 	}
 
-	got := plainRepository(overviewRepository(), images, nil, stackedWidth)
+	got := plainRepository(overviewRepository(), overviewPolicies(), images, nil, stackedWidth)
 	if want := "12 images"; !strings.Contains(got, want) {
 		t.Errorf("overview is missing %q\n%s", want, got)
 	}
@@ -268,7 +275,7 @@ func TestRepositoryOverviewImageTableKeepsEveryColumn(t *testing.T) {
 	headerColumns := regexp.MustCompile(`Tag\s+Pushed\s+Size\s+Digest`)
 	imageColumns := regexp.MustCompile(`1\.4\.0, latest\s+2h ago\s+100\.0 MiB\s+aaaabbbbcccc`)
 	for _, width := range []int{80, 110, 120, 160} {
-		got := utils.Decolorise(FormatECRRepositoryOverview(overviewRepository(), overviewImages(), nil, width, overviewNow))
+		got := utils.Decolorise(FormatECRRepositoryOverview(overviewRepository(), overviewPolicies(), overviewImages(), nil, width, overviewNow))
 
 		header := lineContaining(got, "Digest")
 		if header == "" || !headerColumns.MatchString(header) {
@@ -289,12 +296,13 @@ func TestRepositoryOverviewNeverExceedsTheWidth(t *testing.T) {
 	// A long name in the header, which Columns never measures because it spans the full width, and a tag list that runs past any column.
 	repo.Name = "a-very-long-repository-name-nobody-should-have-but-someone-in-eu-west-1-does"
 	// A failed policy read puts the SDK's own error text on a kv row, and a real one is longer than anything else this pane holds: measured at 195 cells, it is the only line over budget from width 66 up, so without it the sweep never covers the state this stage added.
-	repo.PolicyErr = errors.New("operation error ECR: GetRepositoryPolicy, https response error StatusCode: 400, RequestID: 8f2c1d94-0b7a-4e51-9c3f-2a6d5b8e1f00, ThrottlingException: Rate exceeded")
+	policies := overviewPolicies()
+	policies.PolicyErr = errors.New("operation error ECR: GetRepositoryPolicy, https response error StatusCode: 400, RequestID: 8f2c1d94-0b7a-4e51-9c3f-2a6d5b8e1f00, ThrottlingException: Rate exceeded")
 	images := overviewImages()
 	images[0].Tags = []string{"1.4.0", "latest", "release-candidate-2026-08-27-build-1841", "deployed-to-production"}
 
 	for width := 40; width <= 220; width++ {
-		for _, line := range strings.Split(FormatECRRepositoryOverview(repo, images, nil, width, overviewNow), "\n") {
+		for _, line := range strings.Split(FormatECRRepositoryOverview(repo, policies, images, nil, width, overviewNow), "\n") {
 			if got := runewidth.StringWidth(utils.Decolorise(line)); got > width {
 				t.Fatalf("at width %d a line is %d cells wide: %q", width, got, utils.Decolorise(line))
 			}

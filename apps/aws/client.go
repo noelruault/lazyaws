@@ -72,6 +72,8 @@ type Client struct {
 	serviceMetrics  metricsMemo[*ECSServiceMetrics]
 	// serviceScaling rides the same slow tier: Application Auto Scaling config changes on deploys, not per second, and the fetch is two calls per read.
 	serviceScaling metricsMemo[*ECSServiceAutoScaling]
+	// ecrPolicies is the same bargain for a repository's two policy documents (see GetECRRepositoryPolicies): read for the selection, not for the list, and not re-read while the document cannot have changed.
+	ecrPolicies metricsMemo[*ECRRepositoryPolicies]
 	// identityErr is why the STS caller-identity probe last failed, kept so the bootstrap can refuse to start rather than let every panel discover the same expired token on its own.
 	identityErr error
 	Region      string
