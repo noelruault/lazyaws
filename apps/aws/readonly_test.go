@@ -161,7 +161,8 @@ var readOnlyOperations = []string{
 	"DescribeRouteTables", "DescribeScalableTargets", "DescribeScalingPolicies", "DescribeSecret",
 	"DescribeServices", "DescribeSnapshots", "DescribeSubnets", "DescribeTargetHealth", "DescribeTaskDefinition",
 	"DescribeTasks", "DescribeTransitGatewayAttachments", "DescribeTransitGateways", "DescribeVolumes",
-	"DescribeVpcAttribute", "DescribeVpcEndpoints", "DescribeVpcs",
+	"DescribeVpcAttribute", "DescribeVpcEndpointConnections", "DescribeVpcEndpointServiceConfigurations",
+	"DescribeVpcEndpoints", "DescribeVpcs",
 	"GetBucketEncryption", "GetBucketLifecycleConfiguration", "GetBucketLocation", "GetBucketLogging",
 	"GetBucketNotificationConfiguration", "GetBucketPolicy", "GetBucketReplication", "GetBucketTagging",
 	"GetBucketVersioning", "GetCallerIdentity", "GetConsoleOutput", "GetConsoleScreenshot", "GetDeploymentGroup",
@@ -179,6 +180,9 @@ var readOnlyOperations = []string{
 }
 
 var mutatingOperations = []string{
+	// Accepting a PrivateLink connection lets another account's traffic into a service this one publishes, and rejecting one cuts traffic that is already flowing.
+	"AcceptVpcEndpointConnections", "RejectVpcEndpointConnections",
+
 	"AbortMultipartUpload", "AssociateAddress", "BatchDeleteImage", "CopyObject", "CreateBucket", "CreateImage",
 	"CreateSnapshot", "DeleteBucket", "DeleteCluster", "DeleteObject", "DeleteRepository", "DeleteSecret",
 	"DeleteService", "DisassociateAddress", "ModifyInstanceAttribute", "PutBucketVersioning",

@@ -205,11 +205,11 @@ func formatMebibytes(v float64) string { return fmt.Sprintf("%.0f MiB", v) }
 func (gui *Gui) renderECSClusterInstances(row *ecsRow) tasks.TaskFunc {
 	c := row.Cluster
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		instances, err := gui.Client.ListContainerInstances(fetchCtx, c.Name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -251,7 +251,7 @@ func formatECSContainerInstances(instances []aws.ECSContainerInstance) string {
 func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 	s := row.Service
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
@@ -269,7 +269,7 @@ func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 			}
 		}
 
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		gui.RenderStringMain(formatECSServiceConfig(s, metrics, image, health))
@@ -327,7 +327,7 @@ const ecsCodeDeployControllerType = "CODE_DEPLOY"
 func (gui *Gui) renderECSServiceDeployments(row *ecsRow) tasks.TaskFunc {
 	s := row.Service
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 
 		var cd *aws.ECSCodeDeployStatus
 		if s.DeploymentController == ecsCodeDeployControllerType {
@@ -336,7 +336,7 @@ func (gui *Gui) renderECSServiceDeployments(row *ecsRow) tasks.TaskFunc {
 			cancel()
 		}
 
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		gui.RenderStringMain(formatECSServiceDeployments(s, cd))
@@ -479,13 +479,13 @@ func formatECSTaskConfig(t *aws.ECSTask) string {
 // renderECSTaskDefDiff deliberately compares only the current and previous revisions.
 func (gui *Gui) renderECSTaskDefDiff(taskDefArn string) tasks.TaskFunc {
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		family := aws.TaskDefinitionFamily(taskDefArn)
 		revisions, err := gui.Client.ListTaskDefinitions(fetchCtx, family)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -504,7 +504,7 @@ func (gui *Gui) renderECSTaskDefDiff(taskDefArn string) tasks.TaskFunc {
 			}
 			break
 		}
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		gui.RenderStringMain(formatECSTaskDefDiff(family, revisions, taskDefArn, current, previous))
@@ -638,11 +638,11 @@ func (gui *Gui) renderECSTaskLogs(row *ecsRow) tasks.TaskFunc {
 		Autoscroll: true,
 		Wrap:       true,
 		Func: func(ctx context.Context, notifyStopped chan struct{}) {
-			gen := gui.Gen
+			gen := gui.Generation()
 			fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 			streams, err := gui.Client.GetECSTaskLogs(fetchCtx, cluster, taskArn, 200)
-			if gen != gui.Gen {
+			if gen != gui.Generation() {
 				return
 			}
 			if err != nil {
@@ -762,6 +762,8 @@ func (gui *Gui) drillECS() error {
 	if err := gui.Panels.ECS.RerenderList(); err != nil {
 		return err
 	}
+
+	// This runs on the UI loop, which is why loadECSList keeps the spawning status form: a loader that held the loop until AWS answered would freeze the dashboard on every enter and esc.
 	return gui.loadECSList()
 }
 
@@ -770,7 +772,7 @@ func (gui *Gui) loadECSList() error {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 	level, cluster, service := gui.ecsDrill.level, gui.ecsDrill.cluster, gui.ecsDrill.service
 
 	return gui.WithWaitingStatus("loading ecs", func() error {
@@ -781,12 +783,13 @@ func (gui *Gui) loadECSList() error {
 		if err != nil {
 			return err
 		}
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return nil
 		}
 
-		gui.Panels.ECS.SetItemsKeepSelection(rows, ecsSelectionKey)
-		return gui.Panels.ECS.RerenderList()
+		swapPanelItems(gui, gui.Panels.ECS, rows, ecsSelectionKey)
+
+		return nil
 	})
 }
 

@@ -158,14 +158,14 @@ func TestOverviewDropsAResultFromASupersededProfile(t *testing.T) {
 
 	ctx := context.Background()
 
-	gui.Gen = 1
+	gui.BumpGeneration()
 	gui.renderOverview(ctx, "t-gen", func(context.Context) string { return "current profile" })
 	if got := mainBufferWithin(g, gui, "current profile", time.Second); !strings.Contains(got, "current profile") {
 		t.Fatalf("main = %q, want the render made under the live profile", got)
 	}
 
 	gui.renderOverview(ctx, "t-gen", func(context.Context) string {
-		gui.Gen++
+		gui.BumpGeneration()
 
 		return "stale profile"
 	})
@@ -315,7 +315,7 @@ func TestPaintOverviewOpening(t *testing.T) {
 		t.Fatalf("main = %q, want the loading line on a first visit", got)
 	}
 
-	gui.overviewCache.put(gui.Gen, "revisit", "the pane from last time")
+	gui.overviewCache.put(gui.Generation(), "revisit", "the pane from last time")
 	gui.paintOverviewOpening("revisit")
 	if got := mainBufferWithin(g, gui, "the pane from last time", time.Second); !strings.Contains(got, "the pane from last time") {
 		t.Fatalf("main = %q, want the cached pane on a revisit", got)

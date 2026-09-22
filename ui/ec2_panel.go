@@ -54,9 +54,9 @@ func (gui *Gui) loadEC2List() error {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
-	return gui.WithWaitingStatus("loading ec2", func() error {
+	return gui.WhileWaiting("loading ec2", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
@@ -64,7 +64,7 @@ func (gui *Gui) loadEC2List() error {
 		if err != nil {
 			return err
 		}
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return nil
 		}
 
@@ -72,8 +72,9 @@ func (gui *Gui) loadEC2List() error {
 		for i := range instances {
 			rows[i] = &instances[i]
 		}
-		gui.Panels.EC2.SetItemsKeepSelection(rows, ec2SelectionKey)
-		return gui.Panels.EC2.RerenderList()
+		swapPanelItems(gui, gui.Panels.EC2, rows, ec2SelectionKey)
+
+		return nil
 	})
 }
 
@@ -87,12 +88,12 @@ func (gui *Gui) instanceOverview(ctx context.Context, inst *aws.Instance, width 
 		return overviewUnavailable("instance")
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	overview := gui.Client.GetInstanceOverview(fetchCtx, inst.ID, gui.metricsMaxAge())
-	if !gui.ec2Extras.has(gen, inst.ID) && gen == gui.Gen {
+	if !gui.ec2Extras.has(gen, inst.ID) && gen == gui.Generation() {
 		overview.ExtrasPending = true
 		// Ordered like renderOverview's own writes, or this early paint could land after the full one and resurrect the pending ellipses.
 		gui.reRenderStringMainOrdered(presentation.FormatInstanceOverview(inst, overview, width, time.Now()))
@@ -109,7 +110,7 @@ func (gui *Gui) instanceOverview(ctx context.Context, inst *aws.Instance, width 
 // Unbounded like the metrics memos: one small struct per instance visited this session, dropped whole on a profile switch.
 type ec2OverviewExtras struct {
 	mu      sync.Mutex
-	gen     int
+	gen     int64
 	entries map[string]*ec2ExtrasEntry
 }
 
@@ -127,7 +128,7 @@ type ec2ExtrasEntry struct {
 }
 
 // has reports whether the instance's extras are already fetched, which is what decides if a render paints a pending pane first.
-func (e *ec2OverviewExtras) has(gen int, instanceID string) bool {
+func (e *ec2OverviewExtras) has(gen int64, instanceID string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, ok := e.entries[instanceID]
@@ -137,7 +138,7 @@ func (e *ec2OverviewExtras) has(gen int, instanceID string) bool {
 // fill puts the selection-time sections onto an overview, fetching them only when the instance has not been visited under this profile.
 // The lock is held across the fetches on purpose: it is also what stops two overview renders of the same instance from making the same calls at once.
 // ponytail: one lock across all instances, so a render of instance B waits out instance A's in-flight fetch; per-entry locks if panel hopping ever feels it.
-func (e *ec2OverviewExtras) fill(ctx context.Context, client *aws.Client, gen int, instanceID string, overview *aws.InstanceOverview) {
+func (e *ec2OverviewExtras) fill(ctx context.Context, client *aws.Client, gen int64, instanceID string, overview *aws.InstanceOverview) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

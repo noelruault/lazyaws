@@ -53,9 +53,9 @@ func (gui *Gui) loadECRList() error {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
-	return gui.WithWaitingStatus("loading ecr", func() error {
+	return gui.WhileWaiting("loading ecr", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
@@ -63,7 +63,7 @@ func (gui *Gui) loadECRList() error {
 		if err != nil {
 			return err
 		}
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return nil
 		}
 
@@ -71,8 +71,9 @@ func (gui *Gui) loadECRList() error {
 		for i := range repos {
 			rows[i] = &repos[i]
 		}
-		gui.Panels.ECR.SetItemsKeepSelection(rows, ecrSelectionKey)
-		return gui.Panels.ECR.RerenderList()
+		swapPanelItems(gui, gui.Panels.ECR, rows, ecrSelectionKey)
+
+		return nil
 	})
 }
 
@@ -113,12 +114,12 @@ func (gui *Gui) renderECRPolicies(repo *aws.ECRRepository) tasks.TaskFunc {
 			return
 		}
 
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		policies, err := gui.Client.GetECRRepositoryPolicies(fetchCtx, name, gui.metricsMaxAge())
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -165,12 +166,12 @@ func formatECRPolicies(policies *aws.ECRRepositoryPolicies) string {
 func (gui *Gui) renderECRImages(repo *aws.ECRRepository) tasks.TaskFunc {
 	name := repo.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		images, err := gui.Client.ListECRImages(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -210,12 +211,12 @@ func shortDigest(digest string) string {
 func (gui *Gui) renderECRScan(repo *aws.ECRRepository) tasks.TaskFunc {
 	name := repo.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		images, err := gui.Client.ListECRImages(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -230,7 +231,7 @@ func (gui *Gui) renderECRScan(repo *aws.ECRRepository) tasks.TaskFunc {
 		}
 
 		scan, err := gui.Client.GetECRImageScan(fetchCtx, name, digest)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {

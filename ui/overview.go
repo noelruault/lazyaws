@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,11 +22,11 @@ const overviewTabKey = "overview"
 // Keys carry the render width, so a pane laid out before a resize is a miss rather than a misfit. Unbounded on purpose: entries are one string per resource visited this session, and a profile switch drops them all.
 type overviewPaneCache struct {
 	mu    sync.Mutex
-	gen   int
+	gen   int64
 	panes map[string]string
 }
 
-func (c *overviewPaneCache) get(gen int, key string) (string, bool) {
+func (c *overviewPaneCache) get(gen int64, key string) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.gen != gen {
@@ -35,8 +36,20 @@ func (c *overviewPaneCache) get(gen int, key string) (string, bool) {
 	return content, ok
 }
 
+// forget drops every cached pane for one resource, at whatever widths it was rendered.
+// A mutation that changed the resource has to invalidate it: a static overview renders once per selection, so without this the pane would keep answering with the state from before the change.
+func (c *overviewPaneCache) forget(itemKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key := range c.panes {
+		if strings.HasPrefix(key, itemKey+"-w") {
+			delete(c.panes, key)
+		}
+	}
+}
+
 // put resets the cache when the generation moves, because a resource id is only unique within the account it was read from.
-func (c *overviewPaneCache) put(gen int, key, content string) {
+func (c *overviewPaneCache) put(gen int64, key, content string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.gen != gen || c.panes == nil {
@@ -109,7 +122,7 @@ func (gui *Gui) newOverviewTask(interval time.Duration, cacheKey string, render 
 // paintOverviewOpening puts something on the pane before the first fetch answers: the pane this resource last rendered when it was selected before, or a loading line on a first visit.
 // Either beats the blank pane this replaces — the fetch behind the ticker overwrites it the moment it lands.
 func (gui *Gui) paintOverviewOpening(cacheKey string) {
-	if cached, ok := gui.overviewCache.get(gui.Gen, cacheKey); ok {
+	if cached, ok := gui.overviewCache.get(gui.Generation(), cacheKey); ok {
 		gui.reRenderStringMainOrdered(cached)
 		return
 	}
@@ -119,10 +132,10 @@ func (gui *Gui) paintOverviewOpening(cacheKey string) {
 // renderOverview drops a render whose data was fetched under a profile that has since been switched away from.
 // The generation is snapshotted before render runs, not after, or a switch that lands mid-fetch would compare the new generation against itself.
 func (gui *Gui) renderOverview(ctx context.Context, cacheKey string, render func(context.Context) string) {
-	gen := gui.Gen
+	gen := gui.Generation()
 
 	content := render(ctx)
-	if gen != gui.Gen {
+	if gen != gui.Generation() {
 		return
 	}
 
@@ -145,7 +158,7 @@ func overviewUnavailableBecause(kind string, err error) string {
 // It runs from layout for the same reason syncQWidth does: that is the one place view dimensions can be read without racing the render.
 // An overview is laid out for the width captured when its task was built and wrapping is off, so after a resize the old text is either cut off or leaves its second column stranded.
 // syncSideListWidths re-renders whichever side lists are laid out for a width their view no longer has.
-// Each panel compares its own last render width, so a settled layout costs eight integer comparisons per frame and re-renders nothing.
+// Each panel compares its own last render width, so a settled layout costs nine integer comparisons per frame and re-renders nothing.
 func (gui *Gui) syncSideListWidths() {
 	for _, sidePanel := range gui.allSidePanels() {
 		if err := sidePanel.RerenderListIfResized(); err != nil {

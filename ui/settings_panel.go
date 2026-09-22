@@ -174,14 +174,14 @@ func (gui *Gui) loadChatModels() {
 	}
 
 	client := gui.Client
-	gen := gui.Gen
+	gen := gui.Generation()
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		models, err := client.ListChatModels(ctx)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 

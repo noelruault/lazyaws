@@ -54,13 +54,13 @@ func (gui *Gui) renderS3Objects(bucket *aws.Bucket) tasks.TaskFunc {
 }
 
 func (gui *Gui) loadS3ObjectsAndRender(ctx context.Context) {
-	gen := gui.Gen
+	gen := gui.Generation()
 	bucket, prefix := gui.s3Objects.bucket, gui.s3Objects.prefix
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	result, err := gui.Client.ListObjects(fetchCtx, bucket, prefix, nil)
-	if gen != gui.Gen {
+	if gen != gui.Generation() {
 		return
 	}
 	if err != nil {

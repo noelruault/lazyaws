@@ -63,8 +63,9 @@ type Gui struct {
 
 	CurrentProfile string
 
-	// Gen prevents superseded profile results from reaching the UI.
-	Gen int
+	// gen prevents superseded profile results from reaching the UI.
+	// Every async load snapshots it before fetching and drops its result if it moved. Atomic because those loads run on their own goroutines while the render loop reads it.
+	gen atomic.Int64
 
 	Profiles []string
 
@@ -82,7 +83,8 @@ type Gui struct {
 	// mainCursorState is the selection inside the main panel; only one navigable list shows at a time.
 	mainCursorState mainCursorState
 
-	vpcEndpoints vpcEndpointsState
+	vpcEndpoints        vpcEndpointsState
+	endpointConnections endpointConnectionsState
 
 	// throttledRefresh collapses bursts into one AWS reload per 50ms window.
 	throttledRefresh *throttle
@@ -116,7 +118,8 @@ type Panels struct {
 	ECR     *panels.SideListPanel[*aws.ECRRepository]
 	Secrets *panels.SideListPanel[*aws.SecretSummary]
 
-	VPC *panels.SideListPanel[*aws.VPC]
+	VPC         *panels.SideListPanel[*aws.VPC]
+	PrivateLink *panels.SideListPanel[*aws.VPCEndpointService]
 
 	Menu *panels.SideListPanel[*types.MenuItem]
 }
@@ -210,14 +213,15 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 // panelReloaders keeps full and focused refresh paths aligned.
 func (gui *Gui) panelReloaders() map[string]func() error {
 	return map[string]func() error{
-		profileReloader: gui.refreshProfile,
-		"ecs":           gui.loadECSList,
-		"ec2":           gui.loadEC2List,
-		"s3":            gui.loadS3List,
-		"eks":           gui.loadEKSList,
-		"ecr":           gui.loadECRList,
-		"secrets":       gui.loadSecretsList,
-		"vpc":           gui.loadVPCList,
+		profileReloader:     gui.refreshProfile,
+		"ecs":               gui.loadECSList,
+		"ec2":               gui.loadEC2List,
+		"s3":                gui.loadS3List,
+		"eks":               gui.loadEKSList,
+		"ecr":               gui.loadECRList,
+		"secrets":           gui.loadSecretsList,
+		"vpc":               gui.loadVPCList,
+		privateLinkReloader: gui.loadPrivateLinkList,
 	}
 }
 
@@ -270,6 +274,16 @@ func (gui *Gui) IgnoreStrings() []string {
 
 func (gui *Gui) Update(f func() error) {
 	gui.g.Update(func(*gocui.Gui) error { return f() })
+}
+
+// Generation is the current profile generation. An async load snapshots it before fetching and drops its result if it has moved since.
+func (gui *Gui) Generation() int64 {
+	return gui.gen.Load()
+}
+
+// BumpGeneration declares that the account behind the panels changed, which is what drops every in-flight result and every cached pane keyed to the old one.
+func (gui *Gui) BumpGeneration() {
+	gui.gen.Add(1)
 }
 
 func (gui *Gui) goEvery(interval time.Duration, function func() error) {
@@ -361,7 +375,8 @@ func (gui *Gui) setPanels() {
 		ECR:     gui.getECRPanel(),
 		Secrets: gui.getSecretsPanel(),
 
-		VPC: gui.getVPCPanel(),
+		VPC:         gui.getVPCPanel(),
+		PrivateLink: gui.getPrivateLinkPanel(),
 
 		Menu: gui.getMenuPanel(),
 	}

@@ -29,7 +29,7 @@ func sidePanelViewNames(sidePanels []panels.ISideListPanel) []string {
 	return names
 }
 
-// resourceViewNames are the views that address the selected resource: the eight lists, plus main, which shows that same resource's detail.
+// resourceViewNames are the views that address the selected resource: the nine lists, plus main, which shows that same resource's detail.
 // Keys that act on a selection are registered from this list rather than globally, so they cannot fire in the chat, a filter prompt or a popup.
 func resourceViewNames(sidePanels []panels.ISideListPanel) []string {
 	return append(sidePanelViewNames(sidePanels), "main")

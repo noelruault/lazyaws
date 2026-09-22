@@ -22,7 +22,8 @@ func newTestGui(t *testing.T) *Gui {
 			ECR:     &gocui.View{},
 			Secrets: &gocui.View{},
 
-			VPC: &gocui.View{},
+			VPC:         &gocui.View{},
+			PrivateLink: &gocui.View{},
 
 			Menu: &gocui.View{},
 			Main: &gocui.View{},
@@ -93,36 +94,87 @@ func TestProfileSwitchResetsState(t *testing.T) {
 }
 
 // A stale connection must never replace a newer profile switch.
+// Headless rather than newTestGui, because the switch is applied through the loop now and a Gui without a screen has nowhere to queue it.
 func TestStaleGenerationMsgsDropped(t *testing.T) {
-	gui := newTestGui(t)
+	gui, g := newHeadlessGui(t)
+	quietRefresh(gui)
 
-	gui.Gen = 1
-	staleGen := gui.Gen
+	gui.BumpGeneration()
+	staleGen := gui.Generation()
 	staleClient := &aws.Client{}
 
-	gui.Gen = 2
-	gui.CurrentProfile = "newer"
+	gui.BumpGeneration()
+	run(t, g, func() error {
+		gui.CurrentProfile = "newer"
+
+		return nil
+	})
 
 	if err := gui.applyProfileSwitch(staleGen, "stale", staleClient); err != nil {
 		t.Fatalf("applyProfileSwitch() error = %v", err)
 	}
 
-	if gui.CurrentProfile != "newer" {
-		t.Errorf("CurrentProfile = %q, want %q (stale switch must not overwrite it)", gui.CurrentProfile, "newer")
+	// A superseded switch queues nothing at all, so there is nothing to wait for before reading.
+	if got := ask(g, func() string { return gui.CurrentProfile }); got != "newer" {
+		t.Errorf("CurrentProfile = %q, want %q (stale switch must not overwrite it)", got, "newer")
 	}
-	if gui.Client == staleClient {
+	if ask(g, func() bool { return gui.Client == staleClient }) {
 		t.Error("stale client must not be installed")
 	}
 
-	gen := gui.Gen
 	client := &aws.Client{}
-	if err := gui.applyProfileSwitch(gen, "current", client); err != nil {
+	if err := gui.applyProfileSwitch(gui.Generation(), "current", client); err != nil {
 		t.Fatalf("applyProfileSwitch() error = %v", err)
 	}
-	if gui.CurrentProfile != "current" {
-		t.Errorf("CurrentProfile = %q, want %q", gui.CurrentProfile, "current")
-	}
-	if gui.Client != client {
+	waitForProfile(t, g, gui, "current")
+
+	if !ask(g, func() bool { return gui.Client == client }) {
 		t.Error("current-gen client was not installed")
 	}
+}
+
+// The reset empties every panel the loop is rendering, so the switch belongs on the loop; -race is what proves it, not an assertion.
+func TestApplyingAProfileSwitchWhileTheListsRerenderIsRaceFree(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	quietRefresh(gui)
+
+	const switches = 30
+
+	switched := make(chan struct{})
+	go func() {
+		defer close(switched)
+		for range switches {
+			gui.BumpGeneration()
+			if err := gui.applyProfileSwitch(gui.Generation(), "staging", &aws.Client{}); err != nil {
+				t.Errorf("applyProfileSwitch() = %v", err)
+
+				return
+			}
+		}
+	}()
+
+	for range switches {
+		run(t, g, func() error { return gui.Panels.ECS.RerenderList() })
+	}
+	<-switched
+
+	waitForProfile(t, g, gui, "staging")
+}
+
+// quietRefresh stops a switch from triggering the refresh tier, whose own goroutines are not what these tests are about.
+func quietRefresh(gui *Gui) {
+	gui.throttledRefresh = newThrottle(time.Hour, func() {})
+}
+
+// waitForProfile waits for a switch applied off the loop to land on it, since the apply is queued rather than immediate.
+func waitForProfile(t *testing.T, g *gocui.Gui, gui *Gui, want string) {
+	t.Helper()
+
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if ask(g, func() string { return gui.CurrentProfile }) == want {
+			return
+		}
+	}
+
+	t.Fatalf("CurrentProfile never became %q", want)
 }

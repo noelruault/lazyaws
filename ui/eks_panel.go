@@ -103,9 +103,9 @@ func (gui *Gui) loadEKSList() error {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
-	return gui.WithWaitingStatus("loading eks", func() error {
+	return gui.WhileWaiting("loading eks", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -113,7 +113,7 @@ func (gui *Gui) loadEKSList() error {
 		if err != nil {
 			return err
 		}
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return nil
 		}
 
@@ -121,8 +121,9 @@ func (gui *Gui) loadEKSList() error {
 		for i := range clusters {
 			rows[i] = &clusters[i]
 		}
-		gui.Panels.EKS.SetItemsKeepSelection(rows, eksSelectionKey)
-		return gui.Panels.EKS.RerenderList()
+		swapPanelItems(gui, gui.Panels.EKS, rows, eksSelectionKey)
+
+		return nil
 	})
 }
 
@@ -145,12 +146,12 @@ func (gui *Gui) eksClusterOverview(ctx context.Context, cluster *aws.EKSCluster,
 func (gui *Gui) renderEKSConfig(cluster *aws.EKSCluster) tasks.TaskFunc {
 	name := cluster.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		details, _ := gui.Client.GetEKSClusterDetails(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 
@@ -194,12 +195,12 @@ func (gui *Gui) renderEKSConfig(cluster *aws.EKSCluster) tasks.TaskFunc {
 func (gui *Gui) renderEKSNodeGroups(cluster *aws.EKSCluster) tasks.TaskFunc {
 	name := cluster.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		nodeGroups, _ := gui.Client.ListNodeGroups(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 
@@ -225,12 +226,12 @@ func (gui *Gui) renderEKSNodeGroups(cluster *aws.EKSCluster) tasks.TaskFunc {
 func (gui *Gui) renderEKSAddons(cluster *aws.EKSCluster) tasks.TaskFunc {
 	name := cluster.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		addons, _ := gui.Client.ListAddons(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 
@@ -258,13 +259,13 @@ func (gui *Gui) renderEKSAddons(cluster *aws.EKSCluster) tasks.TaskFunc {
 func (gui *Gui) renderEKSAccess(cluster *aws.EKSCluster) tasks.TaskFunc {
 	name := cluster.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		entries, _ := gui.Client.ListAccessEntries(fetchCtx, name)
 		podIds, _ := gui.Client.ListPodIdentityAssociations(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 

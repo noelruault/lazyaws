@@ -156,7 +156,7 @@ func (g *paneGate) due(now time.Time) bool {
 }
 
 // startAutoRefresh puts the side panel the user is looking at on its own refresh tier.
-// Exactly ONE panel reloads per tick: the eight list fetches are individually cheap and collectively the app's largest recurring cost, and seven of them would be describing rows nobody is looking at.
+// Exactly ONE panel reloads per tick: the nine list fetches are individually cheap and collectively the app's largest recurring cost, and eight of them would be describing rows nobody is looking at.
 func (gui *Gui) startAutoRefresh() {
 	interval := tickInterval(gui.Config.User.Refresh.PanelSeconds)
 	if interval <= 0 {

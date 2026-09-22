@@ -60,9 +60,9 @@ func (gui *Gui) loadS3List() error {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
-	return gui.WithWaitingStatus("loading s3", func() error {
+	return gui.WhileWaiting("loading s3", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
@@ -70,7 +70,7 @@ func (gui *Gui) loadS3List() error {
 		if err != nil {
 			return err
 		}
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return nil
 		}
 
@@ -78,8 +78,9 @@ func (gui *Gui) loadS3List() error {
 		for i := range buckets {
 			rows[i] = &buckets[i]
 		}
-		gui.Panels.S3.SetItemsKeepSelection(rows, s3SelectionKey)
-		return gui.Panels.S3.RerenderList()
+		swapPanelItems(gui, gui.Panels.S3, rows, s3SelectionKey)
+
+		return nil
 	})
 }
 
@@ -102,12 +103,12 @@ func (gui *Gui) bucketOverview(ctx context.Context, bucket *aws.Bucket, width in
 func (gui *Gui) renderS3Config(bucket *aws.Bucket) tasks.TaskFunc {
 	name := bucket.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		versioning, err := gui.Client.GetBucketVersioning(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -129,7 +130,7 @@ func (gui *Gui) renderS3Config(bucket *aws.Bucket) tasks.TaskFunc {
 		replication, _ := gui.Client.GetBucketReplication(fetchCtx, name)
 		lifecycle, _ := gui.Client.GetBucketLifecycleConfiguration(fetchCtx, name)
 		tags, _ := gui.Client.GetBucketTagging(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		gui.RenderStringMain(formatS3Config(name, versioning, region, pab, notifications, encryption, objectLock, uploads, logging, replication, lifecycle, tags, "computing…"))
@@ -137,7 +138,7 @@ func (gui *Gui) renderS3Config(bucket *aws.Bucket) tasks.TaskFunc {
 		sizeCtx, sizeCancel := context.WithTimeout(ctx, 60*time.Second)
 		defer sizeCancel()
 		size, count, sizeErr := gui.Client.GetBucketSize(sizeCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		sizeStr := "unknown"
@@ -310,12 +311,12 @@ func formatS3Config(name, versioning, region string, pab *aws.PublicAccessBlock,
 func (gui *Gui) renderS3Policy(bucket *aws.Bucket) tasks.TaskFunc {
 	name := bucket.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		policy, err := gui.Client.GetBucketPolicy(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {

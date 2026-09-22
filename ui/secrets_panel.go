@@ -85,7 +85,7 @@ func (gui *Gui) loadSecretsList() error {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
 	return gui.WithWaitingStatus("loading secrets", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -95,7 +95,7 @@ func (gui *Gui) loadSecretsList() error {
 		if err != nil {
 			return err
 		}
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return nil
 		}
 
@@ -103,8 +103,9 @@ func (gui *Gui) loadSecretsList() error {
 		for i := range secrets {
 			rows[i] = &secrets[i]
 		}
-		gui.Panels.Secrets.SetItemsKeepSelection(rows, secretsSelectionKey)
-		return gui.Panels.Secrets.RerenderList()
+		swapPanelItems(gui, gui.Panels.Secrets, rows, secretsSelectionKey)
+
+		return nil
 	})
 }
 
@@ -113,6 +114,8 @@ func secretsSelectionKey(secret *aws.SecretSummary) string { return secret.Name 
 
 func (gui *Gui) handleSecretsToggleDeleted(g *gocui.Gui, v *gocui.View) error {
 	gui.secretsShowDeleted = !gui.secretsShowDeleted
+
+	// This runs on the UI loop, which is why loadSecretsList keeps the spawning status form: a loader that held the loop until AWS answered would freeze the dashboard on every toggle.
 	return gui.loadSecretsList()
 }
 
@@ -148,12 +151,12 @@ func secretOverviewErrs(details *aws.SecretDetails, err error) []error {
 func (gui *Gui) renderSecretVersions(secret *aws.SecretSummary) tasks.TaskFunc {
 	name := secret.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		details, err := gui.Client.GetSecretDetails(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -168,12 +171,12 @@ func (gui *Gui) renderSecretVersions(secret *aws.SecretSummary) tasks.TaskFunc {
 func (gui *Gui) renderSecretPolicy(secret *aws.SecretSummary) tasks.TaskFunc {
 	name := secret.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		details, err := gui.Client.GetSecretDetails(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -219,12 +222,12 @@ func (gui *Gui) renderSecretValue(secret *aws.SecretSummary) tasks.TaskFunc {
 
 	name := secret.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
 		value, prettyJSON, err := gui.Client.GetSecretValueString(fetchCtx, name)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {

@@ -101,6 +101,30 @@ func (gui *Gui) WithWaitingStatus(name string, f func() error) error {
 	return nil
 }
 
+// WhileWaiting runs f on the CALLING goroutine under a named spinner, for work that is already off the UI loop.
+// A panel loader wants this rather than WithWaitingStatus: the throttle and the full refresh both call a loader on a fresh goroutine, so returning before the fetch finishes would hand the single-flight guard back while the fetch is still running and let a second one start beside it.
+func (gui *Gui) WhileWaiting(name string, f func() error) error {
+	gui.statusManager.addWaitingStatus(name)
+	defer gui.statusManager.removeStatus(name)
+
+	go func() {
+		ticker := time.NewTicker(time.Millisecond * 50)
+		defer ticker.Stop()
+		gui.statusManager.spin(ticker.C, func(appStatus string) {
+			if err := gui.renderString(gui.g, "appStatus", appStatus); err != nil {
+				gui.Log.Warn(err.Error())
+			}
+		})
+	}()
+
+	// ErrorChan keeps a failed fetch from mutating popups off the loop, exactly as the spawning form does.
+	if err := f(); err != nil {
+		gui.ErrorChan <- err
+	}
+
+	return nil
+}
+
 func (gui *Gui) getInformationContent() string {
 	return presentation.VersionBullet(gui.Version, gui.updateState)
 }

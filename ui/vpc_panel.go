@@ -66,9 +66,9 @@ func (gui *Gui) loadVPCList() error {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
-	return gui.WithWaitingStatus("loading vpcs", func() error {
+	return gui.WhileWaiting("loading vpcs", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), vpcFetchTimeout)
 		defer cancel()
 
@@ -76,7 +76,7 @@ func (gui *Gui) loadVPCList() error {
 		if err != nil {
 			return err
 		}
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return nil
 		}
 
@@ -84,8 +84,9 @@ func (gui *Gui) loadVPCList() error {
 		for i := range vpcs {
 			rows[i] = &vpcs[i]
 		}
-		gui.Panels.VPC.SetItemsKeepSelection(rows, vpcSelectionKey)
-		return gui.Panels.VPC.RerenderList()
+		swapPanelItems(gui, gui.Panels.VPC, rows, vpcSelectionKey)
+
+		return nil
 	})
 }
 
@@ -109,12 +110,12 @@ func (gui *Gui) vpcOverview(ctx context.Context, vpc *aws.VPC, width int) string
 func (gui *Gui) vpcTab(vpc *aws.VPC, render func(context.Context, string) (string, error)) tasks.TaskFunc {
 	vpcID := vpc.ID
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, vpcFetchTimeout)
 		defer cancel()
 
 		out, err := render(fetchCtx, vpcID)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -167,21 +168,36 @@ type vpcEndpointsState struct {
 	detail    int
 }
 
+// renderVPCEndpoints is the one VPC tab that does not go through vpcTab: it owns state the row handlers read on the UI loop, so the fetch hands that over there rather than painting a string back from the task goroutine.
 func (gui *Gui) renderVPCEndpoints(vpc *aws.VPC) tasks.TaskFunc {
-	return gui.vpcTab(vpc, func(ctx context.Context, vpcID string) (string, error) {
-		endpoints, err := gui.Client.ListVPCEndpoints(ctx, vpcID)
+	vpcID := vpc.ID
+
+	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
+		gen := gui.Generation()
+		fetchCtx, cancel := context.WithTimeout(ctx, vpcFetchTimeout)
+		defer cancel()
+
+		endpoints, err := gui.Client.ListVPCEndpoints(fetchCtx, vpcID)
+		if gen != gui.Generation() {
+			return
+		}
 		if err != nil {
-			return "", err
+			gui.RenderStringMain("error: " + err.Error())
+			return
 		}
 
-		// Moving to another VPC closes whatever record was open, since its index means nothing in the new list.
-		if gui.vpcEndpoints.vpcID != vpcID {
-			gui.vpcEndpoints = vpcEndpointsState{vpcID: vpcID}
-		}
-		gui.vpcEndpoints.endpoints = endpoints
+		gui.Update(func() error {
+			// Moving to another VPC closes whatever record was open, since its index means nothing in the new list.
+			if gui.vpcEndpoints.vpcID != vpcID {
+				gui.vpcEndpoints = vpcEndpointsState{vpcID: vpcID}
+			}
+			gui.vpcEndpoints.endpoints = endpoints
 
-		return gui.vpcEndpointsContent(), nil
-	})
+			gui.RenderStringMain(gui.vpcEndpointsContent())
+
+			return nil
+		})
+	}})
 }
 
 // vpcEndpointsContent renders whichever of the two views is current; both read the same in-memory fetch.
