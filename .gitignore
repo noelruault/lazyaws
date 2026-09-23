@@ -89,6 +89,3 @@ lazyawschic
 
 # Personal working notes and references. CLAUDE.md is the shared instruction file; this one is nobody else's business.
 CLAUDE.local.md
-
-# The release runbook is a personal note kept beside the repo, never published.
-docs/RELEASING.md
