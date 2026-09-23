@@ -58,8 +58,9 @@ type Gui struct {
 
 	Panels Panels
 
-	// Client is replaced wholesale so every service shares profile credentials.
-	Client *aws.Client
+	// client is replaced wholesale so every service shares profile credentials.
+	// Atomic because the switch that replaces it runs on the loop while fetches read it from their own goroutines.
+	client atomic.Pointer[aws.Client]
 
 	CurrentProfile string
 
@@ -194,8 +195,8 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 		statusManager: &statusManager{},
 		taskManager:   tasks.NewTaskManager(slog.Default()),
 		ErrorChan:     errorChan,
-		Client:        client,
 	}
+	gui.setAWSClient(client)
 	gui.Registry = gui.newRegistry()
 	gui.Keys, gui.startupProblems = buildKeymap(cfg.User.KeybindingPreset, cfg.User.Keybindings)
 	gui.throttledRefresh = newThrottle(50*time.Millisecond, gui.refresh)
@@ -228,7 +229,7 @@ func (gui *Gui) panelReloaders() map[string]func() error {
 // It goes through the single-flighted loaders rather than panelReloaders, so a full refresh landing on top of a panel tier's tick reloads each list once instead of twice.
 func (gui *Gui) refresh() {
 	// The profile panel needs no AWS credentials and must remain available as the recovery path.
-	if gui.authProblem != nil || !gui.Client.Ready() {
+	if gui.authProblem != nil || !gui.awsClient().Ready() {
 		go func() { _ = gui.reloadProfilePanel() }()
 		gui.showAuthProblem()
 		return
@@ -273,6 +274,21 @@ func (gui *Gui) IgnoreStrings() []string {
 
 func (gui *Gui) Update(f func() error) {
 	gui.g.Update(func(*gocui.Gui) error { return f() })
+}
+
+// queueUpdate hands work to the UI loop in the order this goroutine enqueued it, which Update cannot promise.
+// Only for goroutines that are not the loop: the send is synchronous, so the loop would be waiting on itself once the twenty-deep event buffer filled.
+func (gui *Gui) queueUpdate(f func() error) {
+	gui.g.UpdateAsync(func(*gocui.Gui) error { return f() })
+}
+
+// awsClient is the client as of this call, which a fetch takes ONCE and uses throughout rather than re-reading per call and straddling two accounts.
+func (gui *Gui) awsClient() *aws.Client {
+	return gui.client.Load()
+}
+
+func (gui *Gui) setAWSClient(client *aws.Client) {
+	gui.client.Store(client)
 }
 
 // Generation is the value an async load snapshots before fetching, so it can drop its result if it has moved since.

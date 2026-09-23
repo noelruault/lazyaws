@@ -59,29 +59,27 @@ func (gui *Gui) getPrivateLinkPanel() *panels.SideListPanel[*aws.VPCEndpointServ
 func endpointServiceCacheKey(s *aws.VPCEndpointService) string { return s.ID }
 
 func (gui *Gui) loadPrivateLinkList() error {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return nil
 	}
 
 	gen := gui.Generation()
 
-	return gui.WhileWaiting("loading endpoint services", func() error {
+	return gui.WithWaitingStatus("loading endpoint services", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), privateLinkFetchTimeout)
 		defer cancel()
 
-		services, err := gui.Client.ListVPCEndpointServices(ctx)
+		services, err := client.ListVPCEndpointServices(ctx)
 		if err != nil {
 			return err
-		}
-		if gen != gui.Generation() {
-			return nil
 		}
 
 		rows := make([]*aws.VPCEndpointService, len(services))
 		for i := range services {
 			rows[i] = &services[i]
 		}
-		swapPanelItems(gui, gui.Panels.PrivateLink, rows, endpointServiceCacheKey)
+		swapPanelItems(gui, gen, gui.Panels.PrivateLink, rows, endpointServiceCacheKey)
 
 		return nil
 	})
@@ -89,14 +87,15 @@ func (gui *Gui) loadPrivateLinkList() error {
 
 // privateLinkOverview reads the connections the service's own list call cannot carry, so the pane can report them by state.
 func (gui *Gui) privateLinkOverview(ctx context.Context, service *aws.VPCEndpointService, width int) string {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return overviewUnavailable("PrivateLink")
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, privateLinkFetchTimeout)
 	defer cancel()
 
-	connections, err := gui.Client.ListVPCEndpointConnections(fetchCtx, service.ID)
+	connections, err := client.ListVPCEndpointConnections(fetchCtx, service.ID)
 
 	return presentation.FormatVPCEndpointServiceOverview(service, connections, err, width)
 }
@@ -113,21 +112,24 @@ func (gui *Gui) renderEndpointConnections(service *aws.VPCEndpointService) tasks
 	serviceID := service.ID
 
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
+		client := gui.awsClient()
 		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, privateLinkFetchTimeout)
 		defer cancel()
 
-		connections, err := gui.Client.ListVPCEndpointConnections(fetchCtx, serviceID)
-		if gen != gui.Generation() {
-			return
-		}
+		connections, err := client.ListVPCEndpointConnections(fetchCtx, serviceID)
 		if err != nil {
 			gui.RenderStringMain("error: " + err.Error())
 			return
 		}
 
 		// The row handlers read this state on the UI loop, so the fetch hands it over there rather than writing it from the task goroutine.
-		gui.Update(func() error {
+		gui.queueUpdate(func() error {
+			// Checked here rather than before the enqueue, or a profile switched in between would leave one account's connections on another account's pane.
+			if gen != gui.Generation() {
+				return nil
+			}
+
 			// Moving to another service closes whatever record was open, since its index means nothing in the new list.
 			if gui.endpointConnections.serviceID != serviceID {
 				gui.endpointConnections = endpointConnectionsState{serviceID: serviceID}
@@ -139,6 +141,21 @@ func (gui *Gui) renderEndpointConnections(service *aws.VPCEndpointService) tasks
 			return nil
 		})
 	}})
+}
+
+// setEndpointConnectionState records what an accept or reject just did, so the rows and the actions menu stop offering an action the call has already taken.
+func (gui *Gui) setEndpointConnectionState(serviceID, endpointID, state string) {
+	if gui.endpointConnections.serviceID != serviceID {
+		return
+	}
+
+	for i := range gui.endpointConnections.connections {
+		if gui.endpointConnections.connections[i].EndpointID == endpointID {
+			gui.endpointConnections.connections[i].State = state
+
+			return
+		}
+	}
 }
 
 // endpointConnectionsContent renders whichever of the two views is current; both read the same in-memory fetch.

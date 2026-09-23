@@ -170,7 +170,7 @@ func (gui *Gui) startAutoRefresh() {
 // It triggers the panel's throttle instead of calling the loader, so a tick landing next to a manual r collapses into one reload; the loader behind that throttle is single-flighted, which is what makes a tick arriving mid-reload free.
 func (gui *Gui) reloadFocusedPanel() error {
 	// The profile panel is the recovery path and reloads itself through refresh; with no credentials every other panel's tick is a call that can only fail.
-	if gui.authProblem != nil || !gui.Client.Ready() {
+	if gui.authProblem != nil || !gui.awsClient().Ready() {
 		return nil
 	}
 

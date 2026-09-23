@@ -63,6 +63,35 @@ func TestFormatEndpointConnectionDetailShowsWhatTheRowCannot(t *testing.T) {
 	}
 }
 
+// The reload that would confirm an accept is single-flighted and can be dropped, so the state the call returned is applied here or the row keeps offering an accept that has already happened.
+func TestSetEndpointConnectionStateMovesTheRowOffPendingAcceptance(t *testing.T) {
+	gui := newTestGui(t)
+	gui.endpointConnections = endpointConnectionsState{
+		serviceID: "vpce-svc-a",
+		connections: []aws.VPCEndpointConnection{
+			{EndpointID: "vpce-1", State: aws.VPCEndpointStatePendingAcceptance},
+			{EndpointID: "vpce-2", State: aws.VPCEndpointStatePendingAcceptance},
+		},
+	}
+
+	gui.setEndpointConnectionState("vpce-svc-a", "vpce-2", aws.VPCEndpointStatePending)
+	if got := gui.endpointConnections.connections[1].State; got != aws.VPCEndpointStatePending {
+		t.Errorf("state = %q, want %q", got, aws.VPCEndpointStatePending)
+	}
+	if gui.endpointConnections.connections[1].Pending() {
+		t.Error("the accepted connection still offers an accept")
+	}
+	if !gui.endpointConnections.connections[0].Pending() {
+		t.Error("the other connection was changed too")
+	}
+
+	// A pane showing another service must not be edited by a call that landed for the one before it.
+	gui.setEndpointConnectionState("vpce-svc-b", "vpce-1", aws.VPCEndpointStateRejected)
+	if !gui.endpointConnections.connections[0].Pending() {
+		t.Error("a change for another service reached these rows")
+	}
+}
+
 // The panel exists to answer "is anything waiting", so the services that are waiting have to be the ones at the top of it.
 func TestPrivateLinkListPutsWaitingServicesFirst(t *testing.T) {
 	gui := newTestGui(t)

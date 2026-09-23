@@ -361,13 +361,13 @@ func (gui *Gui) askQ(question string) error {
 		return nil
 	}
 
+	client := gui.awsClient()
 	req := q.Request{Prompt: question, Profile: gui.CurrentProfile}
-	if gui.Client != nil {
-		req.Region = gui.Client.GetRegion()
-		req.Context = q.FormatContext(gui.CurrentProfile, gui.Client.GetRegion(), gui.Client.GetAccountID())
+	if client != nil {
+		req.Region = client.GetRegion()
+		req.Context = q.FormatContext(gui.CurrentProfile, client.GetRegion(), client.GetAccountID())
 	}
 	provider, model := gui.chatProvider(), gui.chatModel()
-	client := gui.Client
 
 	turn := &qTurn{question: question}
 

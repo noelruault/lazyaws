@@ -14,7 +14,7 @@ import (
 func TestECSServicePanelRendersTheServiceOverview(t *testing.T) {
 	gui, g := newHeadlessGuiWithConfig(t, overviewFirstConfig())
 	resizeView(t, g, "main", 80, 24)
-	gui.Client = &aws.Client{}
+	gui.setAWSClient(&aws.Client{})
 
 	gui.ecsDrill.level = ecsLevelServices
 	registry := registryOf("ecs services", gui.Panels.ECS.ContextState, &ecsRow{
@@ -42,7 +42,7 @@ func TestECSServicePanelRendersTheServiceOverview(t *testing.T) {
 func TestECSServiceOverviewToleratesARowWithoutAService(t *testing.T) {
 	gui, g := newHeadlessGuiWithConfig(t, overviewFirstConfig())
 	resizeView(t, g, "main", 80, 24)
-	gui.Client = &aws.Client{}
+	gui.setAWSClient(&aws.Client{})
 
 	got := ask(g, func() string {
 		return gui.ecsServiceOverview(context.Background(), &ecsRow{Kind: ecsRowKindService}, 80)

@@ -160,14 +160,15 @@ func (gui *Gui) getECSPanel() *panels.SideListPanel[*ecsRow] {
 
 // ecsClusterOverview consolidates the cluster's detail tabs into one pane, refetching its services and tasks on each render and its metrics on the slower metrics tier.
 func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) string {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return overviewUnavailable("cluster")
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	overview := gui.Client.GetECSClusterOverview(fetchCtx, row.Cluster, gui.metricsMaxAge())
+	overview := client.GetECSClusterOverview(fetchCtx, row.Cluster, gui.metricsMaxAge())
 	gui.throttles.observeSections(overview.Errs)
 
 	return presentation.FormatECSClusterOverview(row.Cluster, overview, width)
@@ -176,14 +177,15 @@ func (gui *Gui) ecsClusterOverview(ctx context.Context, row *ecsRow, width int) 
 // ecsServiceOverview consolidates the service's detail tabs into one pane, refetching its running image on each render and its metrics on the slower metrics tier.
 // The row is checked as well as the client: a rerender queued before a drill level changed arrives with the tab set of one level and the row of another, and the formatter reads the service unguarded.
 func (gui *Gui) ecsServiceOverview(ctx context.Context, row *ecsRow, width int) string {
-	if gui.Client == nil || row.Service == nil {
+	client := gui.awsClient()
+	if client == nil || row.Service == nil {
 		return overviewUnavailable("service")
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	overview := gui.Client.GetECSServiceOverview(fetchCtx, row.Service, gui.metricsMaxAge())
+	overview := client.GetECSServiceOverview(fetchCtx, row.Service, gui.metricsMaxAge())
 	gui.throttles.observeSections(overview.Errs)
 
 	return presentation.FormatECSServiceOverview(row.Service, overview, width, time.Now())
@@ -208,7 +210,7 @@ func (gui *Gui) renderECSClusterInstances(row *ecsRow) tasks.TaskFunc {
 		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		instances, err := gui.Client.ListContainerInstances(fetchCtx, c.Name)
+		instances, err := gui.awsClient().ListContainerInstances(fetchCtx, c.Name)
 		if gen != gui.Generation() {
 			return
 		}
@@ -251,20 +253,21 @@ func formatECSContainerInstances(instances []aws.ECSContainerInstance) string {
 func (gui *Gui) renderECSServiceConfig(row *ecsRow) tasks.TaskFunc {
 	s := row.Service
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
+		client := gui.awsClient()
 		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		// Best-effort: a service whose metrics or image fail to load still has load balancers and target health worth rendering.
-		metrics, _ := gui.Client.GetECSServiceMetrics(fetchCtx, s.Cluster, s.Name)
-		image, _ := gui.Client.ResolveECSServiceImage(fetchCtx, s)
+		metrics, _ := client.GetECSServiceMetrics(fetchCtx, s.Cluster, s.Name)
+		image, _ := client.ResolveECSServiceImage(fetchCtx, s)
 
 		health := make(map[string][]aws.ECSTargetHealth, len(s.LoadBalancers))
 		for _, lb := range s.LoadBalancers {
 			if lb.TargetGroupArn == "" {
 				continue
 			}
-			if h, err := gui.Client.DescribeTargetHealth(fetchCtx, lb.TargetGroupArn); err == nil {
+			if h, err := client.DescribeTargetHealth(fetchCtx, lb.TargetGroupArn); err == nil {
 				health[lb.TargetGroupArn] = h
 			}
 		}
@@ -332,7 +335,7 @@ func (gui *Gui) renderECSServiceDeployments(row *ecsRow) tasks.TaskFunc {
 		var cd *aws.ECSCodeDeployStatus
 		if s.DeploymentController == ecsCodeDeployControllerType {
 			fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			cd, _ = gui.Client.GetECSCodeDeployStatus(fetchCtx, s.Cluster, s.Name)
+			cd, _ = gui.awsClient().GetECSCodeDeployStatus(fetchCtx, s.Cluster, s.Name)
 			cancel()
 		}
 
@@ -479,12 +482,13 @@ func formatECSTaskConfig(t *aws.ECSTask) string {
 // renderECSTaskDefDiff deliberately compares only the current and previous revisions.
 func (gui *Gui) renderECSTaskDefDiff(taskDefArn string) tasks.TaskFunc {
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
+		client := gui.awsClient()
 		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		family := aws.TaskDefinitionFamily(taskDefArn)
-		revisions, err := gui.Client.ListTaskDefinitions(fetchCtx, family)
+		revisions, err := client.ListTaskDefinitions(fetchCtx, family)
 		if gen != gui.Generation() {
 			return
 		}
@@ -498,9 +502,9 @@ func (gui *Gui) renderECSTaskDefDiff(taskDefArn string) tasks.TaskFunc {
 			if r.Arn != taskDefArn {
 				continue
 			}
-			current, _ = gui.Client.DescribeTaskDefinitionDetail(fetchCtx, r.Arn)
+			current, _ = client.DescribeTaskDefinitionDetail(fetchCtx, r.Arn)
 			if i+1 < len(revisions) {
-				previous, _ = gui.Client.DescribeTaskDefinitionDetail(fetchCtx, revisions[i+1].Arn)
+				previous, _ = client.DescribeTaskDefinitionDetail(fetchCtx, revisions[i+1].Arn)
 			}
 			break
 		}
@@ -641,7 +645,7 @@ func (gui *Gui) renderECSTaskLogs(row *ecsRow) tasks.TaskFunc {
 			gen := gui.Generation()
 			fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
-			streams, err := gui.Client.GetECSTaskLogs(fetchCtx, cluster, taskArn, 200)
+			streams, err := gui.awsClient().GetECSTaskLogs(fetchCtx, cluster, taskArn, 200)
 			if gen != gui.Generation() {
 				return
 			}
@@ -763,31 +767,37 @@ func (gui *Gui) drillECS() error {
 		return err
 	}
 
-	// This runs on the UI loop, which is why loadECSList keeps the spawning status form: a loader that held the loop until AWS answered would freeze the dashboard on every enter and esc.
-	return gui.loadECSList()
+	// The loader blocks until AWS answers, and this runs on the UI loop, which the dashboard needs back before then.
+	// The drill state is copied here, on the loop that owns it, so the goroutine never reads it.
+	drill := gui.ecsDrill
+	go func() { _ = gui.loadECSListAt(drill) }()
+
+	return nil
 }
 
 func (gui *Gui) loadECSList() error {
-	if gui.Client == nil {
+	return gui.loadECSListAt(gui.ecsDrill)
+}
+
+// loadECSListAt takes the drill level to fetch rather than reading it, because the caller that spawns it is the UI loop, which is the only goroutine that may touch ecsDrill.
+func (gui *Gui) loadECSListAt(drill ecsDrillState) error {
+	client := gui.awsClient()
+	if client == nil {
 		return nil
 	}
 
 	gen := gui.Generation()
-	level, cluster, service := gui.ecsDrill.level, gui.ecsDrill.cluster, gui.ecsDrill.service
 
 	return gui.WithWaitingStatus("loading ecs", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
-		rows, err := gui.fetchECSRows(ctx, level, cluster, service)
+		rows, err := gui.fetchECSRows(ctx, client, drill.level, drill.cluster, drill.service)
 		if err != nil {
 			return err
 		}
-		if gen != gui.Generation() {
-			return nil
-		}
 
-		swapPanelItems(gui, gui.Panels.ECS, rows, ecsSelectionKey)
+		swapPanelItems(gui, gen, gui.Panels.ECS, rows, ecsSelectionKey)
 
 		return nil
 	})
@@ -796,10 +806,10 @@ func (gui *Gui) loadECSList() error {
 // ecsSelectionKey identifies a cluster, service or task row across reloads. The drill level is not part of it because drillECS empties the list before loading the next level.
 func ecsSelectionKey(row *ecsRow) string { return row.arn() }
 
-func (gui *Gui) fetchECSRows(ctx context.Context, level ecsDrillLevel, cluster, service string) ([]*ecsRow, error) {
+func (gui *Gui) fetchECSRows(ctx context.Context, client *aws.Client, level ecsDrillLevel, cluster, service string) ([]*ecsRow, error) {
 	switch level {
 	case ecsLevelServices:
-		services, err := gui.Client.ListECSServices(ctx, cluster)
+		services, err := client.ListECSServices(ctx, cluster)
 		if err != nil {
 			return nil, err
 		}
@@ -809,7 +819,7 @@ func (gui *Gui) fetchECSRows(ctx context.Context, level ecsDrillLevel, cluster, 
 		}
 		return rows, nil
 	case ecsLevelTasks:
-		ecsTasks, err := gui.Client.ListECSTasks(ctx, cluster, service)
+		ecsTasks, err := client.ListECSTasks(ctx, cluster, service)
 		if err != nil {
 			return nil, err
 		}
@@ -819,7 +829,7 @@ func (gui *Gui) fetchECSRows(ctx context.Context, level ecsDrillLevel, cluster, 
 		}
 		return rows, nil
 	default:
-		clusters, err := gui.Client.ListECSClusters(ctx)
+		clusters, err := client.ListECSClusters(ctx)
 		if err != nil {
 			return nil, err
 		}

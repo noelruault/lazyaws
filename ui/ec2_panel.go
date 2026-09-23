@@ -50,29 +50,27 @@ func (gui *Gui) getEC2Panel() *panels.SideListPanel[*aws.Instance] {
 }
 
 func (gui *Gui) loadEC2List() error {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return nil
 	}
 
 	gen := gui.Generation()
 
-	return gui.WhileWaiting("loading ec2", func() error {
+	return gui.WithWaitingStatus("loading ec2", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
-		instances, err := gui.Client.ListInstances(ctx)
+		instances, err := client.ListInstances(ctx)
 		if err != nil {
 			return err
-		}
-		if gen != gui.Generation() {
-			return nil
 		}
 
 		rows := make([]*aws.Instance, len(instances))
 		for i := range instances {
 			rows[i] = &instances[i]
 		}
-		swapPanelItems(gui, gui.Panels.EC2, rows, ec2SelectionKey)
+		swapPanelItems(gui, gen, gui.Panels.EC2, rows, ec2SelectionKey)
 
 		return nil
 	})
@@ -84,7 +82,8 @@ func ec2SelectionKey(inst *aws.Instance) string { return inst.ID }
 // instanceOverview consolidates the six detail tabs into one pane, refetching the refreshable sections on every render and reusing the selection-time ones.
 // When the extras still have to be fetched it paints the pane once WITHOUT them first: against real AWS they are the slow half of the render, and everything above them is already in hand.
 func (gui *Gui) instanceOverview(ctx context.Context, inst *aws.Instance, width int) string {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return overviewUnavailable("instance")
 	}
 
@@ -92,14 +91,14 @@ func (gui *Gui) instanceOverview(ctx context.Context, inst *aws.Instance, width 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	overview := gui.Client.GetInstanceOverview(fetchCtx, inst.ID, gui.metricsMaxAge())
+	overview := client.GetInstanceOverview(fetchCtx, inst.ID, gui.metricsMaxAge())
 	if !gui.ec2Extras.has(gen, inst.ID) && gen == gui.Generation() {
 		overview.ExtrasPending = true
 		// Ordered like renderOverview's own writes, or this early paint could land after the full one and resurrect the pending ellipses.
 		gui.reRenderStringMainOrdered(presentation.FormatInstanceOverview(inst, overview, width, time.Now()))
 		overview.ExtrasPending = false
 	}
-	gui.ec2Extras.fill(fetchCtx, gui.Client, gen, inst.ID, overview)
+	gui.ec2Extras.fill(fetchCtx, client, gen, inst.ID, overview)
 	gui.throttles.observeSections(overview.Errs)
 
 	return presentation.FormatInstanceOverview(inst, overview, width, time.Now())

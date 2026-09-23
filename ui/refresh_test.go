@@ -133,7 +133,7 @@ func TestGoEveryRunsOnlyWhileBackgroundThreadsAreNotPaused(t *testing.T) {
 // Headless rather than newTestGui, because the tier resolves its panel through the focused view's NAME and views built as literals have none: the fallback would answer "profile" for every stack and the test would pass on the wrong panel.
 func TestReloadFocusedPanelTriggersOnlyTheFocusedPanelsThrottle(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
-	gui.Client = readyTestClient()
+	gui.setAWSClient(readyTestClient())
 
 	var triggered sync.Map
 	gui.panelThrottles = map[string]*throttle{}
@@ -179,7 +179,7 @@ func TestReloadFocusedPanelIsInertWithoutCredentials(t *testing.T) {
 		t.Error("the tier reloaded a panel with no AWS client, want it to wait for credentials")
 	}
 
-	gui.Client = readyTestClient()
+	gui.setAWSClient(readyTestClient())
 	gui.authProblem = errFakeReload
 
 	if err := gui.reloadFocusedPanel(); err != nil {
@@ -376,7 +376,7 @@ func TestStartAutoRefreshHonoursPanelSecondsBeingOff(t *testing.T) {
 			user.Refresh.PanelSeconds = tc.panelSeconds
 
 			gui, _ := newHeadlessGuiWithConfig(t, user)
-			gui.Client = readyTestClient()
+			gui.setAWSClient(readyTestClient())
 			gui.State.ViewStack = []string{"ec2"}
 			t.Cleanup(func() { gui.PauseBackgroundThreads.Store(true) })
 
@@ -501,7 +501,7 @@ func TestALoaderUnderItsGuardHoldsItForTheWholeFetch(t *testing.T) {
 	var fetches atomic.Int32
 
 	reload := singleFlight(func() error {
-		return gui.WhileWaiting("loading", func() error {
+		return gui.WithWaitingStatus("loading", func() error {
 			fetches.Add(1)
 			started <- struct{}{}
 			<-release

@@ -21,20 +21,27 @@ func (gui *Gui) handleEC2Connect(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 
-	return gui.WithWaitingStatus("checking SSM connectivity", func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
+	client := gui.awsClient()
 
-		status, err := gui.Client.CheckSSMConnectivity(ctx, inst.ID)
-		if err != nil {
-			return err
-		}
-		if err := ssmConnectivityError(inst.ID, status); err != nil {
-			return err
-		}
+	// Spawned because this is a key handler on the UI loop and the session it opens lasts as long as the user keeps it.
+	go func() {
+		_ = gui.WithWaitingStatus("checking SSM connectivity", func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
 
-		return gui.runSubprocess(buildSSMSessionCommand(inst.ID, gui.Client.GetRegion()))
-	})
+			status, err := client.CheckSSMConnectivity(ctx, inst.ID)
+			if err != nil {
+				return err
+			}
+			if err := ssmConnectivityError(inst.ID, status); err != nil {
+				return err
+			}
+
+			return gui.runSubprocess(buildSSMSessionCommand(inst.ID, client.GetRegion()))
+		})
+	}()
+
+	return nil
 }
 
 func ssmConnectivityError(instanceID string, status *aws.SSMConnectionStatus) error {

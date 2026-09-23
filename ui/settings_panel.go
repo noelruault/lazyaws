@@ -169,11 +169,11 @@ func (gui *Gui) chatModelChoices() []string {
 
 // loadChatModels keeps discovery failures inline so Settings remains usable.
 func (gui *Gui) loadChatModels() {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return
 	}
 
-	client := gui.Client
 	gen := gui.Generation()
 
 	go func() {

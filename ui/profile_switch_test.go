@@ -118,7 +118,7 @@ func TestStaleGenerationMsgsDropped(t *testing.T) {
 	if got := ask(g, func() string { return gui.CurrentProfile }); got != "newer" {
 		t.Errorf("CurrentProfile = %q, want %q (stale switch must not overwrite it)", got, "newer")
 	}
-	if ask(g, func() bool { return gui.Client == staleClient }) {
+	if ask(g, func() bool { return gui.awsClient() == staleClient }) {
 		t.Error("stale client must not be installed")
 	}
 
@@ -128,9 +128,38 @@ func TestStaleGenerationMsgsDropped(t *testing.T) {
 	}
 	waitForProfile(t, g, gui, "current")
 
-	if !ask(g, func() bool { return gui.Client == client }) {
+	if !ask(g, func() bool { return gui.awsClient() == client }) {
 		t.Error("current-gen client was not installed")
 	}
+}
+
+// A switch replaces the client on the loop while every loader in flight reads it from its own goroutine, which is what the pointer has to survive.
+func TestSwitchingProfilesWhileALoadReadsTheClientIsRaceFree(t *testing.T) {
+	gui, g := newHeadlessGui(t)
+	quietRefresh(gui)
+
+	const rounds = 50
+
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		for range rounds {
+			// What a loader does before it fetches, and the read that a plain field would tear.
+			if client := gui.awsClient(); client != nil {
+				_ = client.Ready()
+			}
+		}
+	}()
+
+	for range rounds {
+		gui.BumpGeneration()
+		if err := gui.applyProfileSwitch(gui.Generation(), "staging", &aws.Client{}); err != nil {
+			t.Fatalf("applyProfileSwitch() = %v", err)
+		}
+	}
+	<-read
+
+	waitForProfile(t, g, gui, "staging")
 }
 
 // The reset empties every panel the loop is rendering, so the switch belongs on the loop; -race is what proves it, not an assertion.

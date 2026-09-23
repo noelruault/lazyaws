@@ -11,8 +11,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
-// VPCEndpointStatePendingAcceptance is spelled as EC2 answers rather than as the SDK declares: DescribeVpcEndpointConnections returns lowercase states while types.StatePendingAcceptance is "PendingAcceptance", so comparisons fold case and filters send both spellings.
-const VPCEndpointStatePendingAcceptance = "pendingAcceptance"
+// These are spelled as EC2 answers rather than as the SDK declares: DescribeVpcEndpointConnections returns lowercase states while types.StatePendingAcceptance is "PendingAcceptance", so comparisons fold case and filters send both spellings.
+// Accepting moves a connection to pending rather than straight to available, because the endpoint is provisioned before it carries traffic.
+const (
+	VPCEndpointStatePendingAcceptance = "pendingAcceptance"
+	VPCEndpointStatePending           = "pending"
+	VPCEndpointStateRejected          = "rejected"
+)
 
 // VPCEndpointService is the provider side of a PrivateLink endpoint: consumers create endpoints against it, and when AcceptanceRequired is set each one waits until this account accepts it.
 type VPCEndpointService struct {

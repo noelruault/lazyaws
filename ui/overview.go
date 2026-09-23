@@ -40,8 +40,11 @@ func (c *overviewPaneCache) get(gen int64, key string) (string, bool) {
 func (c *overviewPaneCache) forget(itemKey string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Built once: inside the loop this is one concatenation per cached pane, and the cache holds every pane of the session.
+	prefix := itemKey + "-w"
 	for key := range c.panes {
-		if strings.HasPrefix(key, itemKey+"-w") {
+		if strings.HasPrefix(key, prefix) {
 			delete(c.panes, key)
 		}
 	}

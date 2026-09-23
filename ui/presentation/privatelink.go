@@ -1,8 +1,8 @@
 package presentation
 
 import (
-	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/fatih/color"
@@ -31,7 +31,7 @@ func pendingCell(pending int) utils.Cell {
 		return utils.Cell{}
 	}
 
-	return utils.Cell{Text: fmt.Sprintf("%d pending", pending), Color: color.FgYellow}
+	return utils.Cell{Text: strconv.Itoa(pending) + " pending", Color: color.FgYellow}
 }
 
 // FormatVPCEndpointServiceOverview renders connErr rather than swallowing it, because a connections read that failed and a service with no connections look identical once the count is gone.
@@ -56,7 +56,7 @@ func acceptanceNote(s *aws.VPCEndpointService) string {
 }
 
 func endpointServiceStatCards(s *aws.VPCEndpointService, connections []aws.VPCEndpointConnection, connErr error) []Stat {
-	total := utils.Cell{Text: fmt.Sprintf("%d", len(connections))}
+	total := utils.Cell{Text: strconv.Itoa(len(connections))}
 	pending := pendingCell(s.Pending)
 	if pending.Text == "" {
 		pending = utils.Cell{Text: "0"}
@@ -145,7 +145,7 @@ func endpointConnectionsBlock(connections []aws.VPCEndpointConnection, err error
 
 	rows := make([]kv, len(states))
 	for i, state := range states {
-		rows[i] = kv{state, fmt.Sprintf("%d", counts[state])}
+		rows[i] = kv{state, strconv.Itoa(counts[state])}
 	}
 
 	return title + "\n" + kvBlock(rows)

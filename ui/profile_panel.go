@@ -45,9 +45,9 @@ func (gui *Gui) getProfilePanel() *panels.SideListPanel[string] {
 		Sort: func(a, b string) bool { return a < b },
 		GetTableCellsFit: func(profile string) []utils.Cell {
 			region, accountID := "", ""
-			if profile == gui.CurrentProfile && gui.Client != nil {
-				region = gui.Client.GetRegion()
-				accountID = gui.Client.GetAccountID()
+			if client := gui.awsClient(); profile == gui.CurrentProfile && client != nil {
+				region = client.GetRegion()
+				accountID = client.GetAccountID()
 			}
 			return presentation.GetProfileDisplayCells(profile, gui.CurrentProfile, region, accountID)
 		},
@@ -61,7 +61,7 @@ func (gui *Gui) refreshProfile() error {
 	profiles := listAWSProfiles()
 
 	// The render loop reads the list and the selection, so the swap is queued onto it; only the config read above belongs on the refresh goroutine that calls this.
-	gui.Update(func() error {
+	gui.queueUpdate(func() error {
 		firstLoad := gui.Panels.Profile.List.Len() == 0
 		gui.Panels.Profile.SetItemsKeepSelection(profiles, profileSelectionKey)
 
@@ -107,17 +107,22 @@ func (gui *Gui) switchProfile(profile string) error {
 	gui.BumpGeneration()
 	gen := gui.Generation()
 
-	return gui.WithWaitingStatus("switching profile", func() error {
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
+	// Spawned because every caller is a key handler or a menu action on the UI loop, which cannot wait out a connect.
+	go func() {
+		_ = gui.WithWaitingStatus("switching profile", func() error {
+			timeoutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
 
-		client, err := aws.NewClientWithProfile(timeoutCtx, profile, "")
-		if err != nil {
-			return err
-		}
+			client, err := aws.NewClientWithProfile(timeoutCtx, profile, "")
+			if err != nil {
+				return err
+			}
 
-		return gui.applyProfileSwitch(gen, profile, client)
-	})
+			return gui.applyProfileSwitch(gen, profile, client)
+		})
+	}()
+
+	return nil
 }
 
 // applyProfileSwitch rejects slow connections superseded by newer profile switches.
@@ -126,9 +131,9 @@ func (gui *Gui) applyProfileSwitch(gen int64, profile string, client *aws.Client
 		return nil
 	}
 
-	// resetDependentPanelState empties every panel the loop is rendering, and the fields above it are read by the same renders, so the switch is applied on the loop rather than on the goroutine that connected.
-	gui.Update(func() error {
-		gui.Client = client
+	// resetDependentPanelState empties every panel the loop is rendering, and the fields beside it are read by the same renders, so the switch is applied on the loop rather than on the goroutine that connected.
+	gui.queueUpdate(func() error {
+		gui.setAWSClient(client)
 		gui.CurrentProfile = profile
 		gui.authProblem = client.AuthError()
 		gui.resetDependentPanelState()
@@ -182,7 +187,7 @@ func (gui *Gui) resetDependentPanelState() {
 // profileAuthProblem is why the connected profile cannot reach AWS, or nil when it can.
 // A missing client counts: preflight starts the app anyway when there are other profiles to switch to, and that path leaves nothing to ask for an account id.
 func (gui *Gui) profileAuthProblem() error {
-	if gui.Client == nil {
+	if gui.awsClient() == nil {
 		return errors.New("no AWS credentials found")
 	}
 
@@ -215,13 +220,14 @@ func (gui *Gui) renderProfileCredentials(profile string) tasks.TaskFunc {
 			}
 		}
 
-		if profile != gui.CurrentProfile || gui.Client == nil {
+		client := gui.awsClient()
+		if profile != gui.CurrentProfile || client == nil {
 			return "not connected. Press enter to switch to this profile"
 		}
 
 		lines := []string{
-			"Account ID: " + orNone(gui.Client.GetAccountID()),
-			"Region: " + orNone(gui.Client.GetRegion()),
+			"Account ID: " + orNone(client.GetAccountID()),
+			"Region: " + orNone(client.GetRegion()),
 		}
 		return strings.Join(lines, "\n")
 	})

@@ -21,7 +21,7 @@ func (gui *Gui) PrivateLinkActions() []resources.Action {
 		{
 			Name: "Show console URL",
 			Run: func(context.Context, string) error {
-				return gui.showPopup(service.ID, endpointServiceConsoleURL(gui.Client.Region, service.ID))
+				return gui.showPopup(service.ID, endpointServiceConsoleURL(gui.awsClient().Region, service.ID))
 			},
 		},
 		{
@@ -50,10 +50,10 @@ func (gui *Gui) endpointConnectionActions(connection aws.VPCEndpointConnection) 
 			Confirm:      resources.ConfirmSimple,
 			Confirmation: fmt.Sprintf("Accept %s from account %s?", connection.EndpointID, orDash(connection.Owner)),
 			Run: func(ctx context.Context, _ string) error {
-				if err := gui.Client.AcceptVPCEndpointConnections(ctx, connection.ServiceID, []string{connection.EndpointID}); err != nil {
+				if err := gui.awsClient().AcceptVPCEndpointConnections(ctx, connection.ServiceID, []string{connection.EndpointID}); err != nil {
 					return err
 				}
-				return gui.afterEndpointConnectionChange(connection.ServiceID)
+				return gui.afterEndpointConnectionChange(connection, aws.VPCEndpointStatePending)
 			},
 		})
 	}
@@ -76,10 +76,10 @@ func (gui *Gui) rejectConnectionAction(connection aws.VPCEndpointConnection) res
 		Confirm:      resources.ConfirmSimple,
 		Confirmation: fmt.Sprintf("Reject %s from account %s?", connection.EndpointID, orDash(connection.Owner)),
 		Run: func(ctx context.Context, _ string) error {
-			if err := gui.Client.RejectVPCEndpointConnections(ctx, connection.ServiceID, []string{connection.EndpointID}); err != nil {
+			if err := gui.awsClient().RejectVPCEndpointConnections(ctx, connection.ServiceID, []string{connection.EndpointID}); err != nil {
 				return err
 			}
-			return gui.afterEndpointConnectionChange(connection.ServiceID)
+			return gui.afterEndpointConnectionChange(connection, aws.VPCEndpointStateRejected)
 		},
 	}
 
@@ -91,14 +91,21 @@ func (gui *Gui) rejectConnectionAction(connection aws.VPCEndpointConnection) res
 	return action
 }
 
-// afterEndpointConnectionChange puts the new state on screen rather than leaving it to the refresh tick, because accept and reject take effect at once and a row still reading pendingAcceptance invites a second attempt.
-func (gui *Gui) afterEndpointConnectionChange(serviceID string) error {
-	gui.overviewCache.forget(serviceID)
+// afterEndpointConnectionChange puts the new state on screen itself, because the reload below is single-flighted and a dropped one leaves a row reading pendingAcceptance, which invites a second attempt.
+func (gui *Gui) afterEndpointConnectionChange(connection aws.VPCEndpointConnection, state string) error {
+	gui.overviewCache.forget(connection.ServiceID)
 
+	gui.queueUpdate(func() error {
+		gui.setEndpointConnectionState(connection.ServiceID, connection.EndpointID, state)
+		gui.rerenderCurrentMainTab()
+
+		return nil
+	})
+
+	// Best effort confirmation: the guard may drop it, and the rows no longer depend on it landing.
 	if reload, ok := gui.panelReloads[privateLinkReloader]; ok {
 		go func() { _ = reload() }()
 	}
-	gui.rerenderCurrentMainTab()
 
 	return nil
 }

@@ -4,8 +4,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fatih/color"
+
+	"github.com/noelruault/lazyaws/apps/aws"
 )
 
 // fatih/color disables itself when stdout is not a terminal, which it never is under `go test`.
@@ -119,6 +122,80 @@ func BenchmarkFormatVPCOverview(b *testing.B) {
 	for b.Loop() {
 		_ = FormatVPCOverview(vpc, overview, overviewWidth)
 	}
+}
+
+func BenchmarkFormatVPCEndpointServiceOverview(b *testing.B) {
+	benchForceColor(b)
+	service, connections := benchEndpointService(40)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = FormatVPCEndpointServiceOverview(service, connections, nil, 160)
+	}
+}
+
+// A narrow terminal lays every section out whole instead of cutting it to a column, so it renders more text, not less.
+func BenchmarkFormatVPCEndpointServiceOverviewStacked(b *testing.B) {
+	benchForceColor(b)
+	service, connections := benchEndpointService(40)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = FormatVPCEndpointServiceOverview(service, connections, nil, 70)
+	}
+}
+
+// The cells are built once per visible row on every list render, which is the tightest budget in this package.
+func BenchmarkGetVPCEndpointServiceDisplayCells(b *testing.B) {
+	benchForceColor(b)
+	service, _ := benchEndpointService(0)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = GetVPCEndpointServiceDisplayCells(service)
+	}
+}
+
+// benchEndpointService is a service with every block filled, because a pane that renders half its sections measures half the work.
+func benchEndpointService(connections int) (*aws.VPCEndpointService, []aws.VPCEndpointConnection) {
+	service := &aws.VPCEndpointService{
+		ID:                  "vpce-svc-0123456789abcdef0",
+		Name:                "com.amazonaws.vpce.eu-west-1.vpce-svc-0123456789abcdef0",
+		NameTag:             "payments",
+		State:               "Available",
+		AcceptanceRequired:  true,
+		ManagesEndpoints:    true,
+		PrivateDNSName:      "api.internal.example",
+		PayerResponsibility: "ServiceOwner",
+		AvailabilityZones:   []string{"eu-west-1a", "eu-west-1b", "eu-west-1c"},
+		BaseDNSNames:        []string{"vpce-svc-0123456789abcdef0.eu-west-1.vpce.amazonaws.com"},
+		LoadBalancerARNs:    []string{"arn:aws:elasticloadbalancing:eu-west-1:111122223333:loadbalancer/net/api-nlb/abc123"},
+		SupportedIPTypes:    []string{"ipv4", "dualstack"},
+		Tags:                []aws.Tag{{Key: "team", Value: "platform"}, {Key: "env", Value: "prod"}},
+		Pending:             connections / 4,
+	}
+
+	created := overviewNow.Add(-6 * time.Hour)
+	rows := make([]aws.VPCEndpointConnection, connections)
+	for i := range rows {
+		state := "available"
+		if i%4 == 0 {
+			state = aws.VPCEndpointStatePendingAcceptance
+		}
+		rows[i] = aws.VPCEndpointConnection{
+			ServiceID:        service.ID,
+			EndpointID:       "vpce-0123456789abcde" + strconv.Itoa(i),
+			Owner:            "11112222333" + strconv.Itoa(i%10),
+			State:            state,
+			Region:           "eu-west-1",
+			IPAddressType:    "ipv4",
+			CreatedAt:        &created,
+			DNSNames:         []string{"api.internal.example"},
+			LoadBalancerARNs: service.LoadBalancerARNs,
+		}
+	}
+
+	return service, rows
 }
 
 func BenchmarkFormatEKSClusterOverview(b *testing.B) {

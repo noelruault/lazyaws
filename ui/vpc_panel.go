@@ -62,29 +62,27 @@ func (gui *Gui) getVPCPanel() *panels.SideListPanel[*aws.VPC] {
 }
 
 func (gui *Gui) loadVPCList() error {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return nil
 	}
 
 	gen := gui.Generation()
 
-	return gui.WhileWaiting("loading vpcs", func() error {
+	return gui.WithWaitingStatus("loading vpcs", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), vpcFetchTimeout)
 		defer cancel()
 
-		vpcs, err := gui.Client.ListVPCs(ctx)
+		vpcs, err := client.ListVPCs(ctx)
 		if err != nil {
 			return err
-		}
-		if gen != gui.Generation() {
-			return nil
 		}
 
 		rows := make([]*aws.VPC, len(vpcs))
 		for i := range vpcs {
 			rows[i] = &vpcs[i]
 		}
-		swapPanelItems(gui, gui.Panels.VPC, rows, vpcSelectionKey)
+		swapPanelItems(gui, gen, gui.Panels.VPC, rows, vpcSelectionKey)
 
 		return nil
 	})
@@ -96,14 +94,15 @@ func vpcSelectionKey(vpc *aws.VPC) string { return vpc.ID }
 // vpcOverview consolidates the Config, Subnets, Gateways and Endpoints tabs, reading the VPC's own fields off the list row.
 // Six EC2 describes against the tightest-throttled API this app touches is not a per-tick cost, and a VPC's topology is not a per-tick fact either, so the tab renders once per selection.
 func (gui *Gui) vpcOverview(ctx context.Context, vpc *aws.VPC, width int) string {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return overviewUnavailable("VPC")
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, vpcFetchTimeout)
 	defer cancel()
 
-	return presentation.FormatVPCOverview(vpc, gui.Client.GetVPCOverview(fetchCtx, vpc.ID), width)
+	return presentation.FormatVPCOverview(vpc, client.GetVPCOverview(fetchCtx, vpc.ID), width)
 }
 
 // vpcTab runs one tab's fetch under the shared timeout and generation check, leaving each render below as only its query and its formatting.
@@ -128,7 +127,7 @@ func (gui *Gui) vpcTab(vpc *aws.VPC, render func(context.Context, string) (strin
 
 func (gui *Gui) renderVPCSubnets(vpc *aws.VPC) tasks.TaskFunc {
 	return gui.vpcTab(vpc, func(ctx context.Context, vpcID string) (string, error) {
-		subnets, err := gui.Client.ListSubnets(ctx, vpcID)
+		subnets, err := gui.awsClient().ListSubnets(ctx, vpcID)
 		if err != nil {
 			return "", err
 		}
@@ -138,7 +137,7 @@ func (gui *Gui) renderVPCSubnets(vpc *aws.VPC) tasks.TaskFunc {
 
 func (gui *Gui) renderVPCRoutes(vpc *aws.VPC) tasks.TaskFunc {
 	return gui.vpcTab(vpc, func(ctx context.Context, vpcID string) (string, error) {
-		tables, err := gui.Client.ListRouteTables(ctx, vpcID)
+		tables, err := gui.awsClient().ListRouteTables(ctx, vpcID)
 		if err != nil {
 			return "", err
 		}
@@ -148,11 +147,12 @@ func (gui *Gui) renderVPCRoutes(vpc *aws.VPC) tasks.TaskFunc {
 
 func (gui *Gui) renderVPCGateways(vpc *aws.VPC) tasks.TaskFunc {
 	return gui.vpcTab(vpc, func(ctx context.Context, vpcID string) (string, error) {
-		internet, err := gui.Client.ListInternetGateways(ctx, vpcID)
+		client := gui.awsClient()
+		internet, err := client.ListInternetGateways(ctx, vpcID)
 		if err != nil {
 			return "", err
 		}
-		nat, err := gui.Client.ListNATGateways(ctx, vpcID)
+		nat, err := client.ListNATGateways(ctx, vpcID)
 		if err != nil {
 			return "", err
 		}
@@ -173,20 +173,23 @@ func (gui *Gui) renderVPCEndpoints(vpc *aws.VPC) tasks.TaskFunc {
 	vpcID := vpc.ID
 
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
+		client := gui.awsClient()
 		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, vpcFetchTimeout)
 		defer cancel()
 
-		endpoints, err := gui.Client.ListVPCEndpoints(fetchCtx, vpcID)
-		if gen != gui.Generation() {
-			return
-		}
+		endpoints, err := client.ListVPCEndpoints(fetchCtx, vpcID)
 		if err != nil {
 			gui.RenderStringMain("error: " + err.Error())
 			return
 		}
 
-		gui.Update(func() error {
+		gui.queueUpdate(func() error {
+			// Checked here rather than before the enqueue, or a profile switched in between would leave one account's endpoints on another account's pane.
+			if gen != gui.Generation() {
+				return nil
+			}
+
 			// Moving to another VPC closes whatever record was open, since its index means nothing in the new list.
 			if gui.vpcEndpoints.vpcID != vpcID {
 				gui.vpcEndpoints = vpcEndpointsState{vpcID: vpcID}
@@ -311,11 +314,12 @@ func formatVPCEndpointDetail(e *aws.VPCEndpoint) string {
 
 func (gui *Gui) renderVPCTransit(vpc *aws.VPC) tasks.TaskFunc {
 	return gui.vpcTab(vpc, func(ctx context.Context, vpcID string) (string, error) {
-		attachments, err := gui.Client.ListTGWAttachments(ctx)
+		client := gui.awsClient()
+		attachments, err := client.ListTGWAttachments(ctx)
 		if err != nil {
 			return "", err
 		}
-		gateways, err := gui.Client.ListTransitGateways(ctx)
+		gateways, err := client.ListTransitGateways(ctx)
 		if err != nil {
 			return "", err
 		}

@@ -103,13 +103,18 @@ func (gui *Gui) onActionConfirmed(action resources.Action, input string) func(*g
 	}
 }
 
+// execAction spawns because it is reached from a key handler or a confirmation callback, both on the UI loop, and an action runs for as long as its own deadline.
 func (gui *Gui) execAction(action resources.Action, input string) error {
-	return gui.WithWaitingStatus(strings.ToLower(action.Name), func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), action.Deadline())
-		defer cancel()
+	go func() {
+		_ = gui.WithWaitingStatus(strings.ToLower(action.Name), func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), action.Deadline())
+			defer cancel()
 
-		return action.Run(ctx, input)
-	})
+			return action.Run(ctx, input)
+		})
+	}()
+
+	return nil
 }
 
 func actionConfirmation(action resources.Action) string {

@@ -18,17 +18,19 @@ func (gui *Gui) EC2Actions() []resources.Action {
 		return nil
 	}
 
+	client := gui.awsClient()
+
 	return []resources.Action{
-		{Name: "Start", Mutates: true, Run: ec2Call(gui.Client.StartInstance, inst.ID)},
-		{Name: "Stop", Mutates: true, Run: ec2Call(gui.Client.StopInstance, inst.ID)},
-		{Name: "Reboot", Mutates: true, Run: ec2Call(gui.Client.RebootInstance, inst.ID)},
+		{Name: "Start", Mutates: true, Run: ec2Call(client.StartInstance, inst.ID)},
+		{Name: "Stop", Mutates: true, Run: ec2Call(client.StopInstance, inst.ID)},
+		{Name: "Reboot", Mutates: true, Run: ec2Call(client.RebootInstance, inst.ID)},
 		{
 			Name:    "Terminate",
 			Mutates: true,
 			// Irreversible termination requires the instance's visible identity instead of a keystroke.
 			Confirm: resources.ConfirmDangerous,
 			Token:   ec2InstanceToken(inst),
-			Run:     ec2Call(gui.Client.TerminateInstance, inst.ID),
+			Run:     ec2Call(client.TerminateInstance, inst.ID),
 		},
 		{
 			Name:    "Change instance type",
@@ -40,7 +42,7 @@ func (gui *Gui) EC2Actions() []resources.Action {
 				if newType == "" || newType == inst.InstanceType {
 					return nil
 				}
-				return gui.Client.ChangeInstanceType(ctx, inst.ID, newType)
+				return client.ChangeInstanceType(ctx, inst.ID, newType)
 			},
 		},
 		{
@@ -52,7 +54,7 @@ func (gui *Gui) EC2Actions() []resources.Action {
 				if imageName == "" {
 					return nil
 				}
-				_, err := gui.Client.CreateImageFromInstance(ctx, inst.ID, imageName)
+				_, err := client.CreateImageFromInstance(ctx, inst.ID, imageName)
 				return err
 			},
 		},
@@ -73,11 +75,11 @@ func (gui *Gui) EC2Actions() []resources.Action {
 			Mutates: true,
 			// Reading protection while building the menu would block the UI key handler on AWS.
 			Run: func(ctx context.Context, _ string) error {
-				enabled, err := gui.Client.GetInstanceTerminationProtection(ctx, inst.ID)
+				enabled, err := client.GetInstanceTerminationProtection(ctx, inst.ID)
 				if err != nil {
 					return err
 				}
-				return gui.Client.SetInstanceTerminationProtection(ctx, inst.ID, !enabled)
+				return client.SetInstanceTerminationProtection(ctx, inst.ID, !enabled)
 			},
 		},
 	}
@@ -100,7 +102,7 @@ func ec2Call(call func(context.Context, string) error, instanceID string) func(c
 // ec2CreateSnapshot fetches details because flat panel rows omit volumes.
 func (gui *Gui) ec2CreateSnapshot(inst *aws.Instance) func(context.Context, string) error {
 	return func(ctx context.Context, _ string) error {
-		details, err := gui.Client.GetInstanceDetails(ctx, inst.ID)
+		details, err := gui.awsClient().GetInstanceDetails(ctx, inst.ID)
 		if err != nil {
 			return err
 		}
@@ -132,7 +134,7 @@ func (gui *Gui) ec2CreateSnapshot(inst *aws.Instance) func(context.Context, stri
 }
 
 func (gui *Gui) snapshotVolume(ctx context.Context, device aws.BlockDevice) error {
-	_, err := gui.Client.CreateVolumeSnapshot(ctx, device.VolumeID, "lazyaws snapshot of "+device.DeviceName)
+	_, err := gui.awsClient().CreateVolumeSnapshot(ctx, device.VolumeID, "lazyaws snapshot of "+device.DeviceName)
 	return err
 }
 
@@ -149,7 +151,8 @@ func ec2VolumeDevices(devices []aws.BlockDevice) []aws.BlockDevice {
 
 func (gui *Gui) ec2ManageEIPs(inst *aws.Instance) func(context.Context, string) error {
 	return func(ctx context.Context, _ string) error {
-		details, err := gui.Client.GetInstanceDetails(ctx, inst.ID)
+		client := gui.awsClient()
+		details, err := client.GetInstanceDetails(ctx, inst.ID)
 		if err != nil {
 			return err
 		}
@@ -162,7 +165,7 @@ func (gui *Gui) ec2ManageEIPs(inst *aws.Instance) func(context.Context, string) 
 				if allocationID == "" {
 					return nil
 				}
-				return gui.Client.AssociateElasticIP(ctx, inst.ID, allocationID)
+				return client.AssociateElasticIP(ctx, inst.ID, allocationID)
 			},
 		}}
 
@@ -173,7 +176,7 @@ func (gui *Gui) ec2ManageEIPs(inst *aws.Instance) func(context.Context, string) 
 				Confirm:      resources.ConfirmSimple,
 				Confirmation: fmt.Sprintf("Remove %s from this instance?", eip.PublicIP),
 				Run: func(ctx context.Context, _ string) error {
-					return gui.Client.DisassociateElasticIP(ctx, eip.AssociationID)
+					return client.DisassociateElasticIP(ctx, eip.AssociationID)
 				},
 			})
 		}
@@ -189,7 +192,8 @@ func (gui *Gui) ec2ManageEIPs(inst *aws.Instance) func(context.Context, string) 
 // ec2ViewEditUserData offers edits only while AWS permits them on stopped instances.
 func (gui *Gui) ec2ViewEditUserData(inst *aws.Instance) func(context.Context, string) error {
 	return func(ctx context.Context, _ string) error {
-		userData, err := gui.Client.GetInstanceUserData(ctx, inst.ID)
+		client := gui.awsClient()
+		userData, err := client.GetInstanceUserData(ctx, inst.ID)
 		if err != nil {
 			return err
 		}
@@ -205,7 +209,7 @@ func (gui *Gui) ec2ViewEditUserData(inst *aws.Instance) func(context.Context, st
 						if newUserData == "" || newUserData == userData {
 							return nil
 						}
-						return gui.Client.SetInstanceUserData(ctx, inst.ID, newUserData)
+						return client.SetInstanceUserData(ctx, inst.ID, newUserData)
 					},
 				})
 			}
