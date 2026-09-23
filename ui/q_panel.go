@@ -361,13 +361,13 @@ func (gui *Gui) askQ(question string) error {
 		return nil
 	}
 
+	client := gui.awsClient()
 	req := q.Request{Prompt: question, Profile: gui.CurrentProfile}
-	if gui.Client != nil {
-		req.Region = gui.Client.GetRegion()
-		req.Context = q.FormatContext(gui.CurrentProfile, gui.Client.GetRegion(), gui.Client.GetAccountID())
+	if client != nil {
+		req.Region = client.GetRegion()
+		req.Context = q.FormatContext(gui.CurrentProfile, client.GetRegion(), client.GetAccountID())
 	}
 	provider, model := gui.chatProvider(), gui.chatModel()
-	client := gui.Client
 
 	turn := &qTurn{question: question}
 
@@ -386,7 +386,7 @@ func (gui *Gui) askQ(question string) error {
 	gui.renderQChats()
 	gui.renderQTranscript()
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
 	// Main-panel task ownership cancels an in-flight query when another render replaces it.
 	return gui.QueueTask(gui.NewTask(TaskOpts{
@@ -453,13 +453,13 @@ const chatSystemPrompt = "You are an AWS expert helping someone inspect an AWS a
 	"You have no access to the account yourself: work from the context you are given, and say plainly when something needs to be checked rather than guessing at values."
 
 // streamQAnswer rejects output invalidated by a profile switch.
-func (gui *Gui) streamQAnswer(ctx context.Context, backend chatBackend, req q.Request, conversation []aws.ChatMessage, chat *qChat, turn *qTurn, gen int) {
+func (gui *Gui) streamQAnswer(ctx context.Context, backend chatBackend, req q.Request, conversation []aws.ChatMessage, chat *qChat, turn *qTurn, gen int64) {
 	update := func(mutate func()) {
 		gui.State.Q.mu.Lock()
 		mutate()
 		gui.State.Q.mu.Unlock()
 
-		if gui.Gen == gen {
+		if gui.Generation() == gen {
 			gui.renderQTranscript()
 		}
 	}

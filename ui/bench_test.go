@@ -177,3 +177,17 @@ func BenchmarkStyleInlineAllMarkers(b *testing.B) {
 		_ = styleInline(row)
 	}
 }
+
+// forget scans every pane in the cache, and the cache holds one per resource and width visited this session, so a long session pays this on every mutating action.
+// The key it is asked to forget matches nothing on purpose: the map then stays the same size across iterations, and what is measured is the scan rather than the deletes.
+func BenchmarkOverviewForget(b *testing.B) {
+	cache := &overviewPaneCache{panes: map[string]string{}}
+	for i := range 2000 {
+		cache.panes["resource-"+strconv.Itoa(i)+"-w140"] = benchAnswer
+	}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		cache.forget("absent-resource")
+	}
+}

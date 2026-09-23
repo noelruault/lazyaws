@@ -233,17 +233,21 @@ func TestDegradedStartShowsTheProblemOnceAndKeepsProfilesUsable(t *testing.T) {
 
 func TestAWorkingProfileSwitchClearsTheProblem(t *testing.T) {
 	gui, g := newHeadlessGui(t)
+	quietRefresh(gui)
 
 	run(t, g, func() error {
 		gui.authProblem = errors.New("expired")
-		return gui.applyProfileSwitch(gui.Gen, "staging", &awsapp.Client{})
+
+		return nil
 	})
+
+	if err := gui.applyProfileSwitch(gui.Generation(), "staging", &awsapp.Client{}); err != nil {
+		t.Fatalf("applyProfileSwitch() = %v", err)
+	}
+	waitForProfile(t, g, gui, "staging")
 
 	if ask(g, func() error { return gui.authProblem }) != nil {
 		t.Error("authProblem survived a working profile switch")
-	}
-	if got := ask(g, func() string { return gui.CurrentProfile }); got != "staging" {
-		t.Errorf("CurrentProfile = %q, want the switched-to profile", got)
 	}
 }
 

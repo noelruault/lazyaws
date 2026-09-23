@@ -81,30 +81,34 @@ func (gui *Gui) getSecretsPanel() *panels.SideListPanel[*aws.SecretSummary] {
 }
 
 func (gui *Gui) loadSecretsList() error {
-	if gui.Client == nil {
+	return gui.loadSecretsListShowing(gui.secretsShowDeleted)
+}
+
+// loadSecretsListShowing takes the deleted-secrets toggle rather than reading it, because the caller that spawns it is the UI loop, which is the only goroutine that may touch it.
+func (gui *Gui) loadSecretsListShowing(showDeleted bool) error {
+	client := gui.awsClient()
+	if client == nil {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
 	return gui.WithWaitingStatus("loading secrets", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
-		secrets, err := gui.Client.ListSecrets(ctx, gui.secretsShowDeleted)
+		secrets, err := client.ListSecrets(ctx, showDeleted)
 		if err != nil {
 			return err
-		}
-		if gen != gui.Gen {
-			return nil
 		}
 
 		rows := make([]*aws.SecretSummary, len(secrets))
 		for i := range secrets {
 			rows[i] = &secrets[i]
 		}
-		gui.Panels.Secrets.SetItemsKeepSelection(rows, secretsSelectionKey)
-		return gui.Panels.Secrets.RerenderList()
+		swapPanelItems(gui, gen, gui.Panels.Secrets, rows, secretsSelectionKey)
+
+		return nil
 	})
 }
 
@@ -113,19 +117,26 @@ func secretsSelectionKey(secret *aws.SecretSummary) string { return secret.Name 
 
 func (gui *Gui) handleSecretsToggleDeleted(g *gocui.Gui, v *gocui.View) error {
 	gui.secretsShowDeleted = !gui.secretsShowDeleted
-	return gui.loadSecretsList()
+
+	// The loader blocks until AWS answers, and this runs on the UI loop, which the dashboard needs back before then.
+	// The toggle is passed in, on the loop that owns it, so the goroutine never reads it.
+	showDeleted := gui.secretsShowDeleted
+	go func() { _ = gui.loadSecretsListShowing(showDeleted) }()
+
+	return nil
 }
 
 // secretOverview reads the same metadata the Config tab does and never the value, so an overview that re-renders on its own interval still emits no GetSecretValue CloudTrail event.
 func (gui *Gui) secretOverview(ctx context.Context, secret *aws.SecretSummary, width int) string {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return overviewUnavailable("secret")
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	details, err := gui.Client.GetSecretDetails(fetchCtx, secret.Name)
+	details, err := client.GetSecretDetails(fetchCtx, secret.Name)
 	gui.throttles.observe(secretOverviewErrs(details, err)...)
 	if err != nil {
 		return overviewUnavailableBecause("secret", err)
@@ -148,12 +159,12 @@ func secretOverviewErrs(details *aws.SecretDetails, err error) []error {
 func (gui *Gui) renderSecretVersions(secret *aws.SecretSummary) tasks.TaskFunc {
 	name := secret.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
-		details, err := gui.Client.GetSecretDetails(fetchCtx, name)
-		if gen != gui.Gen {
+		details, err := gui.awsClient().GetSecretDetails(fetchCtx, name)
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -168,12 +179,12 @@ func (gui *Gui) renderSecretVersions(secret *aws.SecretSummary) tasks.TaskFunc {
 func (gui *Gui) renderSecretPolicy(secret *aws.SecretSummary) tasks.TaskFunc {
 	name := secret.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
-		details, err := gui.Client.GetSecretDetails(fetchCtx, name)
-		if gen != gui.Gen {
+		details, err := gui.awsClient().GetSecretDetails(fetchCtx, name)
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -219,12 +230,12 @@ func (gui *Gui) renderSecretValue(secret *aws.SecretSummary) tasks.TaskFunc {
 
 	name := secret.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
-		value, prettyJSON, err := gui.Client.GetSecretValueString(fetchCtx, name)
-		if gen != gui.Gen {
+		value, prettyJSON, err := gui.awsClient().GetSecretValueString(fetchCtx, name)
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {

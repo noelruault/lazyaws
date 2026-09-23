@@ -169,19 +169,19 @@ func (gui *Gui) chatModelChoices() []string {
 
 // loadChatModels keeps discovery failures inline so Settings remains usable.
 func (gui *Gui) loadChatModels() {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return
 	}
 
-	client := gui.Client
-	gen := gui.Gen
+	gen := gui.Generation()
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		models, err := client.ListChatModels(ctx)
-		if gen != gui.Gen {
+		if gen != gui.Generation() {
 			return
 		}
 

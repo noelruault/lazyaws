@@ -25,7 +25,7 @@ func (gui *Gui) EKSActions() []resources.Action {
 			if newVersion == "" || newVersion == cluster.Version {
 				return nil
 			}
-			return gui.Client.UpgradeClusterVersion(ctx, cluster.Name, newVersion)
+			return gui.awsClient().UpgradeClusterVersion(ctx, cluster.Name, newVersion)
 		},
 	}}
 }

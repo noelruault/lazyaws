@@ -44,9 +44,16 @@ func (gui *Gui) confirmECSExec(task *aws.ECSTask, containerName string) error {
 	prompt := ecsExecPrompt(containerName, task.ID)
 	cluster := gui.ecsDrill.cluster
 	return gui.createConfirmationPanel("ECS Exec", prompt, func(g *gocui.Gui, v *gocui.View) error {
-		return gui.WithWaitingStatus("starting ECS exec session", func() error {
-			return gui.runSubprocess(gui.Client.ExecECSTask(cluster, task.Arn, containerName))
-		})
+		client := gui.awsClient()
+
+		// Spawned because the confirmation callback runs on the UI loop and the session lasts as long as the user keeps it open.
+		go func() {
+			_ = gui.WithWaitingStatus("starting ECS exec session", func() error {
+				return gui.runSubprocess(client.ExecECSTask(cluster, task.Arn, containerName))
+			})
+		}()
+
+		return nil
 	}, nil)
 }
 

@@ -133,7 +133,7 @@ func TestGoEveryRunsOnlyWhileBackgroundThreadsAreNotPaused(t *testing.T) {
 // Headless rather than newTestGui, because the tier resolves its panel through the focused view's NAME and views built as literals have none: the fallback would answer "profile" for every stack and the test would pass on the wrong panel.
 func TestReloadFocusedPanelTriggersOnlyTheFocusedPanelsThrottle(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
-	gui.Client = readyTestClient()
+	gui.setAWSClient(readyTestClient())
 
 	var triggered sync.Map
 	gui.panelThrottles = map[string]*throttle{}
@@ -179,7 +179,7 @@ func TestReloadFocusedPanelIsInertWithoutCredentials(t *testing.T) {
 		t.Error("the tier reloaded a panel with no AWS client, want it to wait for credentials")
 	}
 
-	gui.Client = readyTestClient()
+	gui.setAWSClient(readyTestClient())
 	gui.authProblem = errFakeReload
 
 	if err := gui.reloadFocusedPanel(); err != nil {
@@ -376,7 +376,7 @@ func TestStartAutoRefreshHonoursPanelSecondsBeingOff(t *testing.T) {
 			user.Refresh.PanelSeconds = tc.panelSeconds
 
 			gui, _ := newHeadlessGuiWithConfig(t, user)
-			gui.Client = readyTestClient()
+			gui.setAWSClient(readyTestClient())
 			gui.State.ViewStack = []string{"ec2"}
 			t.Cleanup(func() { gui.PauseBackgroundThreads.Store(true) })
 
@@ -490,4 +490,54 @@ func TestRefreshReloadsTheProfilePanelThroughTheGuardWhenAuthIsBroken(t *testing
 	case <-time.After(time.Second):
 		t.Fatal("the auth path never reached the guarded profile loader: it called the raw loader instead")
 	}
+}
+
+// A guard is only worth anything if the loader holds it for as long as the fetch: the spawning status form returns the moment the goroutine is away, handing the guard back before the fetch has started.
+func TestALoaderUnderItsGuardHoldsItForTheWholeFetch(t *testing.T) {
+	gui, _ := newHeadlessGui(t)
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	var fetches atomic.Int32
+
+	reload := singleFlight(func() error {
+		return gui.WithWaitingStatus("loading", func() error {
+			fetches.Add(1)
+			started <- struct{}{}
+			<-release
+
+			return nil
+		})
+	})
+
+	first := make(chan struct{})
+	go func() { defer close(first); _ = reload() }()
+	<-started
+
+	// Waited on with a deadline rather than called here, because a loader that does NOT hold its guard does not fail at this line, it blocks on the same release the first fetch is holding.
+	dropped := make(chan error, 1)
+	go func() { dropped <- reload() }()
+
+	select {
+	case err := <-dropped:
+		if err != nil {
+			t.Fatalf("the dropped reload returned %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second reload never returned: it queued behind the fetch in flight instead of being dropped")
+	}
+
+	select {
+	case <-started:
+		t.Error("a second fetch started while the first was still running: the guard came back before the fetch began")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if got := fetches.Load(); got != 1 {
+		t.Errorf("the fetch ran %d times, want 1", got)
+	}
+
+	// Drained here so the spinner stops before the next test's screen, rather than painting into it.
+	close(release)
+	<-first
 }

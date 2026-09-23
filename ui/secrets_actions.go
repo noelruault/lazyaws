@@ -19,6 +19,8 @@ func (gui *Gui) SecretsActions() []resources.Action {
 		return nil
 	}
 
+	client := gui.awsClient()
+
 	// Revealing is non-mutating but still asks confirmation because shared terminals expose it to bystanders.
 	viewValue := resources.Action{
 		Name:         secretsRevealLabel(gui.secretsReveal, secret.Name),
@@ -37,7 +39,7 @@ func (gui *Gui) SecretsActions() []resources.Action {
 			Mutates:      true,
 			Confirm:      resources.ConfirmSimple,
 			Confirmation: fmt.Sprintf("Cancel pending deletion for %s?", secret.Name),
-			Run:          func(ctx context.Context, _ string) error { return gui.Client.RestoreSecret(ctx, secret.Name) },
+			Run:          func(ctx context.Context, _ string) error { return client.RestoreSecret(ctx, secret.Name) },
 		}}
 	}
 
@@ -48,7 +50,7 @@ func (gui *Gui) SecretsActions() []resources.Action {
 			Mutates:      true,
 			Confirm:      resources.ConfirmSimple,
 			Confirmation: fmt.Sprintf("Rotate %s immediately?", secret.Name),
-			Run:          func(ctx context.Context, _ string) error { return gui.Client.RotateSecret(ctx, secret.Name) },
+			Run:          func(ctx context.Context, _ string) error { return client.RotateSecret(ctx, secret.Name) },
 		},
 		{Name: "Edit rotation schedule", Mutates: true, Run: gui.secretsEditRotation(secret)},
 		{
@@ -63,7 +65,7 @@ func (gui *Gui) SecretsActions() []resources.Action {
 				if err != nil {
 					return err
 				}
-				return gui.Client.DeleteSecret(ctx, secret.Name, days)
+				return client.DeleteSecret(ctx, secret.Name, days)
 			},
 		},
 		{
@@ -75,7 +77,7 @@ func (gui *Gui) SecretsActions() []resources.Action {
 				if err != nil {
 					return err
 				}
-				return gui.Client.ReplicateSecretToRegions(ctx, secret.Name, regions)
+				return client.ReplicateSecretToRegions(ctx, secret.Name, regions)
 			},
 		},
 	}
@@ -90,7 +92,7 @@ func (gui *Gui) SecretsActions() []resources.Action {
 				if err != nil {
 					return err
 				}
-				return gui.Client.RemoveSecretReplicaRegions(ctx, secret.Name, regions)
+				return client.RemoveSecretReplicaRegions(ctx, secret.Name, regions)
 			},
 		})
 	}
@@ -145,7 +147,7 @@ func (gui *Gui) secretsEditRotation(secret *aws.SecretSummary) func(context.Cont
 						if err != nil {
 							return err
 						}
-						return gui.Client.ConfigureSecretRotation(ctx, secret.Name, lambdaARN, days)
+						return gui.awsClient().ConfigureSecretRotation(ctx, secret.Name, lambdaARN, days)
 					},
 				})
 			})

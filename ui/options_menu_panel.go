@@ -111,7 +111,7 @@ var menuGroups = []menuGroup{
 			KeyScreenModeNext, KeyScreenModePrev, KeyRedraw, KeyQuit,
 			KeyChatPickModel, KeyChatNewConversation, KeyChatToggleFolds,
 		},
-		keys: []string{"1", "2", "3", "4", "5", "6", "7", "8", "ctrl+c"},
+		keys: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "ctrl+c"},
 	},
 }
 

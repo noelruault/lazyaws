@@ -54,13 +54,13 @@ func (gui *Gui) renderS3Objects(bucket *aws.Bucket) tasks.TaskFunc {
 }
 
 func (gui *Gui) loadS3ObjectsAndRender(ctx context.Context) {
-	gen := gui.Gen
+	gen := gui.Generation()
 	bucket, prefix := gui.s3Objects.bucket, gui.s3Objects.prefix
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	result, err := gui.Client.ListObjects(fetchCtx, bucket, prefix, nil)
-	if gen != gui.Gen {
+	result, err := gui.awsClient().ListObjects(fetchCtx, bucket, prefix, nil)
+	if gen != gui.Generation() {
 		return
 	}
 	if err != nil {
@@ -147,70 +147,98 @@ func (gui *Gui) handleS3ObjectDownload(obj aws.S3Object) error {
 		if dest == "" {
 			dest = defaultDest
 		}
-		return gui.WithWaitingStatus("downloading "+key, func() error {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			return gui.Client.DownloadObject(ctx, bucket, key, dest)
-		})
+		client := gui.awsClient()
+
+		// Spawned because the prompt callback runs on the UI loop and a download has five minutes to finish.
+		go func() {
+			_ = gui.WithWaitingStatus("downloading "+key, func() error {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				return client.DownloadObject(ctx, bucket, key, dest)
+			})
+		}()
+
+		return nil
 	})
 }
 
-// handleS3ObjectVersions queues popup creation because waiting work runs off the UI thread.
+// handleS3ObjectVersions is spawned from its key handler, and queues the popup because the fetch it waits on is off the UI thread.
 func (gui *Gui) handleS3ObjectVersions(bucket, key string) error {
-	return gui.WithWaitingStatus("loading versions", func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		versions, err := gui.Client.ListObjectVersions(ctx, bucket, key)
-		if err != nil {
-			return err
-		}
+	client := gui.awsClient()
 
-		gui.g.Update(func(g *gocui.Gui) error {
-			items := make([]*types.MenuItem, 0, len(versions))
-			for _, v := range versions {
-				version := v
-				label := fmt.Sprintf("%s  %s  %s", version.VersionId, formatByteCount(float64(version.Size)), version.LastModified)
-				if version.IsLatest {
-					label += " (latest)"
-				}
-				// Read-only mode keeps version metadata visible but replaces restore with a refusal.
-				onPress := func() error { return gui.handleS3RestoreVersionConfirm(bucket, key, version) }
-				if gui.readOnly() {
-					onPress = func() error { return gui.refuseReadOnly("Restoring a version") }
-				}
-				items = append(items, &types.MenuItem{Label: label, OnPress: onPress})
+	go func() {
+		_ = gui.WithWaitingStatus("loading versions", func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			versions, err := client.ListObjectVersions(ctx, bucket, key)
+			if err != nil {
+				return err
 			}
-			return gui.Menu(CreateMenuOptions{Title: "Versions of " + key, Items: items})
+
+			gui.g.Update(func(g *gocui.Gui) error {
+				items := make([]*types.MenuItem, 0, len(versions))
+				for _, v := range versions {
+					version := v
+					label := fmt.Sprintf("%s  %s  %s", version.VersionId, formatByteCount(float64(version.Size)), version.LastModified)
+					if version.IsLatest {
+						label += " (latest)"
+					}
+					// Read-only mode keeps version metadata visible but replaces restore with a refusal.
+					onPress := func() error { return gui.handleS3RestoreVersionConfirm(bucket, key, version) }
+					if gui.readOnly() {
+						onPress = func() error { return gui.refuseReadOnly("Restoring a version") }
+					}
+					items = append(items, &types.MenuItem{Label: label, OnPress: onPress})
+				}
+				return gui.Menu(CreateMenuOptions{Title: "Versions of " + key, Items: items})
+			})
+
+			return nil
 		})
-		return nil
-	})
+	}()
+
+	return nil
 }
 
 // handleS3RestoreVersionConfirm mutates views directly because menu callbacks already run on the UI thread.
 func (gui *Gui) handleS3RestoreVersionConfirm(bucket, key string, version aws.S3ObjectVersion) error {
 	prompt := fmt.Sprintf("Restore %s to version %s? This becomes the new current version.", key, version.VersionId)
 	return gui.createConfirmationPanel("Restore version", prompt, func(g *gocui.Gui, v *gocui.View) error {
-		return gui.WithWaitingStatus("restoring "+key, func() error {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			return gui.Client.CopyObjectVersion(ctx, bucket, key, version.VersionId)
-		})
+		client := gui.awsClient()
+
+		// Spawned because the confirmation callback runs on the UI loop.
+		go func() {
+			_ = gui.WithWaitingStatus("restoring "+key, func() error {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				return client.CopyObjectVersion(ctx, bucket, key, version.VersionId)
+			})
+		}()
+
+		return nil
 	}, nil)
 }
 
 // handleS3PresignedURL uses a popup to avoid adding a clipboard dependency.
 func (gui *Gui) handleS3PresignedURL(bucket, key string) error {
-	return gui.WithWaitingStatus("generating presigned url", func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		url, err := gui.Client.GeneratePresignedURL(ctx, bucket, key, 3600)
-		if err != nil {
-			return err
-		}
+	client := gui.awsClient()
 
-		gui.g.Update(func(g *gocui.Gui) error {
-			return gui.createConfirmationPanel("Presigned URL (expires in 1h)", url, func(g *gocui.Gui, v *gocui.View) error { return nil }, nil)
+	go func() {
+		_ = gui.WithWaitingStatus("generating presigned url", func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			url, err := client.GeneratePresignedURL(ctx, bucket, key, 3600)
+			if err != nil {
+				return err
+			}
+
+			gui.g.Update(func(g *gocui.Gui) error {
+				return gui.createConfirmationPanel("Presigned URL (expires in 1h)", url, func(g *gocui.Gui, v *gocui.View) error { return nil }, nil)
+			})
+
+			return nil
 		})
-		return nil
-	})
+	}()
+
+	return nil
 }
