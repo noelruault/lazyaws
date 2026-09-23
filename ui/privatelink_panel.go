@@ -101,7 +101,7 @@ func (gui *Gui) privateLinkOverview(ctx context.Context, service *aws.VPCEndpoin
 	return presentation.FormatVPCEndpointServiceOverview(service, connections, err, width)
 }
 
-// endpointConnectionsState keeps the last fetch so the main panel can address its rows, and remembers whether one record is open, because the whole record is already in hand and reopening it costs no call.
+// endpointConnectionsState keeps the last fetch so the main panel can address its rows without refetching.
 type endpointConnectionsState struct {
 	serviceID   string
 	connections []aws.VPCEndpointConnection
@@ -193,7 +193,6 @@ func endpointConnectionRowCells(c *aws.VPCEndpointConnection) []string {
 	return []string{
 		presentation.StatusCell(c.State, presentation.StatusStyleIcon),
 		c.EndpointID,
-		// The owner is the account that asked, which is the fact a request is judged on.
 		orDash(c.Owner),
 		orDash(c.Region),
 		formatSecretsTime(c.CreatedAt),

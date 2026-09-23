@@ -11,11 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
-// VPCEndpointStatePendingAcceptance is the connection state that waits on a human, spelled as EC2 answers rather than as the SDK declares it.
-// DescribeVpcEndpointConnections returns lowercase states while types.StatePendingAcceptance is "PendingAcceptance", so comparisons fold case and the filter sends both spellings.
+// VPCEndpointStatePendingAcceptance is spelled as EC2 answers rather than as the SDK declares: DescribeVpcEndpointConnections returns lowercase states while types.StatePendingAcceptance is "PendingAcceptance", so comparisons fold case and filters send both spellings.
 const VPCEndpointStatePendingAcceptance = "pendingAcceptance"
 
-// VPCEndpointService is a PrivateLink service this account publishes, which is the provider side of a VPC endpoint: consumers create endpoints against it, and when AcceptanceRequired is set each one waits until this account accepts it.
+// VPCEndpointService is the provider side of a PrivateLink endpoint: consumers create endpoints against it, and when AcceptanceRequired is set each one waits until this account accepts it.
 type VPCEndpointService struct {
 	ID                  string
 	Name                string
@@ -35,7 +34,7 @@ type VPCEndpointService struct {
 	Pending int
 }
 
-// Label is what identifies the service to a person: the Name tag when it has one, and the service id otherwise, because the service name is a generated string that repeats the id.
+// Label prefers the Name tag over the service name, which is a generated string that only repeats the id.
 func (s VPCEndpointService) Label() string {
 	if s.NameTag != "" {
 		return s.NameTag
@@ -58,14 +57,12 @@ type VPCEndpointConnection struct {
 	Tags             []Tag
 }
 
-// Pending reports whether this connection is waiting for this account to accept or reject it.
-// It decides whether the Accept action is offered at all, so it folds case: see VPCEndpointStatePendingAcceptance for the two spellings in play.
+// Pending decides whether the Accept action is offered at all, so it folds case: see VPCEndpointStatePendingAcceptance for the two spellings in play.
 func (c VPCEndpointConnection) Pending() bool {
 	return strings.EqualFold(c.State, VPCEndpointStatePendingAcceptance)
 }
 
 // ListVPCEndpointServices returns the PrivateLink services this account publishes in the region, each carrying the number of connections waiting on it.
-// The pending count costs one extra describe for the whole list rather than one per service, because the connections describe is filtered by state and not by service: the count is the reason to open this panel at all, so the list carries it rather than making each row ask.
 func (c *Client) ListVPCEndpointServices(ctx context.Context) ([]VPCEndpointService, error) {
 	input := &ec2.DescribeVpcEndpointServiceConfigurationsInput{}
 	var services []VPCEndpointService
@@ -89,7 +86,7 @@ func (c *Client) ListVPCEndpointServices(ctx context.Context) ([]VPCEndpointServ
 		return nil, nil
 	}
 
-	// A failed count fails the list: a row reading "0 pending" when the count could not be made would be the one lie this panel must not tell.
+	// A failed count fails the list: a row reading "0 pending" when the count could not be made would be a lie.
 	pending, err := c.countPendingConnections(ctx)
 	if err != nil {
 		return nil, err
@@ -101,7 +98,6 @@ func (c *Client) ListVPCEndpointServices(ctx context.Context) ([]VPCEndpointServ
 	return services, nil
 }
 
-// countPendingConnections returns pending connections per service id, asking EC2 only for the state that matters.
 func (c *Client) countPendingConnections(ctx context.Context) (map[string]int, error) {
 	// Both spellings go in because a filter value EC2 does not recognise matches nothing rather than failing, which would report zero waiting connections instead of an error.
 	input := &ec2.DescribeVpcEndpointConnectionsInput{
@@ -131,7 +127,7 @@ func (c *Client) countPendingConnections(ctx context.Context) (map[string]int, e
 	return pending, nil
 }
 
-// ListVPCEndpointConnections returns every connection to one service, in every state, because a rejected or failed connection is what explains a consumer's ticket as often as a pending one does.
+// ListVPCEndpointConnections returns connections in every state, not only the ones waiting: a rejected or failed connection explains a consumer's ticket as often as a pending one.
 func (c *Client) ListVPCEndpointConnections(ctx context.Context, serviceID string) ([]VPCEndpointConnection, error) {
 	input := &ec2.DescribeVpcEndpointConnectionsInput{Filters: serviceFilter(serviceID)}
 	var connections []VPCEndpointConnection
@@ -154,7 +150,6 @@ func (c *Client) ListVPCEndpointConnections(ctx context.Context, serviceID strin
 	return connections, nil
 }
 
-// AcceptVPCEndpointConnections accepts consumer endpoints on a service this account owns, which is what moves them out of pendingAcceptance and lets traffic flow.
 func (c *Client) AcceptVPCEndpointConnections(ctx context.Context, serviceID string, endpointIDs []string) error {
 	if err := checkConnectionTargets(serviceID, endpointIDs); err != nil {
 		return err
@@ -171,8 +166,7 @@ func (c *Client) AcceptVPCEndpointConnections(ctx context.Context, serviceID str
 	return unsuccessfulError("accept", result.Unsuccessful)
 }
 
-// RejectVPCEndpointConnections rejects consumer endpoints on a service this account owns.
-// A rejected endpoint is not deleted: it stays on the consumer's side in the rejected state, and the consumer can request again.
+// RejectVPCEndpointConnections does not delete the endpoint: it stays on the consumer's side in the rejected state, and the consumer can request again.
 func (c *Client) RejectVPCEndpointConnections(ctx context.Context, serviceID string, endpointIDs []string) error {
 	if err := checkConnectionTargets(serviceID, endpointIDs); err != nil {
 		return err
@@ -199,8 +193,7 @@ func checkConnectionTargets(serviceID string, endpointIDs []string) error {
 	return nil
 }
 
-// unsuccessfulError turns the per-endpoint failures EC2 reports inside a successful response into an error.
-// Accept and Reject answer 200 with an Unsuccessful list, so a call that changed nothing looks like a call that worked; without this the UI would report success and the connection would still be pending.
+// unsuccessfulError turns the per-endpoint failures EC2 reports inside a 200 response into an error, without which a call that changed nothing would be reported as a success.
 func unsuccessfulError(action string, items []types.UnsuccessfulItem) error {
 	if len(items) == 0 {
 		return nil
@@ -240,7 +233,7 @@ func newVPCEndpointService(s types.ServiceConfiguration) VPCEndpointService {
 		Tags:                toTags(s.Tags),
 	}
 
-	// Gateway Load Balancer services report their balancers in a second field, and a service has one kind or the other; both are the same thing to a reader asking what sits behind the service.
+	// Gateway Load Balancer services report their balancers in a second field, and a service has one kind or the other.
 	service.LoadBalancerARNs = append(append([]string(nil), s.NetworkLoadBalancerArns...), s.GatewayLoadBalancerArns...)
 
 	for _, ipType := range s.SupportedIpAddressTypes {

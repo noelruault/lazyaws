@@ -10,7 +10,7 @@ import (
 	"github.com/noelruault/lazyaws/ui/resources"
 )
 
-// PrivateLinkActions are the service's own actions. Accepting and rejecting live on the connection rows instead, because they take one endpoint and the service does not name one.
+// PrivateLinkActions changes nothing: accepting and rejecting live on the connection rows, because they take one endpoint and the service does not name one.
 func (gui *Gui) PrivateLinkActions() []resources.Action {
 	service, err := gui.Panels.PrivateLink.GetSelectedItem()
 	if err != nil {
@@ -34,8 +34,7 @@ func (gui *Gui) PrivateLinkActions() []resources.Action {
 	}
 }
 
-// endpointConnectionMenu is the affordance the main panel's actions key opens on a connection row.
-// It goes through runAction rather than building menu items directly, so accept and reject pass the read-only gate and the confirmation prompts every other mutating action passes.
+// endpointConnectionMenu goes through openActionsMenu rather than building menu items directly, so accept and reject pass the read-only and confirmation gates runAction enforces.
 func (gui *Gui) endpointConnectionMenu(connection aws.VPCEndpointConnection) error {
 	return gui.openActionsMenu("Endpoint: "+connection.EndpointID, gui.endpointConnectionActions(connection))
 }
@@ -69,7 +68,7 @@ func (gui *Gui) endpointConnectionActions(connection aws.VPCEndpointConnection) 
 	return actions
 }
 
-// rejectConnectionAction grades the prompt by what the rejection costs: a waiting request has no traffic to lose, while an established connection is carrying some, and cutting it is felt on the consumer's side immediately.
+// rejectConnectionAction grades the prompt by what the rejection costs: a waiting request has no traffic to lose, an established connection is carrying some.
 func (gui *Gui) rejectConnectionAction(connection aws.VPCEndpointConnection) resources.Action {
 	action := resources.Action{
 		Name:         "Reject connection",
@@ -104,8 +103,7 @@ func (gui *Gui) afterEndpointConnectionChange(serviceID string) error {
 	return nil
 }
 
-// showPopup reports a value the terminal cannot copy for us, matching how the console-URL actions elsewhere answer.
-// Run executes off the UI thread, so the popup is queued rather than created here.
+// showPopup queues the popup rather than creating it here, because an action's Run executes off the UI thread.
 func (gui *Gui) showPopup(title, body string) error {
 	gui.g.Update(func(*gocui.Gui) error {
 		return gui.createConfirmationPanel(title, body, func(*gocui.Gui, *gocui.View) error { return nil }, nil)

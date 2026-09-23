@@ -25,7 +25,7 @@ func GetVPCEndpointServiceDisplayCells(s *aws.VPCEndpointService) []utils.Cell {
 	}
 }
 
-// pendingCell stays blank at zero: a column of "0 pending" would make the one row that is waiting harder to find, not easier.
+// pendingCell stays blank at zero: a column of "0 pending" would make the one row that is waiting harder to find.
 func pendingCell(pending int) utils.Cell {
 	if pending == 0 {
 		return utils.Cell{}
@@ -34,8 +34,7 @@ func pendingCell(pending int) utils.Cell {
 	return utils.Cell{Text: fmt.Sprintf("%d pending", pending), Color: color.FgYellow}
 }
 
-// FormatVPCEndpointServiceOverview lays out one PrivateLink service: what it is on the left, and who is attached to it on the right.
-// connErr is rendered rather than swallowed, because a connections read that failed and a service with no connections look identical once the count is gone.
+// FormatVPCEndpointServiceOverview renders connErr rather than swallowing it, because a connections read that failed and a service with no connections look identical once the count is gone.
 func FormatVPCEndpointServiceOverview(s *aws.VPCEndpointService, connections []aws.VPCEndpointConnection, connErr error, width int) string {
 	header := HeaderWithStats(width,
 		ResourceHeader("Endpoint service", s.Label(), "", s.ID, s.Name, acceptanceNote(s)),
@@ -114,7 +113,6 @@ func endpointServiceBalancersBlock(s *aws.VPCEndpointService) string {
 }
 
 // loadBalancerName takes the name off a load balancer ARN, whose last two segments are the name and the id AWS appended to it.
-// The full ARN repeats the account and region the whole pane is already scoped to, and is too wide for a column.
 func loadBalancerName(arn string) string {
 	parts := strings.Split(arn, "/")
 	if len(parts) < 3 {
@@ -124,7 +122,7 @@ func loadBalancerName(arn string) string {
 	return parts[len(parts)-2]
 }
 
-// endpointConnectionsBlock counts the connections by state rather than listing them, because the Connections tab is the list and this is the summary that says whether to open it.
+// endpointConnectionsBlock counts the connections by state rather than listing them: the Connections tab is the list.
 func endpointConnectionsBlock(connections []aws.VPCEndpointConnection, err error) string {
 	title := SectionTitle("Connections")
 	if err != nil {

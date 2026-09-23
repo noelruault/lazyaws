@@ -94,7 +94,7 @@ func TestProfileSwitchResetsState(t *testing.T) {
 }
 
 // A stale connection must never replace a newer profile switch.
-// Headless rather than newTestGui, because the switch is applied through the loop now and a Gui without a screen has nowhere to queue it.
+// Headless rather than newTestGui, because the switch is applied through the loop and a Gui without a screen has nowhere to queue it.
 func TestStaleGenerationMsgsDropped(t *testing.T) {
 	gui, g := newHeadlessGui(t)
 	quietRefresh(gui)

@@ -70,7 +70,6 @@ func TestNewGuiPanelThrottlesCoverAllReloaders(t *testing.T) {
 }
 
 // A profile switch bumps the generation from the UI loop while every fetch in flight reads it from its own goroutine, so a plain int would be a data race and a lost bump.
-// -race is what proves the first half; the count proves the second.
 func TestGenerationTakesBumpsAndReadsFromDifferentGoroutines(t *testing.T) {
 	gui := newTestGui(t)
 

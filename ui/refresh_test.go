@@ -492,8 +492,7 @@ func TestRefreshReloadsTheProfilePanelThroughTheGuardWhenAuthIsBroken(t *testing
 	}
 }
 
-// A guard is only worth anything if the loader holds it for as long as the fetch, which is what WhileWaiting is for.
-// The spawning status form returns the moment the goroutine is away, so the guard would be handed back before the fetch had started and the reload it was meant to drop would run beside it.
+// A guard is only worth anything if the loader holds it for as long as the fetch: the spawning status form returns the moment the goroutine is away, handing the guard back before the fetch has started.
 func TestALoaderUnderItsGuardHoldsItForTheWholeFetch(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 

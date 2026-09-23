@@ -36,8 +36,7 @@ func (c *overviewPaneCache) get(gen int64, key string) (string, bool) {
 	return content, ok
 }
 
-// forget drops every cached pane for one resource, at whatever widths it was rendered.
-// A mutation that changed the resource has to invalidate it: a static overview renders once per selection, so without this the pane would keep answering with the state from before the change.
+// forget drops every cached pane for one resource, at whatever widths it was rendered: a static overview renders once per selection, so a mutation that skips this leaves the pane answering with the state from before the change.
 func (c *overviewPaneCache) forget(itemKey string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

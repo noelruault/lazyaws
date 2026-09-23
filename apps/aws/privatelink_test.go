@@ -41,7 +41,7 @@ func TestNewVPCEndpointServiceReadsEveryField(t *testing.T) {
 	if service.PrivateDNSName != "api.internal.example" || len(service.BaseDNSNames) != 1 {
 		t.Errorf("dns = %q / %v", service.PrivateDNSName, service.BaseDNSNames)
 	}
-	// Both balancer kinds land in one field: a service has one or the other, and the reader is asking what sits behind it.
+	// Both balancer kinds land in one field: a service has one or the other.
 	if len(service.LoadBalancerARNs) != 2 {
 		t.Errorf("load balancers = %v, want the NLB and the GWLB", service.LoadBalancerARNs)
 	}
@@ -103,7 +103,6 @@ func TestNewVPCEndpointConnectionReadsEveryField(t *testing.T) {
 }
 
 // The SDK's State constants are NOT the strings EC2 answers with: DescribeVpcEndpointConnections returns lowercase states, verified against eu-west-1, while types.StatePendingAcceptance is "PendingAcceptance".
-// Pending decides whether Accept is offered at all, so it has to hold for both spellings rather than for whichever one this SDK version declares.
 func TestPendingHoldsForBothSpellingsOfTheState(t *testing.T) {
 	if string(types.StatePendingAcceptance) == VPCEndpointStatePendingAcceptance {
 		t.Log("the SDK enum now matches the wire value; the case folding below is no longer load-bearing, but it is still correct")

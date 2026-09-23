@@ -63,8 +63,7 @@ type Gui struct {
 
 	CurrentProfile string
 
-	// gen prevents superseded profile results from reaching the UI.
-	// Every async load snapshots it before fetching and drops its result if it moved. Atomic because those loads run on their own goroutines while the render loop reads it.
+	// gen prevents superseded profile results from reaching the UI, and is atomic because async loads read it from their own goroutines while the render loop bumps it.
 	gen atomic.Int64
 
 	Profiles []string
@@ -276,7 +275,7 @@ func (gui *Gui) Update(f func() error) {
 	gui.g.Update(func(*gocui.Gui) error { return f() })
 }
 
-// Generation is the current profile generation. An async load snapshots it before fetching and drops its result if it has moved since.
+// Generation is the value an async load snapshots before fetching, so it can drop its result if it has moved since.
 func (gui *Gui) Generation() int64 {
 	return gui.gen.Load()
 }
