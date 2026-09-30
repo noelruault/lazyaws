@@ -111,7 +111,7 @@ func (gui *Gui) onFocusChange() error {
 		focused := view == currentView && gui.showsFocus(view)
 
 		// A resource list marks its selected row whether or not it holds focus: the main pane describes that row, and drilling into it moves focus away, so a list that marks its selection only while focused leaves the pane describing a resource nothing on screen points at.
-		// Only the focused list gets the selection bar; the rest keep the bold, brightened row gocui draws under Highlight when no background is set, so eight lists never claim the cursor at once.
+		// Only the focused list gets the selection bar; the rest keep the bold, brightened row gocui draws under Highlight when no background is set, so nine lists never claim the cursor at once.
 		if _, isList := gui.sidePanelNamed(view.Name()); isList {
 			view.Highlight = true
 			view.SelBgColor = gocui.ColorDefault

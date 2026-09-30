@@ -27,31 +27,37 @@ func (gui *Gui) handleEC2InstanceConnect(inst *aws.Instance) error {
 
 	return gui.createPromptPanel(fmt.Sprintf("SSH user for %s (default: ec2-user)", inst.ID), func(g *gocui.Gui, v *gocui.View) error {
 		user := ec2InstanceConnectUser(gui.trimmedContent(v))
+		client := gui.awsClient()
 
-		return gui.WithWaitingStatus("connecting via EC2 Instance Connect", func() error {
-			keyDir, err := os.MkdirTemp("", "lazyaws-eic-*")
-			if err != nil {
-				return err
-			}
-			defer os.RemoveAll(keyDir)
+		// Spawned because the prompt callback runs on the UI loop and the SSH session lasts as long as the user keeps it.
+		go func() {
+			_ = gui.WithWaitingStatus("connecting via EC2 Instance Connect", func() error {
+				keyDir, err := os.MkdirTemp("", "lazyaws-eic-*")
+				if err != nil {
+					return err
+				}
+				defer os.RemoveAll(keyDir)
 
-			keyPath := keyDir + "/id_ed25519"
-			if err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath).Run(); err != nil {
-				return fmt.Errorf("failed to generate ephemeral SSH key: %w", err)
-			}
-			pubKey, err := os.ReadFile(keyPath + ".pub")
-			if err != nil {
-				return fmt.Errorf("failed to read ephemeral SSH public key: %w", err)
-			}
+				keyPath := keyDir + "/id_ed25519"
+				if err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath).Run(); err != nil {
+					return fmt.Errorf("failed to generate ephemeral SSH key: %w", err)
+				}
+				pubKey, err := os.ReadFile(keyPath + ".pub")
+				if err != nil {
+					return fmt.Errorf("failed to read ephemeral SSH public key: %w", err)
+				}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := gui.Client.SendSSHPublicKey(ctx, inst.ID, inst.AZ, user, strings.TrimSpace(string(pubKey))); err != nil {
-				return err
-			}
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if err := client.SendSSHPublicKey(ctx, inst.ID, inst.AZ, user, strings.TrimSpace(string(pubKey))); err != nil {
+					return err
+				}
 
-			return gui.runSubprocess(buildEC2InstanceConnectSSHCommand(keyPath, user, host))
-		})
+				return gui.runSubprocess(buildEC2InstanceConnectSSHCommand(keyPath, user, host))
+			})
+		}()
+
+		return nil
 	})
 }
 

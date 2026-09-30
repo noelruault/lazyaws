@@ -58,13 +58,14 @@ type Gui struct {
 
 	Panels Panels
 
-	// Client is replaced wholesale so every service shares profile credentials.
-	Client *aws.Client
+	// client is replaced wholesale so every service shares profile credentials.
+	// Atomic because the switch that replaces it runs on the loop while fetches read it from their own goroutines.
+	client atomic.Pointer[aws.Client]
 
 	CurrentProfile string
 
-	// Gen prevents superseded profile results from reaching the UI.
-	Gen int
+	// gen prevents superseded profile results from reaching the UI, and is atomic because async loads read it from their own goroutines while the render loop bumps it.
+	gen atomic.Int64
 
 	Profiles []string
 
@@ -82,7 +83,8 @@ type Gui struct {
 	// mainCursorState is the selection inside the main panel; only one navigable list shows at a time.
 	mainCursorState mainCursorState
 
-	vpcEndpoints vpcEndpointsState
+	vpcEndpoints        vpcEndpointsState
+	endpointConnections endpointConnectionsState
 
 	// throttledRefresh collapses bursts into one AWS reload per 50ms window.
 	throttledRefresh *throttle
@@ -116,7 +118,8 @@ type Panels struct {
 	ECR     *panels.SideListPanel[*aws.ECRRepository]
 	Secrets *panels.SideListPanel[*aws.SecretSummary]
 
-	VPC *panels.SideListPanel[*aws.VPC]
+	VPC         *panels.SideListPanel[*aws.VPC]
+	PrivateLink *panels.SideListPanel[*aws.VPCEndpointService]
 
 	Menu *panels.SideListPanel[*types.MenuItem]
 }
@@ -192,8 +195,8 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 		statusManager: &statusManager{},
 		taskManager:   tasks.NewTaskManager(slog.Default()),
 		ErrorChan:     errorChan,
-		Client:        client,
 	}
+	gui.setAWSClient(client)
 	gui.Registry = gui.newRegistry()
 	gui.Keys, gui.startupProblems = buildKeymap(cfg.User.KeybindingPreset, cfg.User.Keybindings)
 	gui.throttledRefresh = newThrottle(50*time.Millisecond, gui.refresh)
@@ -210,14 +213,15 @@ func NewGui(cfg *config.Config, client *aws.Client, errorChan chan error) (*Gui,
 // panelReloaders keeps full and focused refresh paths aligned.
 func (gui *Gui) panelReloaders() map[string]func() error {
 	return map[string]func() error{
-		profileReloader: gui.refreshProfile,
-		"ecs":           gui.loadECSList,
-		"ec2":           gui.loadEC2List,
-		"s3":            gui.loadS3List,
-		"eks":           gui.loadEKSList,
-		"ecr":           gui.loadECRList,
-		"secrets":       gui.loadSecretsList,
-		"vpc":           gui.loadVPCList,
+		profileReloader:     gui.refreshProfile,
+		"ecs":               gui.loadECSList,
+		"ec2":               gui.loadEC2List,
+		"s3":                gui.loadS3List,
+		"eks":               gui.loadEKSList,
+		"ecr":               gui.loadECRList,
+		"secrets":           gui.loadSecretsList,
+		"vpc":               gui.loadVPCList,
+		privateLinkReloader: gui.loadPrivateLinkList,
 	}
 }
 
@@ -225,7 +229,7 @@ func (gui *Gui) panelReloaders() map[string]func() error {
 // It goes through the single-flighted loaders rather than panelReloaders, so a full refresh landing on top of a panel tier's tick reloads each list once instead of twice.
 func (gui *Gui) refresh() {
 	// The profile panel needs no AWS credentials and must remain available as the recovery path.
-	if gui.authProblem != nil || !gui.Client.Ready() {
+	if gui.authProblem != nil || !gui.awsClient().Ready() {
 		go func() { _ = gui.reloadProfilePanel() }()
 		gui.showAuthProblem()
 		return
@@ -270,6 +274,31 @@ func (gui *Gui) IgnoreStrings() []string {
 
 func (gui *Gui) Update(f func() error) {
 	gui.g.Update(func(*gocui.Gui) error { return f() })
+}
+
+// queueUpdate hands work to the UI loop in the order this goroutine enqueued it, which Update cannot promise.
+// Only for goroutines that are not the loop: the send is synchronous, so the loop would be waiting on itself once the twenty-deep event buffer filled.
+func (gui *Gui) queueUpdate(f func() error) {
+	gui.g.UpdateAsync(func(*gocui.Gui) error { return f() })
+}
+
+// awsClient is the client as of this call, which a fetch takes ONCE and uses throughout rather than re-reading per call and straddling two accounts.
+func (gui *Gui) awsClient() *aws.Client {
+	return gui.client.Load()
+}
+
+func (gui *Gui) setAWSClient(client *aws.Client) {
+	gui.client.Store(client)
+}
+
+// Generation is the value an async load snapshots before fetching, so it can drop its result if it has moved since.
+func (gui *Gui) Generation() int64 {
+	return gui.gen.Load()
+}
+
+// BumpGeneration declares that the account behind the panels changed, which is what drops every in-flight result and every cached pane keyed to the old one.
+func (gui *Gui) BumpGeneration() {
+	gui.gen.Add(1)
 }
 
 func (gui *Gui) goEvery(interval time.Duration, function func() error) {
@@ -361,7 +390,8 @@ func (gui *Gui) setPanels() {
 		ECR:     gui.getECRPanel(),
 		Secrets: gui.getSecretsPanel(),
 
-		VPC: gui.getVPCPanel(),
+		VPC:         gui.getVPCPanel(),
+		PrivateLink: gui.getPrivateLinkPanel(),
 
 		Menu: gui.getMenuPanel(),
 	}

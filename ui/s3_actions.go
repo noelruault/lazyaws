@@ -27,10 +27,11 @@ func (gui *Gui) S3Actions() []resources.Action {
 // s3AbortMultipartUploads exposes one abort per upload because only the user can judge which are stuck.
 func (gui *Gui) s3AbortMultipartUploads(bucket *aws.Bucket) func(context.Context, string) error {
 	return func(ctx context.Context, _ string) error {
-		gen := gui.Gen
+		client := gui.awsClient()
+		gen := gui.Generation()
 
-		uploads, err := gui.Client.ListMultipartUploads(ctx, bucket.Name)
-		if gen != gui.Gen {
+		uploads, err := client.ListMultipartUploads(ctx, bucket.Name)
+		if gen != gui.Generation() {
 			return nil // a profile switch superseded this while it was in flight
 		}
 		if err != nil {
@@ -49,7 +50,7 @@ func (gui *Gui) s3AbortMultipartUploads(bucket *aws.Bucket) func(context.Context
 				Confirmation: fmt.Sprintf("Abort upload of %s?", upload.Key),
 				Timeout:      10 * time.Second,
 				Run: func(ctx context.Context, _ string) error {
-					return gui.Client.AbortMultipartUpload(ctx, bucket.Name, upload.Key, upload.UploadID)
+					return client.AbortMultipartUpload(ctx, bucket.Name, upload.Key, upload.UploadID)
 				},
 			}
 		}

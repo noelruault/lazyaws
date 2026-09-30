@@ -52,9 +52,17 @@ func TestEveryPanelCopiesItsFullIdentifier(t *testing.T) {
 			gui.Panels.VPC.SetItems([]*aws.VPC{{ID: "vpc-0abcdef1234567890", Name: "main"}})
 			return gui.Panels.VPC
 		}},
+		{view: "privatelink", want: "vpce-svc-0abcdef1234567890", seed: func(gui *Gui) panels.ISideListPanel {
+			gui.Panels.PrivateLink.SetItems([]*aws.VPCEndpointService{{
+				ID:      "vpce-svc-0abcdef1234567890",
+				Name:    "com.amazonaws.vpce.eu-west-1.vpce-svc-0abcdef1234567890",
+				NameTag: "payments",
+			}})
+			return gui.Panels.PrivateLink
+		}},
 	}
 
-	// A ninth panel with no entry here would ship with no copy value and nothing failing.
+	// A tenth panel with no entry here would ship with no copy value and nothing failing.
 	if got, want := len(cases), len(newTestGui(t).allSidePanels()); got != want {
 		t.Fatalf("%d panels covered, %d exist: every list has a copy value or the key does nothing on it", got, want)
 	}
@@ -168,8 +176,8 @@ func TestCopyKeyIsBoundOnEveryListAndOnMain(t *testing.T) {
 	if !bound["main"] {
 		t.Error("copy-id is not bound in the main view, so it does nothing once focus moves into the detail pane")
 	}
-	if len(bound) != 9 {
-		t.Errorf("copy-id is bound in %d views, want the 8 lists and main", len(bound))
+	if len(bound) != 10 {
+		t.Errorf("copy-id is bound in %d views, want the 9 lists and main", len(bound))
 	}
 }
 
@@ -178,8 +186,8 @@ func TestResourceViewNamesCoverEveryListAndMain(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
 
 	got := resourceViewNames(gui.allSidePanels())
-	if len(got) != 9 {
-		t.Errorf("resourceViewNames returned %d views (%v), want the 8 lists and main", len(got), got)
+	if len(got) != 10 {
+		t.Errorf("resourceViewNames returned %d views (%v), want the 9 lists and main", len(got), got)
 	}
 	if !slices.Contains(got, "main") {
 		t.Errorf("resourceViewNames omits main: %v", got)

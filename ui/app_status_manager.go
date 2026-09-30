@@ -74,29 +74,26 @@ func (m *statusManager) spin(ticks <-chan time.Time, render func(string)) {
 	}
 }
 
+// WithWaitingStatus runs f on the CALLING goroutine under a named spinner, so a caller that must not block says so with its own go.
+// A panel loader depends on that: returning before the fetch finishes would hand its single-flight guard back while the fetch was still running.
 func (gui *Gui) WithWaitingStatus(name string, f func() error) error {
+	gui.statusManager.addWaitingStatus(name)
+	defer gui.statusManager.removeStatus(name)
+
 	go func() {
-		gui.statusManager.addWaitingStatus(name)
-
-		defer func() {
-			gui.statusManager.removeStatus(name)
-		}()
-
-		go func() {
-			ticker := time.NewTicker(time.Millisecond * 50)
-			defer ticker.Stop()
-			gui.statusManager.spin(ticker.C, func(appStatus string) {
-				if err := gui.renderString(gui.g, "appStatus", appStatus); err != nil {
-					gui.Log.Warn(err.Error())
-				}
-			})
-		}()
-
-		// ErrorChan keeps background status work from mutating popups directly.
-		if err := f(); err != nil {
-			gui.ErrorChan <- err
-		}
+		ticker := time.NewTicker(time.Millisecond * 50)
+		defer ticker.Stop()
+		gui.statusManager.spin(ticker.C, func(appStatus string) {
+			if err := gui.renderString(gui.g, "appStatus", appStatus); err != nil {
+				gui.Log.Warn(err.Error())
+			}
+		})
 	}()
+
+	// ErrorChan keeps a failed fetch from mutating popups off the loop.
+	if err := f(); err != nil {
+		gui.ErrorChan <- err
+	}
 
 	return nil
 }

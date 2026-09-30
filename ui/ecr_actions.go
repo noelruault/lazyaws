@@ -21,6 +21,7 @@ func (gui *Gui) ECRActions() []resources.Action {
 
 	immutable := repo.TagMutability != "IMMUTABLE"
 	scanOnPush := !repo.ScanOnPush
+	client := gui.awsClient()
 
 	return []resources.Action{
 		{
@@ -29,7 +30,7 @@ func (gui *Gui) ECRActions() []resources.Action {
 			Confirm:      resources.ConfirmSimple,
 			Confirmation: ecrToggleLabel(immutable, "tag immutability") + " for " + repo.Name + "?",
 			Run: func(ctx context.Context, _ string) error {
-				return gui.Client.SetImageTagMutability(ctx, repo.Name, immutable)
+				return client.SetImageTagMutability(ctx, repo.Name, immutable)
 			},
 		},
 		{
@@ -37,7 +38,7 @@ func (gui *Gui) ECRActions() []resources.Action {
 			Mutates:      true,
 			Confirm:      resources.ConfirmSimple,
 			Confirmation: ecrToggleLabel(scanOnPush, "scan-on-push") + " for " + repo.Name + "?",
-			Run:          func(ctx context.Context, _ string) error { return gui.Client.SetScanOnPush(ctx, repo.Name, scanOnPush) },
+			Run:          func(ctx context.Context, _ string) error { return client.SetScanOnPush(ctx, repo.Name, scanOnPush) },
 		},
 		{
 			Name:    "Edit lifecycle policy",
@@ -50,7 +51,7 @@ func (gui *Gui) ECRActions() []resources.Action {
 				if policyText == "" {
 					return nil
 				}
-				return gui.Client.PutECRLifecyclePolicy(ctx, repo.Name, policyText)
+				return client.PutECRLifecyclePolicy(ctx, repo.Name, policyText)
 			},
 		},
 		{
@@ -68,7 +69,7 @@ func (gui *Gui) ECRActions() []resources.Action {
 			Mutates: true,
 			Confirm: resources.ConfirmDangerous,
 			Token:   repo.Name,
-			Run:     func(ctx context.Context, _ string) error { return gui.Client.DeleteECRRepository(ctx, repo.Name, true) },
+			Run:     func(ctx context.Context, _ string) error { return client.DeleteECRRepository(ctx, repo.Name, true) },
 		},
 	}
 }
@@ -98,13 +99,14 @@ func lifecyclePolicyPreviewable(policies *aws.ECRRepositoryPolicies, name string
 
 func (gui *Gui) ecrPreviewLifecyclePolicy(repo *aws.ECRRepository) func(context.Context, string) error {
 	return func(ctx context.Context, _ string) error {
-		if gui.Client == nil {
+		client := gui.awsClient()
+		if client == nil {
 			return fmt.Errorf("%s: no AWS session", repo.Name)
 		}
 
 		// Read here rather than off the row: the list no longer carries the policies, and this precondition is worth one call because the alternative is previewing a policy nobody has.
 		// Memoised in the client, so opening the Policies tab first makes this free.
-		policies, err := gui.Client.GetECRRepositoryPolicies(ctx, repo.Name, gui.metricsMaxAge())
+		policies, err := client.GetECRRepositoryPolicies(ctx, repo.Name, gui.metricsMaxAge())
 		if err != nil {
 			return fmt.Errorf("%s: lifecycle policy could not be read: %w", repo.Name, err)
 		}
@@ -113,7 +115,7 @@ func (gui *Gui) ecrPreviewLifecyclePolicy(repo *aws.ECRRepository) func(context.
 			return err
 		}
 
-		preview, err := gui.Client.PreviewLifecyclePolicy(ctx, repo.Name, "")
+		preview, err := client.PreviewLifecyclePolicy(ctx, repo.Name, "")
 		if err != nil {
 			return err
 		}
@@ -147,7 +149,8 @@ func formatECRLifecyclePolicyPreview(preview *aws.ECRLifecyclePolicyPreview) str
 // ecrDeleteImage fetches at run time because flat repository rows omit images.
 func (gui *Gui) ecrDeleteImage(repo *aws.ECRRepository) func(context.Context, string) error {
 	return func(ctx context.Context, _ string) error {
-		images, err := gui.Client.ListECRImages(ctx, repo.Name)
+		client := gui.awsClient()
+		images, err := client.ListECRImages(ctx, repo.Name)
 		if err != nil {
 			return err
 		}
@@ -163,7 +166,7 @@ func (gui *Gui) ecrDeleteImage(repo *aws.ECRRepository) func(context.Context, st
 				Confirm:      resources.ConfirmSimple,
 				Confirmation: fmt.Sprintf("Delete %s/%s? This cannot be undone.", repo.Name, ecrImageLabel(image)),
 				Run: func(ctx context.Context, _ string) error {
-					return gui.Client.DeleteECRImage(ctx, repo.Name, image.Digest)
+					return client.DeleteECRImage(ctx, repo.Name, image.Digest)
 				},
 			}
 		}

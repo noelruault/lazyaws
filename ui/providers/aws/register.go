@@ -17,6 +17,7 @@ type Host interface {
 	FocusECR(resources.Ref) error
 	FocusSecrets(resources.Ref) error
 	FocusVPC(resources.Ref) error
+	FocusPrivateLink(resources.Ref) error
 	FocusAmazonQ(resources.Ref) error
 	FocusSettings(resources.Ref) error
 
@@ -28,6 +29,7 @@ type Host interface {
 	ECRActions() []resources.Action
 	SecretsActions() []resources.Action
 	VPCActions() []resources.Action
+	PrivateLinkActions() []resources.Action
 }
 
 // Register follows panel order because registration order controls suggestions.
@@ -88,6 +90,13 @@ func Register(reg *resources.Registry, host Host) {
 			Aliases: []string{"vpc", "vpcs", "network"},
 			Focus:   host.FocusVPC,
 			Actions: host.VPCActions,
+		},
+		&resources.Entry{
+			Ref:     ref("vpc", "endpoint-services"),
+			Title:   "Endpoint Services",
+			Aliases: []string{"privatelink", "endpoint-services", "vpce"},
+			Focus:   host.FocusPrivateLink,
+			Actions: host.PrivateLinkActions,
 		},
 		&resources.Entry{
 			Ref:     ref("amazon-q", ""),

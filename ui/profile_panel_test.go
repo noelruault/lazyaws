@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jesseduffield/gocui"
 
 	"github.com/noelruault/lazyaws/ui/utils"
 )
@@ -48,30 +51,89 @@ func TestReadAWSConfigSection(t *testing.T) {
 // refreshProfile is a reloader: it runs on r/R and on the background refresh, not only at startup.
 // It opens the panel on the connected profile, but once the cursor has moved a later refresh must leave it where the user put it.
 func TestProfileRefreshOpensOnTheCurrentProfileThenLeavesTheCursorAlone(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte("[profile alpha]\n[profile staging]\n[profile zeta]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeAWSProfiles(t, "alpha", "staging", "zeta")
 
 	gui, g := newHeadlessGui(t)
 	gui.CurrentProfile = "staging"
 
-	run(t, g, gui.refreshProfile)
+	reloadProfiles(t, g, gui, 3)
 	if got := ask(g, func() int { return gui.Panels.Profile.SelectedIdx }); got != 1 {
 		t.Fatalf("SelectedIdx after the first load = %d, want 1 (the connected profile)", got)
 	}
 
 	run(t, g, func() error {
 		gui.Panels.Profile.SetSelectedLineIdx(2)
-		return gui.refreshProfile()
+		return nil
 	})
+
+	// A fourth profile is what makes the second reload observable, so the assertion below is about a list that really was replaced.
+	writeAWSProfiles(t, "alpha", "staging", "zeta", "zzz")
+	reloadProfiles(t, g, gui, 4)
 	if got := ask(g, func() int { return gui.Panels.Profile.SelectedIdx }); got != 2 {
 		t.Errorf("SelectedIdx after a refresh = %d, want 2 (the row the cursor was moved to, not the connected profile)", got)
 	}
+}
+
+// The loop renders the list while a reload replaces it, so the swap has to happen ON the loop; -race is what proves it, not an assertion.
+func TestReloadingTheProfilePanelWhileItRerendersIsRaceFree(t *testing.T) {
+	writeAWSProfiles(t, "alpha", "staging")
+
+	gui, g := newHeadlessGui(t)
+	gui.CurrentProfile = "staging"
+
+	// Off the loop, which is where the refresh tier and the panel throttle both call this loader from.
+	reloaded := make(chan struct{})
+	go func() {
+		defer close(reloaded)
+		for range 50 {
+			if err := gui.refreshProfile(); err != nil {
+				t.Errorf("refreshProfile() = %v", err)
+
+				return
+			}
+		}
+	}()
+
+	for range 50 {
+		run(t, g, func() error { return gui.Panels.Profile.RerenderList() })
+	}
+	<-reloaded
+}
+
+// writeAWSProfiles points HOME at a config holding exactly these profiles, which is the file listAWSProfiles reads.
+func writeAWSProfiles(t *testing.T, profiles ...string) {
+	t.Helper()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var config strings.Builder
+	for _, profile := range profiles {
+		config.WriteString("[profile " + profile + "]\n")
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte(config.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// reloadProfiles runs the loader the way the refresh tier does, off the loop, and waits for the swap it queues onto the loop to land.
+func reloadProfiles(t *testing.T, g *gocui.Gui, gui *Gui, want int) {
+	t.Helper()
+
+	if err := gui.refreshProfile(); err != nil {
+		t.Fatalf("refreshProfile() = %v", err)
+	}
+
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if ask(g, func() int { return gui.Panels.Profile.List.Len() }) == want {
+			return
+		}
+	}
+
+	t.Fatalf("the profile list never reached %d rows", want)
 }
 
 // fakeAWSOnPath puts a stand-in for the AWS CLI first on PATH, which is how the login path is driven without a browser.
@@ -154,18 +216,11 @@ func TestTheCredentialsTabSaysHowToSignInWhenTheSessionIsGone(t *testing.T) {
 // Away from the profile panel the panel collapses to one row, and the other views read that row as the account they are showing.
 // A cursor left on a profile the user only scrolled past would name an account the resources did not come from, so leaving the panel for another dashboard view snaps it back.
 func TestLeavingTheProfilePanelSnapsTheCursorBackToTheConnectedProfile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".aws", "config"), []byte("[profile prod]\n[profile stage]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeAWSProfiles(t, "prod", "stage")
 
 	gui, g := newHeadlessGui(t)
 	gui.CurrentProfile = "prod"
-	run(t, g, gui.refreshProfile)
+	reloadProfiles(t, g, gui, 2)
 
 	run(t, g, func() error {
 		gui.Panels.Profile.SelectByItem("stage")

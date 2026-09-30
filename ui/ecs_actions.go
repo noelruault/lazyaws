@@ -38,7 +38,7 @@ func (gui *Gui) ecsClusterActions(row *ecsRow) []resources.Action {
 		Mutates: true,
 		Confirm: resources.ConfirmDangerous,
 		Token:   cluster.Name,
-		Run:     func(ctx context.Context, _ string) error { return gui.Client.DeleteECSCluster(ctx, cluster.Name) },
+		Run:     func(ctx context.Context, _ string) error { return gui.awsClient().DeleteECSCluster(ctx, cluster.Name) },
 	}}
 }
 
@@ -49,6 +49,7 @@ func (gui *Gui) ecsServiceActions(row *ecsRow) []resources.Action {
 
 	service := row.Service
 	cluster := gui.ecsDrill.cluster
+	client := gui.awsClient()
 
 	return []resources.Action{
 		{
@@ -60,7 +61,7 @@ func (gui *Gui) ecsServiceActions(row *ecsRow) []resources.Action {
 				if err != nil {
 					return err
 				}
-				return gui.Client.UpdateECSServiceDesiredCount(ctx, cluster, service.Name, desired)
+				return client.UpdateECSServiceDesiredCount(ctx, cluster, service.Name, desired)
 			},
 		},
 		{
@@ -69,7 +70,7 @@ func (gui *Gui) ecsServiceActions(row *ecsRow) []resources.Action {
 			Confirm:      resources.ConfirmSimple,
 			Confirmation: fmt.Sprintf("Restart every task in %s on the task definition it already has?", service.Name),
 			Run: func(ctx context.Context, _ string) error {
-				return gui.Client.ForceNewECSDeployment(ctx, cluster, service.Name)
+				return client.ForceNewECSDeployment(ctx, cluster, service.Name)
 			},
 		},
 		{
@@ -79,7 +80,7 @@ func (gui *Gui) ecsServiceActions(row *ecsRow) []resources.Action {
 			// Existing tasks retain the Exec setting they started with.
 			Confirmation: fmt.Sprintf("Turn ECS Exec on for %s? Only tasks started after this can be exec'd into.", service.Name),
 			Run: func(ctx context.Context, _ string) error {
-				return gui.Client.SetECSServiceExecuteCommand(ctx, cluster, service.Name, true)
+				return client.SetECSServiceExecuteCommand(ctx, cluster, service.Name, true)
 			},
 		},
 		{
@@ -88,7 +89,7 @@ func (gui *Gui) ecsServiceActions(row *ecsRow) []resources.Action {
 			Confirm: resources.ConfirmDangerous,
 			Token:   service.Name,
 			Run: func(ctx context.Context, _ string) error {
-				return gui.Client.DeleteECSService(ctx, cluster, service.Name)
+				return client.DeleteECSService(ctx, cluster, service.Name)
 			},
 		},
 	}
@@ -101,6 +102,7 @@ func (gui *Gui) ecsTaskActions(row *ecsRow) []resources.Action {
 
 	task := row.Task
 	cluster := gui.ecsDrill.cluster
+	client := gui.awsClient()
 
 	actions := make([]resources.Action, 0, len(task.Containers)+1)
 	for _, container := range task.Containers {
@@ -117,7 +119,7 @@ func (gui *Gui) ecsTaskActions(row *ecsRow) []resources.Action {
 			Confirmation: ecsExecPrompt(container.Name, task.ID),
 			Run: func(_ context.Context, _ string) error {
 				// The session owns the terminal until exit, so it must use suspend/resume instead of the action timeout.
-				return gui.runSubprocess(gui.Client.ExecECSTask(cluster, task.Arn, container.Name))
+				return gui.runSubprocess(client.ExecECSTask(cluster, task.Arn, container.Name))
 			},
 		})
 	}
@@ -128,7 +130,7 @@ func (gui *Gui) ecsTaskActions(row *ecsRow) []resources.Action {
 		Confirm:      resources.ConfirmSimple,
 		Confirmation: ecsStopTaskQuestion(task, gui.ecsDrill.service),
 		Run: func(ctx context.Context, _ string) error {
-			return gui.Client.StopECSTask(ctx, cluster, task.Arn, "stopped from lazyaws")
+			return client.StopECSTask(ctx, cluster, task.Arn, "stopped from lazyaws")
 		},
 	})
 }

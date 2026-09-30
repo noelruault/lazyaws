@@ -198,7 +198,7 @@ func (gui *Gui) GetInitialKeybindings() []*Binding {
 		{ViewName: "menu", Key: 'y', Handler: wrappedHandler(gui.handleMenuPress)},
 	}
 
-	// One description for all eight, so the menu shows them as a single row: the number that reaches each panel is already printed in that panel's own title, and eight rows saying "focus the x panel" crowded out everything else.
+	// One description for all nine, so the menu shows them as a single row: the number that reaches each panel is already printed in that panel's own title, and nine rows saying "focus the x panel" crowded out everything else.
 	const jumpToPanel = "jump to a panel, numbered as its title shows"
 
 	bindings = append(bindings,
@@ -210,9 +210,10 @@ func (gui *Gui) GetInitialKeybindings() []*Binding {
 		&Binding{Key: '6', Handler: gui.handleGoTo(gui.Views.ECR), Description: jumpToPanel},
 		&Binding{Key: '7', Handler: gui.handleGoTo(gui.Views.Secrets), Description: jumpToPanel},
 		&Binding{Key: '8', Handler: gui.handleGoTo(gui.Views.VPC), Description: jumpToPanel},
+		&Binding{Key: '9', Handler: gui.handleGoTo(gui.Views.PrivateLink), Description: jumpToPanel},
 	)
 
-	// Left and right walk the panel column, the same as Tab and Shift+Tab: eight lists stacked in one column are what the four keys are for, and Enter is the one that leaves it for the pane beside them.
+	// Left and right walk the panel column, the same as Tab and Shift+Tab: nine lists stacked in one column are what the four keys are for, and Enter is the one that leaves it for the pane beside them.
 	for _, panel := range gui.allSidePanels() {
 		name := panel.GetView().Name()
 		bindings = append(bindings,

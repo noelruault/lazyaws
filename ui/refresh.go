@@ -156,7 +156,7 @@ func (g *paneGate) due(now time.Time) bool {
 }
 
 // startAutoRefresh puts the side panel the user is looking at on its own refresh tier.
-// Exactly ONE panel reloads per tick: the eight list fetches are individually cheap and collectively the app's largest recurring cost, and seven of them would be describing rows nobody is looking at.
+// Exactly ONE panel reloads per tick: the nine list fetches are individually cheap and collectively the app's largest recurring cost, and eight of them would be describing rows nobody is looking at.
 func (gui *Gui) startAutoRefresh() {
 	interval := tickInterval(gui.Config.User.Refresh.PanelSeconds)
 	if interval <= 0 {
@@ -170,7 +170,7 @@ func (gui *Gui) startAutoRefresh() {
 // It triggers the panel's throttle instead of calling the loader, so a tick landing next to a manual r collapses into one reload; the loader behind that throttle is single-flighted, which is what makes a tick arriving mid-reload free.
 func (gui *Gui) reloadFocusedPanel() error {
 	// The profile panel is the recovery path and reloads itself through refresh; with no credentials every other panel's tick is a call that can only fail.
-	if gui.authProblem != nil || !gui.Client.Ready() {
+	if gui.authProblem != nil || !gui.awsClient().Ready() {
 		return nil
 	}
 

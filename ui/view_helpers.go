@@ -458,6 +458,7 @@ func (gui *Gui) allSidePanels() []panels.ISideListPanel {
 		gui.Panels.ECR,
 		gui.Panels.Secrets,
 		gui.Panels.VPC,
+		gui.Panels.PrivateLink,
 	}
 }
 

@@ -65,6 +65,8 @@ func TestColoredStringFallsBackForUntabulatedAttributes(t *testing.T) {
 	previous := color.NoColor
 	t.Cleanup(func() { color.NoColor = previous })
 	color.NoColor = false
+	// fatih/color re-reads NO_COLOR on every call, so clearing the flag is not enough in a shell that exports it.
+	t.Setenv("NO_COLOR", "")
 
 	if _, tabulated := colorWraps[color.Underline]; tabulated {
 		t.Skip("Underline is in the table; this test needs an attribute that is not")

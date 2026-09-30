@@ -13,7 +13,8 @@ type Views struct {
 	ECR     *gocui.View
 	Secrets *gocui.View
 
-	VPC *gocui.View
+	VPC         *gocui.View
+	PrivateLink *gocui.View
 
 	Main *gocui.View
 
@@ -65,6 +66,7 @@ func (gui *Gui) orderedViewNameMappings() []viewNameMapping {
 		{viewPtr: &gui.Views.ECR, name: "ecr", autoPosition: true},
 		{viewPtr: &gui.Views.Secrets, name: "secrets", autoPosition: true},
 		{viewPtr: &gui.Views.VPC, name: "vpc", autoPosition: true},
+		{viewPtr: &gui.Views.PrivateLink, name: "privatelink", autoPosition: true},
 
 		{viewPtr: &gui.Views.Main, name: "main", autoPosition: true},
 
@@ -132,6 +134,7 @@ func (gui *Gui) createAllViews() error {
 		{gui.Views.ECR, "ECR"},
 		{gui.Views.Secrets, "Secrets"},
 		{gui.Views.VPC, "VPC"},
+		{gui.Views.PrivateLink, "PrivateLink"},
 	} {
 		sp.view.Title = sp.title
 		sp.view.TitlePrefix = "[" + string(rune('1'+i)) + "]"

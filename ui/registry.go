@@ -25,14 +25,15 @@ func panelRefs() map[string]resources.Key {
 	}
 
 	return map[string]resources.Key{
-		"profile": ref("profiles", ""),
-		"ecs":     ref("ecs", "clusters"),
-		"ec2":     ref("ec2", "instances"),
-		"s3":      ref("s3", "buckets"),
-		"eks":     ref("eks", "clusters"),
-		"ecr":     ref("ecr", "repositories"),
-		"secrets": ref("secretsmanager", "secrets"),
-		"vpc":     ref("vpc", "vpcs"),
+		"profile":     ref("profiles", ""),
+		"ecs":         ref("ecs", "clusters"),
+		"ec2":         ref("ec2", "instances"),
+		"s3":          ref("s3", "buckets"),
+		"eks":         ref("eks", "clusters"),
+		"ecr":         ref("ecr", "repositories"),
+		"secrets":     ref("secretsmanager", "secrets"),
+		"vpc":         ref("vpc", "vpcs"),
+		"privatelink": ref("vpc", "endpoint-services"),
 	}
 }
 
@@ -136,6 +137,10 @@ func (gui *Gui) FocusSecrets(ref resources.Ref) error {
 
 func (gui *Gui) FocusVPC(ref resources.Ref) error {
 	return focusPanelItem(gui, gui.Panels.VPC, ref)
+}
+
+func (gui *Gui) FocusPrivateLink(ref resources.Ref) error {
+	return focusPanelItem(gui, gui.Panels.PrivateLink, ref)
 }
 
 func (gui *Gui) FocusAmazonQ(ref resources.Ref) error {

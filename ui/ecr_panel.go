@@ -49,30 +49,29 @@ func (gui *Gui) getECRPanel() *panels.SideListPanel[*aws.ECRRepository] {
 }
 
 func (gui *Gui) loadECRList() error {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return nil
 	}
 
-	gen := gui.Gen
+	gen := gui.Generation()
 
 	return gui.WithWaitingStatus("loading ecr", func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
-		repos, err := gui.Client.ListECRRepositoriesDetailed(ctx)
+		repos, err := client.ListECRRepositoriesDetailed(ctx)
 		if err != nil {
 			return err
-		}
-		if gen != gui.Gen {
-			return nil
 		}
 
 		rows := make([]*aws.ECRRepository, len(repos))
 		for i := range repos {
 			rows[i] = &repos[i]
 		}
-		gui.Panels.ECR.SetItemsKeepSelection(rows, ecrSelectionKey)
-		return gui.Panels.ECR.RerenderList()
+		swapPanelItems(gui, gen, gui.Panels.ECR, rows, ecrSelectionKey)
+
+		return nil
 	})
 }
 
@@ -82,16 +81,17 @@ func ecrSelectionKey(repo *aws.ECRRepository) string { return repo.Name }
 // ecrRepositoryOverview reads the repository off the list row and fetches what the row does not carry: the images, and the two policy documents for THIS repository.
 // The image list is what keeps this off the refresh ticker: DescribeImages pages the whole repository, so its cost grows with the repository rather than staying flat. The policies are memoised in the client, so a redraw does not re-read a document that changes on a deploy.
 func (gui *Gui) ecrRepositoryOverview(ctx context.Context, repo *aws.ECRRepository, width int) string {
-	if gui.Client == nil {
+	client := gui.awsClient()
+	if client == nil {
 		return overviewUnavailable("repository")
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	images, err := gui.Client.ListECRImages(fetchCtx, repo.Name)
+	images, err := client.ListECRImages(fetchCtx, repo.Name)
 	// The policies are read for THIS repository, not for the list: filling them per row cost two extra calls for every repository in the registry, on one deadline, and a registry big enough to run that deadline out failed the whole panel.
-	policies, _ := gui.Client.GetECRRepositoryPolicies(fetchCtx, repo.Name, gui.metricsMaxAge())
+	policies, _ := client.GetECRRepositoryPolicies(fetchCtx, repo.Name, gui.metricsMaxAge())
 	gui.throttles.observe(ecrOverviewErrs(policies, err)...)
 
 	return presentation.FormatECRRepositoryOverview(repo, policies, images, err, width, time.Now())
@@ -108,17 +108,18 @@ func (gui *Gui) renderECRPolicies(repo *aws.ECRRepository) tasks.TaskFunc {
 	name := repo.Name
 
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		if gui.Client == nil {
+		client := gui.awsClient()
+		if client == nil {
 			gui.RenderStringMain(overviewUnavailable("policies"))
 			return
 		}
 
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
-		policies, err := gui.Client.GetECRRepositoryPolicies(fetchCtx, name, gui.metricsMaxAge())
-		if gen != gui.Gen {
+		policies, err := client.GetECRRepositoryPolicies(fetchCtx, name, gui.metricsMaxAge())
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -165,12 +166,12 @@ func formatECRPolicies(policies *aws.ECRRepositoryPolicies) string {
 func (gui *Gui) renderECRImages(repo *aws.ECRRepository) tasks.TaskFunc {
 	name := repo.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
-		images, err := gui.Client.ListECRImages(fetchCtx, name)
-		if gen != gui.Gen {
+		images, err := gui.awsClient().ListECRImages(fetchCtx, name)
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -210,12 +211,13 @@ func shortDigest(digest string) string {
 func (gui *Gui) renderECRScan(repo *aws.ECRRepository) tasks.TaskFunc {
 	name := repo.Name
 	return gui.NewTask(TaskOpts{Func: func(ctx context.Context) {
-		gen := gui.Gen
+		client := gui.awsClient()
+		gen := gui.Generation()
 		fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 
-		images, err := gui.Client.ListECRImages(fetchCtx, name)
-		if gen != gui.Gen {
+		images, err := client.ListECRImages(fetchCtx, name)
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {
@@ -229,8 +231,8 @@ func (gui *Gui) renderECRScan(repo *aws.ECRRepository) tasks.TaskFunc {
 			return
 		}
 
-		scan, err := gui.Client.GetECRImageScan(fetchCtx, name, digest)
-		if gen != gui.Gen {
+		scan, err := client.GetECRImageScan(fetchCtx, name, digest)
+		if gen != gui.Generation() {
 			return
 		}
 		if err != nil {

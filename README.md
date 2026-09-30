@@ -1,6 +1,6 @@
 # lazyaws
 
-lazyaws is a keyboard-driven terminal UI for AWS. Browse and operate ECS, EC2, S3, EKS, ECR, Secrets Manager and VPC networking from one dashboard, and ask questions about the account you are looking at in a built-in chat that runs on the AWS Bedrock models your account can already call.
+lazyaws is a keyboard-driven terminal UI for AWS. Browse and operate ECS, EC2, S3, EKS, ECR, Secrets Manager, VPC networking and PrivateLink from one dashboard, and ask questions about the account you are looking at in a built-in chat that runs on the AWS Bedrock models your account can already call.
 
 Drill from an ECS cluster to a service to live logs in a few keypresses. Switch profiles, scale a service, reveal a secret, connect to an instance over SSM. No console tabs, no memorizing CLI flags.
 
@@ -84,12 +84,13 @@ Everyday AWS questions, which tasks are failing, what changed in this deployment
 - ECR: repositories, with a lifecycle-policy dry run.
 - Secrets Manager: metadata, rotation, replication and versions; the value stays masked until revealed with `v`, the one action read-only mode keeps.
 - VPC: every VPC with its CIDRs and DNS settings, and a tab each for subnets (marked public or private by the route table that governs them, not by the auto-assign flag), route tables, internet and NAT gateways, endpoints, and transit gateway attachments. On the Endpoints tab the rows carry a cursor: `Enter` opens the full record (policy, DNS names, security groups, subnets), `Esc` returns to the list. Read-only, because every mutation here silently breaks traffic that is already flowing.
+- PrivateLink: the endpoint services this account publishes, each row carrying the number of connection requests waiting on it, most waiting first. The Connections tab lists every consumer endpoint with the account that owns it; `Enter` opens the full record, and `a` on a waiting row accepts or rejects it. Accepting and rejecting are the panel's only mutations and need `--allow-writes`; rejecting a connection that is already carrying traffic asks for the endpoint id to be typed out.
 
 ## Keybindings
 
 | Key | Action |
 | --- | --- |
-| `1` to `8` | Jump to a panel (`1` Profiles, `2` ECS, `3` EC2, `4` S3, `5` EKS, `6` ECR, `7` Secrets, `8` VPC) |
+| `1` to `9` | Jump to a panel (`1` Profiles, `2` ECS, `3` EC2, `4` S3, `5` EKS, `6` ECR, `7` Secrets, `8` VPC, `9` PrivateLink) |
 | `Tab` / `Shift+Tab`, `←` / `→`, `h` / `l` | Next or previous panel. In the main panel the arrows scroll it horizontally, and `Tab` moves between detail tabs |
 | `↑` / `↓`, `k` / `j` | Move the cursor in the focused view |
 | `Enter` | Look into the selection: ECS drills into the cluster or service, Profiles switches profile, every other list opens it in the main panel |
@@ -199,6 +200,7 @@ A preset applies at startup, so changing it from the Settings screen takes effec
 | `:ecs:my-cluster:my-service` | ECS, drilled to that service's tasks |
 | `:scrts` | Secrets, because it fuzzy-matches when nothing else does |
 | `:vpc` | the VPC panel |
+| `:privatelink` | the endpoint services, and `:vpce` gets there too |
 | `:filter prod` | the `/` filter on the focused panel, needle already typed |
 
 Every keystroke previews what Enter would do; `Tab` completes as far as the candidates agree; `Esc` backs out. `:help` and `:quit` are there too.

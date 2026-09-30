@@ -1,6 +1,8 @@
 package presentation
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,5 +85,26 @@ func TestTagsBodyFollowsTheStyleSwitch(t *testing.T) {
 	}
 	if got != "Environment: staging" {
 		t.Errorf("line style = %q, want %q", got, "Environment: staging")
+	}
+}
+
+// A pane that calls tagChips directly ignores tagStyleChips and ships chips while every other pane shows lines.
+func TestNoPaneBypassesTagsBody(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, file := range files {
+		if file == "primitives.go" || strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "tagChips(") {
+			t.Errorf("%s calls tagChips directly; route its tags through tagsBody", file)
+		}
 	}
 }
