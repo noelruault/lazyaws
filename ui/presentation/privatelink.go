@@ -162,5 +162,5 @@ func endpointServiceTagsBlock(s *aws.VPCEndpointService, width int) string {
 		rows[i] = kv{tag.Key, tag.Value}
 	}
 
-	return title + "\n" + tagChips(width, rows)
+	return title + "\n" + tagsBody(width, rows)
 }
