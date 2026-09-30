@@ -58,7 +58,11 @@ func (gui *Gui) endpointConnectionActions(connection aws.VPCEndpointConnection) 
 		})
 	}
 
-	actions = append(actions, gui.rejectConnectionAction(connection), resources.Action{
+	if connection.Rejectable() {
+		actions = append(actions, gui.rejectConnectionAction(connection))
+	}
+
+	actions = append(actions, resources.Action{
 		Name: "Show console URL",
 		Run: func(context.Context, string) error {
 			return gui.showPopup(connection.EndpointID, vpcEndpointConsoleURL(connection.Region, connection.EndpointID))

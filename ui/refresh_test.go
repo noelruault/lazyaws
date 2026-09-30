@@ -180,7 +180,7 @@ func TestReloadFocusedPanelIsInertWithoutCredentials(t *testing.T) {
 	}
 
 	gui.setAWSClient(readyTestClient())
-	gui.authProblem = errFakeReload
+	gui.setAuthProblem(errFakeReload)
 
 	if err := gui.reloadFocusedPanel(); err != nil {
 		t.Fatalf("reloadFocusedPanel() with an auth problem = %v", err)
@@ -472,7 +472,7 @@ func TestGuardedReloadersGuardsEveryLoader(t *testing.T) {
 // The auth path is the app's recovery path and reloads the profile list by name; reaching past the guard there is how a stuck reload gets joined by one more per refresh key.
 func TestRefreshReloadsTheProfilePanelThroughTheGuardWhenAuthIsBroken(t *testing.T) {
 	gui, _ := newHeadlessGui(t)
-	gui.authProblem = errors.New("token expired")
+	gui.setAuthProblem(errors.New("token expired"))
 
 	guarded := make(chan struct{}, 1)
 	gui.panelReloads = map[string]func() error{

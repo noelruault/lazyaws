@@ -69,8 +69,9 @@ type Gui struct {
 
 	Profiles []string
 
-	// authProblem stays non-fatal so profile switching remains a recovery path.
-	authProblem error
+	// authErr stays non-fatal so profile switching remains a recovery path.
+	// Atomic for the same reason as client: the switch writes it on the loop while tick and refresh goroutines read it.
+	authErr atomic.Pointer[error]
 
 	ecsDrill ecsDrillState
 
@@ -229,7 +230,7 @@ func (gui *Gui) panelReloaders() map[string]func() error {
 // It goes through the single-flighted loaders rather than panelReloaders, so a full refresh landing on top of a panel tier's tick reloads each list once instead of twice.
 func (gui *Gui) refresh() {
 	// The profile panel needs no AWS credentials and must remain available as the recovery path.
-	if gui.authProblem != nil || !gui.awsClient().Ready() {
+	if gui.authProblem() != nil || !gui.awsClient().Ready() {
 		go func() { _ = gui.reloadProfilePanel() }()
 		gui.showAuthProblem()
 		return
@@ -250,12 +251,13 @@ func (gui *Gui) reloadProfilePanel() error {
 }
 
 func (gui *Gui) showAuthProblem() {
-	if gui.authProblem == nil {
+	problem := gui.authProblem()
+	if problem == nil {
 		return
 	}
 
 	gui.State.Panels.Main.ObjectKey = "auth-problem"
-	gui.reRenderStringMain(degradedModeMessage(gui.CurrentProfile, gui.authProblem))
+	gui.reRenderStringMain(degradedModeMessage(gui.CurrentProfile, problem))
 }
 
 // ShouldRefresh records the key so unchanged selections reuse their render task.
@@ -289,6 +291,18 @@ func (gui *Gui) awsClient() *aws.Client {
 
 func (gui *Gui) setAWSClient(client *aws.Client) {
 	gui.client.Store(client)
+}
+
+// authProblem is why the connected profile cannot reach AWS, nil when it can or when no switch has said otherwise.
+func (gui *Gui) authProblem() error {
+	if p := gui.authErr.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+func (gui *Gui) setAuthProblem(err error) {
+	gui.authErr.Store(&err)
 }
 
 // Generation is the value an async load snapshots before fetching, so it can drop its result if it has moved since.

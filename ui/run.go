@@ -40,7 +40,7 @@ func Run(cfg config.Config, version string) error {
 	gui.Version = version
 	gui.CurrentProfile = os.Getenv("AWS_PROFILE")
 	if degraded {
-		gui.authProblem = credentialsProblem(client, err)
+		gui.setAuthProblem(credentialsProblem(client, err))
 	}
 
 	return gui.Run()

@@ -41,6 +41,24 @@ func TestAcceptIsOfferedOnlyOnAWaitingConnection(t *testing.T) {
 	}
 }
 
+// ListVPCEndpointConnections returns every state, and a connection already rejected, failed or gone cannot be rejected again.
+func TestRejectIsHiddenOnAFinishedConnection(t *testing.T) {
+	gui := newTestGui(t)
+
+	for _, state := range []string{"rejected", "Deleting", "deleted", "failed", "Expired"} {
+		actions := gui.endpointConnectionActions(aws.VPCEndpointConnection{EndpointID: "vpce-0123456789abcdef0", State: state})
+		if _, ok := findAction(actions, "Reject connection"); ok {
+			t.Errorf("a %s connection offers Reject", state)
+		}
+	}
+	for _, state := range []string{aws.VPCEndpointStatePendingAcceptance, "pending", "available"} {
+		actions := gui.endpointConnectionActions(aws.VPCEndpointConnection{EndpointID: "vpce-0123456789abcdef0", State: state})
+		if _, ok := findAction(actions, "Reject connection"); !ok {
+			t.Errorf("a %s connection offers no Reject", state)
+		}
+	}
+}
+
 // Rejecting a request that is waiting costs the consumer a retry; rejecting a connection that is carrying traffic cuts it, so the two cannot share one prompt.
 func TestRejectIsGradedByWhatItCosts(t *testing.T) {
 	gui := newTestGui(t)

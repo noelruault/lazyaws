@@ -21,7 +21,8 @@ func (gui *Gui) getPrivateLinkPanel() *panels.SideListPanel[*aws.VPCEndpointServ
 		ContextState: &panels.ContextState[*aws.VPCEndpointService]{
 			GetMainTabs: func() []panels.MainTab[*aws.VPCEndpointService] {
 				return []panels.MainTab[*aws.VPCEndpointService]{
-					staticOverviewTab(gui, endpointServiceCacheKey, gui.privateLinkOverview),
+					// Ticking, not static: the pending and available counts are live state, and the list reload that refreshes the row's count never repaints an open overview.
+					overviewTab(gui, endpointServiceCacheKey, gui.privateLinkOverview),
 					{
 						Key:    "connections",
 						Title:  "Connections",

@@ -67,6 +67,15 @@ func (c VPCEndpointConnection) Pending() bool {
 	return strings.EqualFold(c.State, VPCEndpointStatePendingAcceptance)
 }
 
+// Rejectable decides whether the Reject action is offered: a connection already on its way out cannot be rejected again, and ListVPCEndpointConnections returns those too.
+func (c VPCEndpointConnection) Rejectable() bool {
+	switch strings.ToLower(c.State) {
+	case "rejected", "deleting", "deleted", "failed", "expired":
+		return false
+	}
+	return true
+}
+
 // ListVPCEndpointServices returns the PrivateLink services this account publishes in the region, each carrying the number of connections waiting on it.
 func (c *Client) ListVPCEndpointServices(ctx context.Context) ([]VPCEndpointService, error) {
 	input := &ec2.DescribeVpcEndpointServiceConfigurationsInput{}

@@ -210,7 +210,7 @@ func TestDegradedStartShowsTheProblemOnceAndKeepsProfilesUsable(t *testing.T) {
 
 	run(t, g, func() error {
 		gui.CurrentProfile = "prod"
-		gui.authProblem = errors.New("operation error STS: GetCallerIdentity, get credentials: failed to refresh cached SSO token, InvalidGrantException")
+		gui.setAuthProblem(errors.New("operation error STS: GetCallerIdentity, get credentials: failed to refresh cached SSO token, InvalidGrantException"))
 		gui.refresh()
 		return nil
 	})
@@ -236,7 +236,7 @@ func TestAWorkingProfileSwitchClearsTheProblem(t *testing.T) {
 	quietRefresh(gui)
 
 	run(t, g, func() error {
-		gui.authProblem = errors.New("expired")
+		gui.setAuthProblem(errors.New("expired"))
 
 		return nil
 	})
@@ -246,7 +246,7 @@ func TestAWorkingProfileSwitchClearsTheProblem(t *testing.T) {
 	}
 	waitForProfile(t, g, gui, "staging")
 
-	if ask(g, func() error { return gui.authProblem }) != nil {
+	if ask(g, gui.authProblem) != nil {
 		t.Error("authProblem survived a working profile switch")
 	}
 }

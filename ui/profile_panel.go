@@ -127,15 +127,16 @@ func (gui *Gui) switchProfile(profile string) error {
 
 // applyProfileSwitch rejects slow connections superseded by newer profile switches.
 func (gui *Gui) applyProfileSwitch(gen int64, profile string, client *aws.Client) error {
-	if gen != gui.Generation() {
-		return nil
-	}
-
 	// resetDependentPanelState empties every panel the loop is rendering, and the fields beside it are read by the same renders, so the switch is applied on the loop rather than on the goroutine that connected.
 	gui.queueUpdate(func() error {
+		// Checked here rather than before the enqueue, or a newer switch pressed while this one sat in the queue would be overwritten by the older profile.
+		if gen != gui.Generation() {
+			return nil
+		}
+
 		gui.setAWSClient(client)
 		gui.CurrentProfile = profile
-		gui.authProblem = client.AuthError()
+		gui.setAuthProblem(client.AuthError())
 		gui.resetDependentPanelState()
 
 		gui.throttledRefresh.Trigger()
@@ -191,7 +192,7 @@ func (gui *Gui) profileAuthProblem() error {
 		return errors.New("no AWS credentials found")
 	}
 
-	return gui.authProblem
+	return gui.authProblem()
 }
 
 // signInMessage is what the Credentials tab shows instead of an account id that is only ever "none" until someone logs in.

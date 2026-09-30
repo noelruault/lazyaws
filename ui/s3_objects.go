@@ -48,35 +48,42 @@ func (gui *Gui) renderS3Objects(bucket *aws.Bucket) tasks.TaskFunc {
 	if gui.s3Objects.bucket != bucket.Name {
 		gui.s3Objects = s3ObjectsState{bucket: bucket.Name}
 	}
-	return gui.NewTask(TaskOpts{Wrap: true, Func: func(ctx context.Context) {
-		gui.loadS3ObjectsAndRender(ctx)
-	}})
-}
-
-func (gui *Gui) loadS3ObjectsAndRender(ctx context.Context) {
-	gen := gui.Generation()
-	bucket, prefix := gui.s3Objects.bucket, gui.s3Objects.prefix
-
-	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	result, err := gui.awsClient().ListObjects(fetchCtx, bucket, prefix, nil)
-	if gen != gui.Generation() {
-		return
-	}
-	if err != nil {
-		gui.RenderStringMain("error loading objects: " + err.Error())
-		return
-	}
-
-	gui.s3Objects.objects = result.Objects
-	rows := gui.s3ObjectRows()
-	gui.RenderStringMain(renderMainRows(rows, gui.mainCursor(rows)))
+	return gui.s3ObjectsTask()
 }
 
 func (gui *Gui) reloadS3Objects() error {
-	return gui.QueueTask(gui.NewTask(TaskOpts{Wrap: true, Func: func(ctx context.Context) {
-		gui.loadS3ObjectsAndRender(ctx)
-	}}))
+	return gui.QueueTask(gui.s3ObjectsTask())
+}
+
+// s3ObjectsTask reads the bucket and prefix here, on the UI loop that drills them, and hands the result back there, because the row handlers read and write s3Objects on the loop.
+func (gui *Gui) s3ObjectsTask() tasks.TaskFunc {
+	bucket, prefix := gui.s3Objects.bucket, gui.s3Objects.prefix
+
+	return gui.NewTask(TaskOpts{Wrap: true, Func: func(ctx context.Context) {
+		client := gui.awsClient()
+		gen := gui.Generation()
+
+		fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		result, err := client.ListObjects(fetchCtx, bucket, prefix, nil)
+		if err != nil {
+			gui.RenderStringMain("error loading objects: " + err.Error())
+			return
+		}
+
+		gui.queueUpdate(func() error {
+			// A profile switch or a drill while the fetch ran makes this listing describe somewhere the pane no longer is.
+			if gen != gui.Generation() || gui.s3Objects.bucket != bucket || gui.s3Objects.prefix != prefix {
+				return nil
+			}
+
+			gui.s3Objects.objects = result.Objects
+			rows := gui.s3ObjectRows()
+			gui.RenderStringMain(renderMainRows(rows, gui.mainCursor(rows)))
+
+			return nil
+		})
+	}})
 }
 
 // s3ObjectRows exposes the object listing as navigable rows; the cursor, marking and scrolling belong to the main panel.
