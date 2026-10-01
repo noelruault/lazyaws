@@ -124,6 +124,13 @@ func (gui *Gui) settings() []setting {
 			set:  func(user *config.UserConfig, value bool) { user.Gui.DimBehindPopups = value },
 		},
 		{
+			name: "Expand focused panel",
+			help: "the side panel you are in takes twice the height of the others",
+			path: []string{"gui", "expandFocusedSidePanel"},
+			get:  func(user *config.UserConfig) bool { return user.Gui.ExpandFocusedSidePanel },
+			set:  func(user *config.UserConfig, value bool) { user.Gui.ExpandFocusedSidePanel = value },
+		},
+		{
 			name:    "Overview refresh",
 			help:    "how often the open Overview tab redraws",
 			path:    []string{"refresh", "overviewSeconds"},

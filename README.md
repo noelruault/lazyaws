@@ -228,6 +228,7 @@ gui:
   sidePanelWidth: 0.333
   screenMode: normal      # normal|half|fullscreen
   border: rounded          # rounded|single|double|hidden
+  expandFocusedSidePanel: true              # the side panel you are in takes twice the height of the others
   theme:
     activeBorderColor: [green, bold]
     selectedLineBgColor: [blue]

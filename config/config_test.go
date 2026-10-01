@@ -236,6 +236,25 @@ func TestReadOnlyIsOffByDefault(t *testing.T) {
 	}
 }
 
+// The focused side panel takes the extra height by default, and a file that says false must still win over that default.
+func TestExpandFocusedSidePanelIsOnUnlessTurnedOff(t *testing.T) {
+	if !DefaultUserConfig().Gui.ExpandFocusedSidePanel {
+		t.Error("DefaultUserConfig() leaves the focused side panel unexpanded, want it expanded")
+	}
+
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	writeFile(t, filepath.Join(dir, "lazyaws", "config.yml"), "gui:\n  expandFocusedSidePanel: false\n")
+
+	got, err := LoadUserConfig()
+	if err != nil {
+		t.Fatalf("LoadUserConfig() error = %v", err)
+	}
+	if got.Gui.ExpandFocusedSidePanel {
+		t.Error("ExpandFocusedSidePanel = true with the file saying false")
+	}
+}
+
 func TestChatIsOffUnlessAskedFor(t *testing.T) {
 	if DefaultUserConfig().Chat.Enabled {
 		t.Error("DefaultUserConfig() enables the Amazon Q chat, want it off")

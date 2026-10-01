@@ -98,13 +98,14 @@ func (r RefreshConfig) MetricsInterval() time.Duration {
 func DefaultUserConfig() UserConfig {
 	return UserConfig{
 		Gui: GuiConfig{
-			ScrollHeight:    2,
-			SidePanelWidth:  0.333,
-			ScreenMode:      "normal",
-			Border:          "rounded",
-			ShowBottomLine:  true,
-			WrapMainPanel:   true,
-			DimBehindPopups: true,
+			ScrollHeight:           2,
+			SidePanelWidth:         0.333,
+			ScreenMode:             "normal",
+			Border:                 "rounded",
+			ShowBottomLine:         true,
+			WrapMainPanel:          true,
+			DimBehindPopups:        true,
+			ExpandFocusedSidePanel: true,
 			Theme: ThemeConfig{
 				ActiveBorderColor:   []string{"green", "bold"},
 				InactiveBorderColor: []string{"default"},
