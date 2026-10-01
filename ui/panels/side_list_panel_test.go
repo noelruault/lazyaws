@@ -73,6 +73,46 @@ func TestFilterAndSortMatchesAcrossEveryCell(t *testing.T) {
 	}
 }
 
+// countingGui runs Update inline and counts it, which is what a rerender loop shows up as.
+type countingGui struct {
+	stubGui
+	updates int
+}
+
+func (g *countingGui) Update(f func() error) { g.updates++; _ = f() }
+
+// Every layout pass asks an empty panel whether it was resized; answering yes each time made the screen redraw nonstop at about 110% CPU.
+func TestAnEmptyPanelRendersOnceForItsWidth(t *testing.T) {
+	g, err := gocui.NewGui(gocui.NewGuiOpts{Headless: true, Width: 80, Height: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	view, err := g.SetView("list", 0, 0, 40, 10, 0)
+	if err != nil && !gocui.IsUnknownView(err) {
+		t.Fatal(err)
+	}
+
+	gui := &countingGui{}
+	panel := &SideListPanel[string]{
+		ListPanel:     ListPanel[string]{List: NewFilteredList[string](), View: view},
+		Gui:           gui,
+		GetTableCells: func(item string) []string { return []string{item} },
+	}
+
+	if err := panel.RerenderListIfResized(); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := panel.RerenderListIfResized(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if gui.updates != 1 {
+		t.Errorf("an unchanged empty panel rerendered %d times, want 1", gui.updates)
+	}
+}
+
 // The panel's own Filter runs before ignore and filter strings, and rejecting there is final.
 func TestFilterAndSortHonoursThePanelFilter(t *testing.T) {
 	panel := &SideListPanel[string]{

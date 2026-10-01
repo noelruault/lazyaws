@@ -327,6 +327,8 @@ func (self *SideListPanel[T]) RerenderList() error {
 		self.View.Clear()
 		items := self.List.GetItems()
 		if len(items) == 0 {
+			// Recorded here too, or an empty panel reads as resized on every layout pass and queues a rerender that triggers the next layout, redrawing the screen nonstop.
+			self.renderedWidth = self.View.InnerWidth()
 			fmt.Fprint(self.View, self.emptyMessage())
 			return self.afterRerender()
 		}
